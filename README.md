@@ -72,11 +72,16 @@ EyeFocus-Insight/
 ├── requirements.txt    # 依赖列表
 ├── spike/             # Phase 0 验证脚本
 │   ├── fps_benchmark.py        # S1: 帧率测试
-│   ├── baseline_proto.py        # S2: 基线校准
+│   ├── baseline_proto.py       # S2: 基线校准
 │   ├── head_pose_proto.py      # S3: 头部姿态
 │   ├── ear_variance.py         # S5: EAR 方差
-│   └── common.py               # 共享算法实现
-└── PHASE0_PLAN.md   # Phase 0 执行计划
+│   ├── common.py               # 共享算法实现
+│   └── results/                # 测试结果（按成员分类）
+│       ├── D1/
+│       ├── D2/
+│       └── T1/
+├── PHASE0_PLAN.md   # Phase 0 执行计划
+└── TESTING_GUIDE.md  # 测试指南
 ```
 
 ---
