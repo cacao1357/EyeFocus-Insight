@@ -2,45 +2,45 @@
   "spike": "S3_head_pose",
   "phases": {
     "Phase 1: 正视屏幕": {
-      "frames": 138,
-      "yaw_mean": -80.72,
-      "yaw_std": 160.51,
-      "pitch_mean": -10.63,
-      "pitch_std": 1.04,
-      "roll_mean": 9.42,
-      "roll_std": 0.52
+      "frames": 115,
+      "yaw_mean": -2.23,
+      "yaw_std": 0.59,
+      "pitch_mean": 0.67,
+      "pitch_std": 0.49,
+      "roll_mean": 2.76,
+      "roll_std": 3.05
     },
     "Phase 2: 缓慢低头": {
-      "frames": 93,
-      "yaw_mean": -168.61,
-      "yaw_std": 39.31,
-      "pitch_mean": -2.03,
-      "pitch_std": 7.94,
-      "roll_mean": 1.55,
-      "roll_std": 10.26
+      "frames": 151,
+      "yaw_mean": -1.8,
+      "yaw_std": 0.25,
+      "pitch_mean": -0.98,
+      "pitch_std": 0.57,
+      "roll_mean": 2.35,
+      "roll_std": 0.32
     },
     "Phase 3: 缓慢左转": {
-      "frames": 133,
-      "yaw_mean": -7.75,
-      "yaw_std": 92.72,
-      "pitch_mean": 14.13,
-      "pitch_std": 45.2,
-      "roll_mean": -9.36,
-      "roll_std": 44.99
+      "frames": 150,
+      "yaw_mean": -1.41,
+      "yaw_std": 0.15,
+      "pitch_mean": -2.01,
+      "pitch_std": 0.18,
+      "roll_mean": 3.06,
+      "roll_std": 0.31
     },
     "Phase 4: 回到正视": {
-      "frames": 150,
-      "yaw_mean": 25.11,
-      "yaw_std": 147.66,
-      "pitch_mean": 9.83,
-      "pitch_std": 31.73,
-      "roll_mean": 2.74,
-      "roll_std": 30.2
+      "frames": 151,
+      "yaw_mean": -1.36,
+      "yaw_std": 0.15,
+      "pitch_mean": -2.15,
+      "pitch_std": 0.12,
+      "roll_mean": 3.52,
+      "roll_std": 0.21
     }
   },
   "drift": {
-    "yaw_drift": 105.83,
-    "pitch_drift": 20.46
+    "yaw_drift": 0.87,
+    "pitch_drift": -2.82
   },
-  "frontal_pass": false
+  "frontal_pass": true
 }

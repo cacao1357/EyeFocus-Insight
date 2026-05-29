@@ -36,7 +36,7 @@ from spike.common import (
     normalize_yaw,
     opencv_windows,
     setup_logging,
-    solve_head_pose,
+    solve_head_pose_from_matrix,
 )
 
 logger = logging.getLogger("eyefocus.spike")
@@ -92,7 +92,17 @@ def main() -> None:
                 pts = extract_landmarks(result, frame_w, frame_h)
                 if pts is not None:
                     face_detected = True
-                    raw_yaw, pitch, _ = solve_head_pose(pts, camera_matrix)
+                    # Use MediaPipe's built-in transformation matrix for head pose
+                    if (
+                        result.facial_transformation_matrixes is not None
+                        and result.facial_transformation_matrixes[0] is not None
+                    ):
+                        matrix = np.array(
+                            result.facial_transformation_matrixes[0]
+                        ).flatten()
+                        raw_yaw, pitch, _ = solve_head_pose_from_matrix(matrix)
+                    else:
+                        raw_yaw, pitch = None, None
 
                     # Handle ±180° boundary: normalize raw yaw so threshold check works
                     yaw = normalize_yaw(raw_yaw) if raw_yaw is not None else None
