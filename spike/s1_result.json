@@ -1,0 +1,11 @@
+{
+  "spike": "S1_fps_benchmark",
+  "duration_s": 131.1,
+  "total_frames": 3921,
+  "fps_avg": 32.97,
+  "fps_min": 15.6,
+  "fps_max": 61.42,
+  "confidence_avg": 1.0,
+  "resolution": "640x480",
+  "pass": true
+}
