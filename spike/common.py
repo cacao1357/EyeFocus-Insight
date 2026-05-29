@@ -93,7 +93,7 @@ def calculate_ear(eye_points: np.ndarray) -> float:
 
 def calc_cqs(valid_count: int, total_count: int, ear_cv: float) -> float:
     ratio_score = valid_count / max(total_count, 1) * 0.5
-    cv_score = max(0.0, (1.0 - ear_cv * 10.0)) * 0.5
+    cv_score = max(0.0, (1.0 - ear_cv * 5.0)) * 0.5
     return round(min(1.0, ratio_score + cv_score), 3)
 
 
@@ -107,7 +107,7 @@ def create_face_landmarker():
         running_mode=vision.RunningMode.VIDEO,
         num_faces=FACE_MESH.num_faces,
         output_face_blendshapes=False,
-        output_facial_transformation_matrixes=False,
+        output_facial_transformation_matrixes=True,
         min_face_detection_confidence=FACE_MESH.min_detection_confidence,
         min_face_presence_confidence=FACE_MESH.min_presence_confidence,
         min_tracking_confidence=FACE_MESH.min_tracking_confidence,
@@ -186,3 +186,54 @@ def normalize_yaw(yaw: float) -> float:
     elif yaw < -90.0:
         return yaw + 180.0
     return yaw
+
+
+def solve_head_pose_from_matrix(
+    transformation_matrix: np.ndarray,
+) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    """Extract head pose (yaw, pitch, roll) from MediaPipe transformation matrix.
+
+    The 4x4 transformation_matrix maps from the face-model canonical space
+    to the camera/view space. We extract the 3x3 rotation component and
+    decompose it into Euler angles (yaw, pitch, roll) using the
+    OpenCV convention: rotation of the object (face) relative to the camera.
+
+    The decomposition follows the standard XYZ cardan sequence:
+      - pitch (X-axis rotation): rotation around the camera's X axis
+      - yaw   (Y-axis rotation): rotation around the camera's Y axis
+      - roll  (Z-axis rotation): rotation around the camera's Z axis
+    All angles are returned in degrees.
+    """
+    if transformation_matrix is None:
+        return None, None, None
+
+    # transformation_matrix is a flat list or 1D array of length 16 (row-major 4x4)
+    if transformation_matrix.shape == (16,):
+        mat = transformation_matrix.reshape(4, 4)
+    elif transformation_matrix.shape == (4, 4):
+        mat = transformation_matrix
+    else:
+        return None, None, None
+
+    # Extract the 3x3 rotation block (top-left)
+    rmat = mat[:3, :3].astype(np.float64)
+
+    # Decompose into Euler angles (OpenCV convention: pitch-x, yaw-y, roll-z)
+    sy = np.sqrt(rmat[0, 0] ** 2 + rmat[1, 0] ** 2)
+    singular = sy < 1e-6
+
+    if singular:
+        # Gimbal lock: pitch = ±90°
+        pitch = np.arctan2(-rmat[2, 0], sy)
+        yaw = np.arctan2(-rmat[0, 1], rmat[1, 1]) if not singular else 0.0
+        roll = 0.0
+    else:
+        pitch = np.arctan2(-rmat[2, 0], sy)
+        yaw = np.arctan2(rmat[1, 0], rmat[0, 0])
+        roll = np.arctan2(rmat[2, 1], rmat[2, 2])
+
+    return (
+        float(np.degrees(yaw)),
+        float(np.degrees(pitch)),
+        float(np.degrees(roll)),
+    )

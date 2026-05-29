@@ -1,0 +1,31 @@
+{
+  "spike": "S5_ear_variance",
+  "label": "no_glasses",
+  "total_frames": 149,
+  "valid_frames": 149,
+  "valid_ratio": 1.0,
+  "ear_mean": 0.3996,
+  "ear_std": 0.05,
+  "ear_variance": 0.002503,
+  "window_variances": [
+    0.002527,
+    0.000959,
+    4.6e-05,
+    0.002686,
+    0.001662,
+    0.000424,
+    0.000194,
+    0.007134,
+    0.000633
+  ],
+  "window_variance_mean": 0.001807,
+  "window_variance_max": 0.007134,
+  "window_variance_std": 0.002092,
+  "window_count": 9,
+  "params": {
+    "yaw_thresh": 10.0,
+    "pitch_thresh": 20.0,
+    "ear_min": 0.08,
+    "variance_window": 15
+  }
+}

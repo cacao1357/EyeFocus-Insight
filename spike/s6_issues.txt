@@ -1,0 +1,37 @@
+S6: 依赖完整性验证报告
+日期: 2026-05-29
+测试人: D1
+
+一、测试步骤
+1. 删除旧 .venv（如存在）
+2. 创建全新 venv: python -m venv test_venv
+3. 安装依赖: pip install -r requirements.txt
+4. 验证导入: cv2, mediapipe, numpy, pandas, matplotlib, yaml, PIL
+5. 验证 spike 模块导入: config, spike.common
+
+二、测试结果
+
+依赖安装: ✅ 成功
+  - opencv-python>=4.8.0  → 4.13.0
+  - mediapipe>=0.10.30    → 0.10.35
+  - numpy>=1.24.0         → 2.4.6
+  - pandas>=2.0.0         → 3.0.3
+  - matplotlib>=3.7.0      → 3.10.9
+  - pyyaml>=6.0           → 6.0.3
+  - pillow>=10.0.0        → 12.2.0
+  - pytest>=7.0.0         → 9.0.3
+  - pytest-cov>=4.0.0     → 7.1.0
+
+导入验证: ✅ 全部通过
+  cv2: 4.13.0
+  mediapipe: 0.10.35
+  numpy: 2.4.6
+  pandas: 3.0.3
+  matplotlib: 3.10.9
+
+spike 模块导入: ✅ 通过
+  config, spike.common 全部正常
+
+三、结论
+
+PASS — requirements.txt 依赖完整，requirements.lock 可考虑添加以锁定精确版本。
