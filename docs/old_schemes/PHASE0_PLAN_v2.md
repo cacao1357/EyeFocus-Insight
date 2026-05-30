@@ -1,6 +1,6 @@
 # Phase 0：Spike 预开发验证 — 任务安排
 
-> **版本**：v3.0 | **制定日期**：2026-05-28 | **更新日期**：2026-05-30
+> **版本**：v2.0 | **制定日期**：2026-05-28 | **更新日期**：2026-05-30
 > **时间**：Day 1-3（3 天）
 > **目的**：三人全员参与核心技术验证，确保 MediaPipe + OpenCV + solvePnP 在目标平台上可行性过关后才进入编码阶段。
 > **Gate Check**：Day 3 结束前 S1/S2/S3/S7 全部通过 → 进入 Phase 1。
@@ -129,35 +129,6 @@ Day 1 上午        Day 1 下午          Day 2               Day 3
 
 ---
 
-### 2.8 S9：Blendshapes 数据采集（补充测试，Day 4，D1 执行）✅ 已完成
-
-| 任务ID | 负责人 | 文件 | 描述 | 操作 | 验收标准 | 结果 |
-|--------|--------|------|------|------|---------|------|
-| S9-no | **D1** | `spike/baseline_proto.py` | 不戴眼镜 blendshapes 采集 | `python spike/baseline_proto.py --label no_glasses` | 保存到 `spike/results/D1/s2_blendshapes_no_glasses.json` | **198帧, CQS=0.865 ✅** |
-| S9-wg | **D1** | 同上 | 戴眼镜 blendshapes 采集 | `python spike/baseline_proto.py --label with_glasses` | 保存到 `spike/results/D1/s2_blendshapes_with_glasses.json` | **200帧, CQS=0.851 ✅** |
-| S9-analysis | **D1** | `spike/results/D1/s9_blendshapes_analysis.txt` | Blendshapes 差异分析 | 分析 52 维 blendshapes 差异 | 输出分析报告 | **眯眼比率差异显著：0.40 vs 0.91 ✅** |
-
-**关键发现**：
-- 戴眼镜时 `eyeSquint` 眯眼比率显著更高（0.91 vs 0.40）
-- 戴眼镜时 `eyeBlink` 眨眼频率更高（5.3x）
-- 戴眼镜时 `eyeWide` 眼睛睁开程度更低（-4.9x）
-- **结论**：Blendshapes 可有效区分眼镜状态，眯眼比率为最佳特征
-
----
-
-### 2.9 S10：EPA 眼动活跃度分析（补充测试，Day 4，D1 执行）✅ 已完成
-
-| 任务ID | 负责人 | 文件 | 描述 | 操作 | 验收标准 | 结果 |
-|--------|--------|------|------|------|---------|------|
-| S10 | **D1** | `spike/results/D1/s10_epa_analysis.txt` | EPA/眼动活跃度分析 | 基于 S9 blendshapes 数据计算眼动指标 | 输出分析报告 | **眼动活跃度：不戴眼镜 0.2155 vs 戴眼镜 0.1255 ✅** |
-
-**关键发现**：
-- 眼动活跃度：不戴眼镜比戴眼镜高 72%
-- 眯眼比率：戴眼镜显著更高（0.91 vs 0.40）
-- **结论**：可作为眼镜检测辅助特征 + 疲劳检测中眼镜用户的影响因素
-
----
-
 ## 三、Gate Check（Day 3 结束）
 
 **以下 4 项全部 PASS → 进入 Phase 1。**
@@ -196,10 +167,6 @@ Day 1 上午        Day 1 下午          Day 2               Day 3
 | `spike/results/D1/s7c_no_glasses_bright.json` | S7 | 不戴眼镜 + 明亮光照 | ✅ |
 | `spike/results/D1/s7d_no_glasses_dark.json` | S7 | 不戴眼镜 + 暗光照 | ✅ |
 | `spike/results/D1/s7_lighting_report.txt` | S7 | 光照联合验证报告 | ✅ |
-| `spike/results/D1/s2_blendshapes_no_glasses.json` | S9 | 不戴眼镜 Blendshapes 数据（198帧）| ✅ |
-| `spike/results/D1/s2_blendshapes_with_glasses.json` | S9 | 戴眼镜 Blendshapes 数据（200帧）| ✅ |
-| `spike/results/D1/s9_blendshapes_analysis.txt` | S9 | Blendshapes 差异分析报告 | ✅ |
-| `spike/results/D1/s10_epa_analysis.txt` | S10 | EPA 眼动活跃度分析报告 | ✅ |
 
 ---
 
@@ -220,11 +187,10 @@ Day 1 上午        Day 1 下午          Day 2               Day 3
 
 | 问题 | 来源 | 建议方案 | 优先级 |
 |------|------|---------|--------|
-| 眼镜自动检测失效 | S5/S9 | ✅ Blendshapes 验证有效：眯眼比率为最佳特征（S9实测 0.40 vs 0.91）| P0 |
+| 眼镜自动检测失效 | S5 | Phase 1 探索 MediaPipe blendshapes + 眼角关键点距离双保险 | P0 |
 | CQS 公式系数 | S2 | 已修复为 `ear_cv * 3.0`，待更多数据验证 | P1 |
 | main.py 安全退出 | spike | Phase 1 需实现线程超时强杀等安全退出方案 | P1 |
 | 疲劳 LSTM 模型 | - | Phase 1 MVP 先用启发式阈值，Phase 2 后收集数据再迭代 | P2 |
-| EPA 虹膜面积 | S10 | ✅ Blendshapes 可作为眼动活跃度代理指标，眯眼比率可辅助疲劳检测 | P1 |
 
 ---
 
@@ -266,8 +232,7 @@ Day 1 上午        Day 1 下午          Day 2               Day 3
 |------|------|---------|
 | v1.0 | 2026-05-28 | 初始版本 |
 | v2.0 | 2026-05-30 | Phase 0 全部完成，更新实测结果、S2 Bug 修复记录、眼镜检测失效结论、Gate Check 最终结果 |
-| v3.0 | 2026-05-30 | 与 PROJECT_PLAN.md v3.0 同步版本号；补充 MediaPipe GPU 加速确认结论（pip 包为 CPU Only） |
 
 ---
 
-> **文档版本**：Phase 0 v3.0 | **下一步**：全员评审 Phase 0 结果 → 启动 Phase 1 框架开发
+> **文档版本**：Phase 0 v2.0 | **下一步**：全员评审 Phase 0 结果 → 启动 Phase 1 框架开发
