@@ -34,6 +34,9 @@ class EyeConfig:
     left_indices: tuple = (33, 160, 158, 133, 153, 144)
     right_indices: tuple = (362, 385, 387, 263, 380, 373)
     ear_min: float = 0.08
+    # ⚠️ DEPRECATED: glasses_variance_thresh based on flawed assumption
+    # Phase 0 实测：戴眼镜 EAR 方差反而更低（0.00002-0.003 vs 不戴眼镜 0.004-0.007）
+    # 阈值 0.003 无法可靠区分，详见 ISSUES_REPORT.md §1.1
     glasses_variance_thresh: float = 0.003
 
 
@@ -42,6 +45,7 @@ class BaselineConfig:
     collection_duration: float = 7.0
     trim_ratio: float = 0.10
     min_valid_frames: int = 30
+    cqs_threshold: float = 0.60  # Lowered from 0.70 — Phase 0 实测最高 0.629
 
 
 @dataclass(frozen=True)
