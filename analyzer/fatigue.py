@@ -244,7 +244,6 @@ class FatigueAnalyzer:
 
         # 低疲劳
         return FatigueLevel.LOW
-        return FatigueLevel.LOW
 
     def get_record(self, session_id: str, timestamp: float) -> Optional[FatigueRecord]:
         """获取疲劳记录

@@ -140,8 +140,8 @@ cp PHASE0_PLAN.md docs/old_schemes/PHASE0_PLAN_v1.md
 
 ### 当前版本
 
-- **PROJECT_PLAN.md**：v3.2（2026-05-30）
-- **PHASE0_PLAN.md**：v3.0（2026-05-30）— Phase 0 执行计划与结果
+- **PROJECT_PLAN.md**：v3.3（2026-05-30）— 新增 §6.8 眨眼检测算法改进
+- **PHASE1_PLAN.md**：v1.1（2026-05-30）— 新增 T145-T147 眨眼算法改进任务
 - **PHASE0_SUMMARY.md**：v3.0（2026-05-30）— Phase 0 验证报告
 
 ### 归档目录
@@ -153,7 +153,7 @@ docs/old_schemes/
 ├── PROJECT_PLAN_v3.md        # 双轨开发策略 + 光照/眼镜检测增强
 ├── PHASE0_PLAN_v2.md        # Phase 0 执行计划 v2.0
 └── PHASE0_SUMMARY_v1.md     # Phase 0 验证报告 v1.0
-└── （当前版本为 PROJECT_PLAN.md，即 v3.1）
+└── （当前版本为 PROJECT_PLAN.md，即 v3.3）
 ```
 
 ---

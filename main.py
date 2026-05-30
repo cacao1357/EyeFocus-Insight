@@ -106,6 +106,9 @@ class EyeFocusApp:
         self._fps_start_time: float = 0.0
         self._fps_frame_count: int = 0
 
+        # 眨眼写入索引（避免重复写入）
+        self._last_written_blink_count: int = 0
+
         # 线程管理
         self._detector_thread: Optional[threading.Thread] = None
         self._shutdown_event: threading.Event = threading.Event()
@@ -177,6 +180,10 @@ class EyeFocusApp:
 
         # 注册信号处理器
         self._register_signal_handlers()
+
+        # 自动开始校准（如果启用）
+        if self.config.enable_calibration:
+            self.start_calibration()
 
         # 启动主循环
         self._main_loop()
@@ -308,10 +315,12 @@ class EyeFocusApp:
             )
             self._db.write_frame(self._session_id, frame_record)
 
-        # 存储眨眼事件
+        # 存储眨眼事件（只写入新产生的）
         if self._db and self._session_id:
             blink_events = self._eye_detector.get_blink_events()
-            for event in blink_events:
+            # 只写入上次之后的新眨眼事件
+            new_blinks = blink_events[self._last_written_blink_count:]
+            for event in new_blinks:
                 self._db.write_blink_event(
                     self._session_id,
                     BlinkEvent(
@@ -322,6 +331,7 @@ class EyeFocusApp:
                         ear_nadir=event.ear_nadir,
                     )
                 )
+            self._last_written_blink_count = len(blink_events)
 
         # 存储疲劳记录
         if self._db and self._session_id and self._latest_fatigue_result is not None:

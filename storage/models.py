@@ -51,7 +51,7 @@ class Session:
 class FrameRecord:
     """单帧检测数据模型"""
     session_id: str
-    timestamp: float  # 相对会话开始的秒数
+    timestamp: float  # Unix 时间戳（秒）
     ear_left: float
     ear_right: float
     ear_avg: float

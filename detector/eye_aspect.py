@@ -21,7 +21,7 @@ logger = logging.getLogger("eyefocus.detector")
 
 
 # 默认 EAR 阈值配置
-DEFAULT_EAR_THRESHOLD = 0.21  # 通用阈值
+DEFAULT_EAR_THRESHOLD = 0.26  # 眨眼阈值，高于此值视为睁眼状态
 DEFAULT_EAR_MIN = 0.08  # EAR 最小值（眼睛闭合）
 DEFAULT_BLINK_DURATION_THRESHOLD = 0.3  # 秒，低于此时间为眨眼
 DEFAULT_BLINK_CONFIRM_FRAMES = 2  # 连续低于阈值才确认为眨眼
@@ -72,6 +72,7 @@ class EyeAspectDetector:
         confirm_frames: int = DEFAULT_BLINK_CONFIRM_FRAMES,
         enable_adaptive_threshold: bool = False,
         adaptive_window_size: int = 30,
+        fps: float = 30.0,
     ):
         """初始化 EAR 检测器
 
@@ -82,6 +83,7 @@ class EyeAspectDetector:
             confirm_frames: 确认眨眼的连续帧数
             enable_adaptive_threshold: 是否启用自适应阈值
             adaptive_window_size: 自适应阈值窗口大小（帧数）
+            fps: 帧率（用于计算时长）
         """
         self.ear_threshold = ear_threshold
         self.ear_min = ear_min
@@ -89,6 +91,7 @@ class EyeAspectDetector:
         self.confirm_frames = confirm_frames
         self.enable_adaptive_threshold = enable_adaptive_threshold
         self.adaptive_window_size = adaptive_window_size
+        self.fps = fps
 
         # 眨眼检测状态
         self._blink_frames: Deque[bool] = deque(maxlen=adaptive_window_size)
@@ -98,7 +101,6 @@ class EyeAspectDetector:
         self._blink_events: List[BlinkEvent] = []
         self._current_blink_start: Optional[int] = None
         self._current_blink_start_time: Optional[float] = None
-        self._blinks_in_progress: int = 0
 
         # 帧计数
         self._frame_count: int = 0
@@ -180,8 +182,7 @@ class EyeAspectDetector:
         # 闭眼开始
         if is_blink and self._current_blink_start is None:
             self._current_blink_start = self._frame_count
-            self._current_blink_start_time = (self._frame_count - 1) / 30.0  # 假设 30 FPS
-            self._blinks_in_progress += 1
+            self._current_blink_start_time = (self._frame_count - 1) / self.fps
 
         # 睁眼结束
         elif not is_blink and self._current_blink_start is not None:
@@ -190,7 +191,7 @@ class EyeAspectDetector:
             if sum(recent_blinks) >= 1:  # 至少 1 帧确认
                 blink_end = self._frame_count
                 blink_start = self._current_blink_start
-                duration = (blink_end - blink_start) / 30.0  # 假设 30 FPS
+                duration = (blink_end - blink_start) / self.fps
 
                 # 获取 EAR 最低值
                 window_start = max(0, len(self._recent_ears) - self.confirm_frames - 1)
@@ -336,6 +337,6 @@ def create_eye_aspect_detector(
     from config import EYE
 
     return EyeAspectDetector(
-        ear_threshold=ear_threshold or EYE.ear_min * 2.5,  # 经验公式
+        ear_threshold=ear_threshold or DEFAULT_EAR_THRESHOLD,  # 使用默认值 0.26
         ear_min=ear_min or EYE.ear_min,
     )
