@@ -158,6 +158,33 @@ docs/old_schemes/
 
 ---
 
+## Git 协作规则
+
+### 分支与合并策略
+
+| 场景 | 规则 |
+|------|------|
+| **功能分支提交** | 合并到 `main` 后**直接删除分支**（已启用 `delete-branch-on-merge`） |
+| **PR 合并** | 项目负责人（D1）拥有直接合并权限，**直接 Merge PR 到 main**，无需 Code Review |
+| **远程推送** | 如果可以合并到 main，直接推送并合并；不需要创建 PR |
+
+**操作流程**：
+```bash
+# 1. 切换到 main 并拉取最新
+git checkout main && git pull origin main
+
+# 2. 创建功能分支（如果需要）
+git checkout -b feat/xxx
+
+# 3. 提交并推送到远程
+git add . && git commit -m "feat: xxx" && git push
+
+# 4. 直接合并到 main（负责人权限）
+git checkout main && git merge --no-ff feat/xxx && git branch -d feat/xxx
+```
+
+---
+
 ## 开发环境硬件配置（主开发者 D1）
 
 > 用于参考开发可行性和性能估算
