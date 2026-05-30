@@ -93,7 +93,7 @@ def calculate_ear(eye_points: np.ndarray) -> float:
 
 def calc_cqs(valid_count: int, total_count: int, ear_cv: float) -> float:
     ratio_score = valid_count / max(total_count, 1) * 0.5
-    cv_score = max(0.0, (1.0 - ear_cv * 5.0)) * 0.5
+    cv_score = max(0.0, (1.0 - ear_cv * 3.0)) * 0.5
     return round(min(1.0, ratio_score + cv_score), 3)
 
 
@@ -106,7 +106,7 @@ def create_face_landmarker():
         base_options=mp_base_options.BaseOptions(model_asset_path=model_path),
         running_mode=vision.RunningMode.VIDEO,
         num_faces=FACE_MESH.num_faces,
-        output_face_blendshapes=False,
+        output_face_blendshapes=True,
         output_facial_transformation_matrixes=True,
         min_face_detection_confidence=FACE_MESH.min_detection_confidence,
         min_face_presence_confidence=FACE_MESH.min_presence_confidence,

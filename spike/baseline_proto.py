@@ -2,12 +2,16 @@
 S2: 基线校准算法原型 (Baseline Calibration Prototype)
 实现自适应基线校准算法：7秒采集 → 三级过滤 → 截尾均值 → CQS评分 → 眼镜检测。
 
-用法: python spike/baseline_proto.py
+用法: python spike/baseline_proto.py [--label <name>]
+  --label: 可选标签，如 "no_glasses", "with_glasses", "run1"
+  结果保存到 spike/s2_result.json 和 spike/results/D1/s2_blendshapes_<label>.json
+
 验收: 3次校准 baseline_ear CV < 10%, CQS PASS >= 80%
 
 修复记录:
   - 消除重复代码，使用 spike/common.py 中的统一算法实现
   - 修复: os._exit() 在 with 块内导致窗口/摄像头无法正确清理的问题
+  - 新增: Blendshapes 数据采集功能
 """
 
 import sys
@@ -15,6 +19,7 @@ import os
 import time
 import json
 import logging
+import argparse
 
 import cv2
 import mediapipe as mp
@@ -41,8 +46,9 @@ WINDOW_NAME = "S2: Baseline Calibration"
 
 
 def collect_baseline_data(cap, face_landmarker, camera_matrix, frame_w, frame_h):
-    """采集基线数据，返回 (ear_sequence, total_frames, valid_frames)。"""
+    """采集基线数据，返回 (ear_sequence, blendshapes_sequence, total_frames, valid_frames)。"""
     ear_sequence = []
+    blendshapes_sequence = []
     total_frames = 0
     valid_frames = 0
     start_time = time.time()
@@ -66,6 +72,13 @@ def collect_baseline_data(cap, face_landmarker, camera_matrix, frame_w, frame_h)
             pts = extract_landmarks(result, frame_w, frame_h)
             if pts is not None:
                 face_detected = True
+                # Collect blendshapes if available
+                frame_blendshapes = None
+                if result.face_blendshapes and result.face_blendshapes[0]:
+                    # blendshapes is a list of Blendshapes objects with .category_name and .score
+                    bs = result.face_blendshapes[0]
+                    frame_blendshapes = [(b.category_name, b.score) for b in bs]
+
                 # Use MediaPipe's built-in transformation matrix for head pose
                 if (
                     result.facial_transformation_matrixes is not None
@@ -88,6 +101,8 @@ def collect_baseline_data(cap, face_landmarker, camera_matrix, frame_w, frame_h)
                         is_valid = True
                         valid_frames += 1
                         ear_sequence.append(ear_avg)
+                        if frame_blendshapes is not None:
+                            blendshapes_sequence.append(frame_blendshapes)
 
             total_frames += 1
             elapsed = time.time() - start_time
@@ -115,9 +130,9 @@ def collect_baseline_data(cap, face_landmarker, camera_matrix, frame_w, frame_h)
                 break
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
-                return None, None, None, True  # quit requested
+                return None, None, None, None, True  # quit requested
 
-    return ear_sequence, total_frames, valid_frames, False
+    return ear_sequence, blendshapes_sequence, total_frames, valid_frames, False
 
 
 def compute_baseline_stats(ear_sequence, total_frames, valid_frames):
@@ -144,9 +159,15 @@ def main():
     import mediapipe as mp
     from mediapipe import Image
 
+    parser = argparse.ArgumentParser(description="S2 基线校准")
+    parser.add_argument("--label", type=str, default="default",
+                        help="标签，如 'no_glasses', 'with_glasses', 'run1'")
+    args = parser.parse_args()
+
     setup_logging()
     logger.info("基线校准开始")
     logger.info(f"采集时长: {BASELINE.collection_duration}s")
+    logger.info(f"标签: {args.label}")
     logger.info("请保持正常坐姿，自然注视屏幕。")
     print()
 
@@ -161,7 +182,7 @@ def main():
         frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         camera_matrix = get_camera_matrix(frame_w, frame_h)
 
-        ear_sequence, total_frames, valid_frames, quit_req = collect_baseline_data(
+        ear_sequence, blendshapes_sequence, total_frames, valid_frames, quit_req = collect_baseline_data(
             cap, face_landmarker, camera_matrix, frame_w, frame_h
         )
 
@@ -190,7 +211,7 @@ def main():
         "ear_cv": round(ear_cv, 3),
         "ear_variance": round(ear_variance, 6),
         "cqs": cqs,
-        "cqs_pass": cqs >= 0.70,
+        "cqs_pass": cqs >= BASELINE.cqs_threshold,
         "glasses_mode": glasses_mode,
         "params": {
             "yaw_thresh": HEAD_POSE.yaw_thresh,
@@ -205,6 +226,29 @@ def main():
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(result_dict, f, indent=2, ensure_ascii=False)
 
+    # Save blendshapes data
+    blendshapes_output_path = None
+    if blendshapes_sequence:
+        blendshapes_result = {
+            "spike": "S2_blendshapes",
+            "label": args.label,
+            "total_frames": total_frames,
+            "valid_frames": valid_frames,
+            "baseline_ear": round(baseline_ear, 4),
+            "ear_cv": round(ear_cv, 3),
+            "cqs": cqs,
+            "cqs_pass": cqs >= BASELINE.cqs_threshold,
+            "blendshapes_count": len(blendshapes_sequence),
+            "sample_blendshapes": blendshapes_sequence[:5] if blendshapes_sequence else [],
+            "blendshapes_names": [b[0] for b in blendshapes_sequence[0]] if blendshapes_sequence else [],
+        }
+        # Save to results/D1 directory
+        results_dir = os.path.join(os.path.dirname(__file__), "results", "D1")
+        os.makedirs(results_dir, exist_ok=True)
+        blendshapes_output_path = os.path.join(results_dir, f"s2_blendshapes_{args.label}.json")
+        with open(blendshapes_output_path, "w", encoding="utf-8") as f:
+            json.dump(blendshapes_result, f, indent=2, ensure_ascii=False)
+
     print("\n")
     print("=" * 50)
     print("       S2: 基线校准结果")
@@ -218,6 +262,12 @@ def main():
     print(f"  眼镜模式:     {'是' if result_dict['glasses_mode'] else '否'}")
     print("=" * 50)
     print(f"\n结果已保存到: {output_path}")
+    if blendshapes_output_path:
+        print(f"Blendshapes 已保存到: {blendshapes_output_path}")
+        print(f"  - 有效帧数: {len(blendshapes_sequence)}")
+        if blendshapes_sequence:
+            print(f"  - Blendshapes 维度: {len(blendshapes_sequence[0])}")
+            print(f"  - 前5个特征: {[b[0] for b in blendshapes_sequence[0][:5]]}")
 
     cleanup_exit(0)
 
