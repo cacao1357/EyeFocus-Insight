@@ -169,8 +169,9 @@ class TestCalcCqs:
         assert cqs == 0.5
 
     def test_high_cv_penalty(self):
+        # ear_cv=0.2: cv_score = (1 - 0.6) * 0.5 = 0.2, ratio_score = 0.5, cqs = 0.7
         cqs = calc_cqs(100, 100, 0.2)
-        assert cqs <= 0.5
+        assert cqs == 0.7
 
     def test_zero_total_count(self):
         cqs = calc_cqs(0, 0, 0.0)

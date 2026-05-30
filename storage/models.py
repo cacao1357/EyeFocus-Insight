@@ -1,0 +1,139 @@
+"""
+storage/models.py — EyeFocus Insight 数据模型定义
+
+定义会话、帧记录、专注度记录、疲劳记录等核心数据模型。
+"""
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from typing import List, Optional
+
+
+class FatigueLevel(Enum):
+    """疲劳等级枚举"""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class GlassesMode(Enum):
+    """眼镜模式枚举"""
+    UNKNOWN = "unknown"
+    WITH_GLASSES = "with_glasses"
+    WITHOUT_GLASSES = "without_glasses"
+    MANUAL_GLASSES = "manual_glasses"
+    MANUAL_NO_GLASSES = "manual_no_glasses"
+
+
+@dataclass
+class Session:
+    """会话数据模型"""
+    session_id: str
+    start_time: datetime
+    end_time: Optional[datetime] = None
+    baseline_ear: Optional[float] = None
+    baseline_yaw_std: Optional[float] = None
+    baseline_pitch_std: Optional[float] = None
+    cqs_score: Optional[float] = None
+    glasses_mode: GlassesMode = GlassesMode.UNKNOWN
+    is_calibrated: bool = False
+    is_active: bool = True
+
+    def duration_seconds(self) -> Optional[float]:
+        """计算会话时长（秒）"""
+        if self.end_time is None:
+            return None
+        return (self.end_time - self.start_time).total_seconds()
+
+
+@dataclass
+class FrameRecord:
+    """单帧检测数据模型"""
+    session_id: str
+    timestamp: float  # 相对会话开始的秒数
+    ear_left: float
+    ear_right: float
+    ear_avg: float
+    yaw: float
+    pitch: float
+    roll: float
+    gaze_score: float  # 视线聚焦分数 0-100
+    brightness: float  # 帧亮度 0-255
+    face_detected: bool
+    blendshapes: Optional[dict] = None  # MediaPipe blendshapes 数据
+
+
+@dataclass
+class BlinkEvent:
+    """眨眼事件模型"""
+    session_id: str
+    start_timestamp: float
+    end_timestamp: float
+    duration_seconds: float
+    ear_nadir: float  # 眨眼时的最小 EAR 值
+
+
+@dataclass
+class FocusRecord:
+    """专注度记录模型（滑动窗口聚合）"""
+    session_id: str
+    window_start: float
+    window_end: float
+    focus_score: float  # 0-100
+    eye_score: float  # 眼部专注分数 0-100
+    head_score: float  # 头部姿态分数 0-100
+    gaze_score: float  # 视线分数 0-100
+    blink_rate: float  # 眨眼频率 (次/分钟)
+    avg_ear: float
+    avg_yaw: float
+    avg_pitch: float
+
+
+@dataclass
+class FatigueRecord:
+    """疲劳分析记录模型"""
+    session_id: str
+    timestamp: float
+    fatigue_level: FatigueLevel
+    blink_rate: float  # 眨眼频率 (次/分钟)
+    avg_ear_nadir: float  # 平均眨眼 EAR 谷值
+    head_stability: float  # 头部稳定性分数 0-100
+    cumulative_fatigue_score: float  # 累积疲劳分数 0-100
+
+
+@dataclass
+class GlassesDetectionResult:
+    """眼镜检测结果模型"""
+    is_glasses: bool
+    confidence: float  # 置信度 0-1
+    squint_ratio: Optional[float] = None  # blendshapes 眯眼比率
+    inner_canthus_distance: Optional[float] = None  # 眼角内侧距离
+    method: Optional[str] = None  # 检测方法: "blendshapes", "distance", "both"
+
+
+@dataclass
+class BaselineResult:
+    """基线校准结果模型"""
+    session_id: str
+    is_valid: bool
+    cqs_score: float
+    ear_mean: float
+    ear_std: float
+    yaw_std: float
+    pitch_std: float
+    valid_frame_count: int
+    total_frame_count: int
+    glasses_mode: GlassesMode = GlassesMode.UNKNOWN
+    calibration_timestamp: datetime = field(default_factory=datetime.now)
+
+
+@dataclass
+class SystemStatus:
+    """系统状态模型"""
+    camera_available: bool
+    model_loaded: bool
+    is_calibrated: bool
+    current_session_id: Optional[str] = None
+    fps: float = 0.0
+    last_error: Optional[str] = None

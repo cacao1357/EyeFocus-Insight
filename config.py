@@ -1,9 +1,15 @@
 """
 EyeFocus Insight — 集中配置管理
 所有模块共享的常量和参数统一定义在此文件。
+
+支持两种配置方式：
+1. dataclass 常量（默认）
+2. YAML 配置文件（可选）
 """
 
+import os
 from dataclasses import dataclass, field
+from typing import Any, Dict, Optional
 
 
 @dataclass(frozen=True)
@@ -79,3 +85,65 @@ BASELINE = BaselineConfig()
 BENCHMARK = BenchmarkConfig()
 HEAD_POSE_PROTO = HeadPoseProtoConfig()
 EAR_VARIANCE = EarVarianceConfig()
+
+
+# YAML 配置加载
+_yaml_config: Optional[Dict[str, Any]] = None
+
+
+def load_yaml_config(config_path: Optional[str] = None) -> Dict[str, Any]:
+    """从 YAML 文件加载配置
+
+    Args:
+        config_path: YAML 文件路径，默认为 config.yaml
+
+    Returns:
+        配置字典
+    """
+    global _yaml_config
+
+    if _yaml_config is not None:
+        return _yaml_config
+
+    if config_path is None:
+        config_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "config.yaml"
+        )
+
+    if not os.path.exists(config_path):
+        return {}
+
+    try:
+        import yaml
+        with open(config_path, "r", encoding="utf-8") as f:
+            _yaml_config = yaml.safe_load(f)
+        return _yaml_config or {}
+    except ImportError:
+        # PyYAML 未安装，使用默认配置
+        return {}
+    except Exception as e:
+        print(f"Warning: Failed to load config.yaml: {e}")
+        return {}
+
+
+def get_yaml_value(*keys, default: Any = None) -> Any:
+    """从 YAML 配置中获取值
+
+    Args:
+        keys: 配置键路径，例如 get_yaml_value("camera", "index")
+        default: 默认值
+
+    Returns:
+        配置值或默认值
+    """
+    config = load_yaml_config()
+    value = config
+    for key in keys:
+        if isinstance(value, dict):
+            value = value.get(key)
+        else:
+            return default
+        if value is None:
+            return default
+    return value
