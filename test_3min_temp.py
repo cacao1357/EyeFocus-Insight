@@ -4,7 +4,7 @@ import time
 import cv2
 import numpy as np
 from storage.db import DatabaseManager, create_database_manager
-from storage.models import BlinkEvent, FrameRecord
+from storage.models import BlinkRecord, FrameRecord
 from detector.face_mesh import FaceMeshDetector, create_face_mesh_detector
 from detector.eye_aspect import EyeAspectDetector, create_eye_aspect_detector
 from detector.gaze import GazeDetector, create_gaze_detector
@@ -87,7 +87,7 @@ while time.time() - start_time < 180:  # 3 minutes
     for event in new_blinks:
         db.write_blink_event(
             session_id,
-            BlinkEvent(
+            BlinkRecord(
                 session_id=session_id,
                 start_timestamp=event.start_time,
                 end_timestamp=event.end_time,

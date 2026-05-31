@@ -1,6 +1,6 @@
 # storage package
 from storage.models import (
-    BlinkEvent,
+    BlinkRecord,
     FatigueLevel,
     FatigueRecord,
     FocusRecord,
@@ -15,7 +15,7 @@ from storage.db import DatabaseManager, create_database_manager
 __all__ = [
     "Session",
     "FrameRecord",
-    "BlinkEvent",
+    "BlinkRecord",
     "FocusRecord",
     "FatigueRecord",
     "GlassesMode",

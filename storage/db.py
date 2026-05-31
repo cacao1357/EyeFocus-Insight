@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from storage.models import (
-    BlinkEvent,
+    BlinkRecord,
     FatigueLevel,
     FatigueRecord,
     FocusRecord,
@@ -556,7 +556,7 @@ class DatabaseManager:
 
     # ========== Blink Events ==========
 
-    def write_blink_event(self, session_id: str, event: BlinkEvent) -> None:
+    def write_blink_event(self, session_id: str, event: BlinkRecord) -> None:
         """写入眨眼事件"""
         with self._get_cursor() as cursor:
             cursor.execute(
@@ -574,7 +574,7 @@ class DatabaseManager:
                 ),
             )
 
-    def get_blink_events(self, session_id: str) -> List[BlinkEvent]:
+    def get_blink_events(self, session_id: str) -> List[BlinkRecord]:
         """获取眨眼事件"""
         with self._get_cursor() as cursor:
             cursor.execute(
@@ -584,7 +584,7 @@ class DatabaseManager:
             rows = cursor.fetchall()
 
         return [
-            BlinkEvent(
+            BlinkRecord(
                 session_id=row["session_id"],
                 start_timestamp=row["start_timestamp"],
                 end_timestamp=row["end_timestamp"],

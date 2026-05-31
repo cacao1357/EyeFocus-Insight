@@ -5,9 +5,9 @@ analyzer/focus.py — 专注度评分算法
 计算专注度评分（0-100 分）。
 
 评分权重：
-- 眼部专注 (eye_score): 50% — EAR 是否在正常范围
-- 头部姿态 (head_score): 25% — 是否正视屏幕
-- 视线方向 (gaze_score): 25% — 视线是否聚焦
+- 眼部专注 (eye_score): 35% — EAR 是否在正常范围
+- 头部姿态 (head_score): 30% — 是否正视屏幕
+- 视线方向 (gaze_score): 35% — 视线是否聚焦
 """
 
 import logging
@@ -25,9 +25,9 @@ logger = logging.getLogger("eyefocus.analyzer")
 # 默认配置
 DEFAULT_FPS = 30.0
 DEFAULT_WINDOW_SIZE = 5.0  # 秒
-DEFAULT_EYE_WEIGHT = 0.50
-DEFAULT_HEAD_WEIGHT = 0.25
-DEFAULT_GAZE_WEIGHT = 0.25
+DEFAULT_EYE_WEIGHT = 0.35
+DEFAULT_HEAD_WEIGHT = 0.30
+DEFAULT_GAZE_WEIGHT = 0.35
 
 
 @dataclass

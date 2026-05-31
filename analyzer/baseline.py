@@ -1,6 +1,9 @@
 """
 analyzer/baseline.py — 基线校准模块
 
+DEPRECATED: 此模块已被 analyzer/user_calibration.py 中的 UserCalibrationManager 取代。
+保留仅用于参考和测试。
+
 提供 BaselineCalibrator 类，用于：
 - 采集用户正常状态下的 EAR、头部姿态数据
 - 计算 CQS (Calibration Quality Score) 评估校准质量
@@ -52,8 +55,22 @@ class CalibrationStatus:
     current_cqs: float = 0.0
 
 
+@dataclass
+class CalibrationStatistics:
+    """校准统计数据"""
+    ear_mean: float
+    ear_std: float
+    yaw_std: float
+    pitch_std: float
+    cqs: float
+    valid_frame_count: int
+    total_frame_count: int
+
+
 class BaselineCalibrator:
     """基线校准器
+
+    DEPRECATED: 使用 analyzer.user_calibration.UserCalibrationManager 代替。
 
     使用方法：
         calibrator = BaselineCalibrator()
@@ -116,6 +133,7 @@ class BaselineCalibrator:
         yaw: Optional[float] = None,
         pitch: Optional[float] = None,
         timestamp: Optional[float] = None,
+        blink_flag: bool = False,
     ) -> bool:
         """添加一帧校准数据
 
@@ -124,11 +142,16 @@ class BaselineCalibrator:
             yaw: 偏航角（度）
             pitch: 俯仰角（度）
             timestamp: 时间戳（秒），默认为从校准开始的时间
+            blink_flag: 当前帧是否处于眨眼状态（眨眼帧会被过滤）
 
         Returns:
             是否接受此帧（True 表示有效帧）
         """
         if not self._is_calibrating:
+            return False
+
+        # 过滤眨眼帧（眨眼期间 EAR 数据不准）
+        if blink_flag:
             return False
 
         if timestamp is None:
@@ -208,34 +231,19 @@ class BaselineCalibrator:
 
         return round(min(1.0, ratio_score + cv_score), 3)
 
-    def is_complete(self) -> bool:
-        """检查校准是否完成"""
-        if not self._is_calibrating:
-            return self._is_complete
+    def _compute_statistics(self) -> Optional[CalibrationStatistics]:
+        """计算校准统计数据（截尾均值 + 过滤 + CQS）
 
-        elapsed = time.time() - self._start_time
-        if elapsed >= self.collection_duration:
-            self._finish()
-            return True
-
-        return False
-
-    def _finish(self) -> None:
-        """完成校准并计算结果"""
-        self._is_calibrating = False
-        self._is_complete = True
-
+        Returns:
+            CalibrationStatistics 对象，或 None（如果数据不足）
+        """
         if len(self._frames) < self.min_valid_frames:
-            logger.warning("校准帧数不足: %d < %d", len(self._frames), self.min_valid_frames)
-            return
+            return None
 
         # 去掉头尾 trim_ratio%
         trim_count = int(len(self._frames) * self.trim_ratio)
-        if trim_count > 0:
-            sorted_frames = sorted(self._frames, key=lambda f: f.timestamp)
-            trimmed = sorted_frames[trim_count:-trim_count] if trim_count > 0 and trim_count * 2 < len(sorted_frames) else sorted_frames
-        else:
-            trimmed = self._frames
+        sorted_frames = sorted(self._frames, key=lambda f: f.timestamp)
+        trimmed = sorted_frames[trim_count:-trim_count] if trim_count > 0 and trim_count * 2 < len(sorted_frames) else sorted_frames
 
         # 按头部姿态过滤有效帧
         valid_frames = [
@@ -244,8 +252,7 @@ class BaselineCalibrator:
         ]
 
         if len(valid_frames) < self.min_valid_frames:
-            logger.warning("校准有效帧不足: %d < %d", len(valid_frames), self.min_valid_frames)
-            return
+            return None
 
         # 计算统计值
         ears = [f.ear for f in valid_frames]
@@ -263,9 +270,42 @@ class BaselineCalibrator:
         cv_score = max(0.0, (1.0 - ear_cv * 3.0)) * 0.5
         cqs = round(min(1.0, ratio_score + cv_score), 3)
 
+        return CalibrationStatistics(
+            ear_mean=ear_mean,
+            ear_std=ear_std,
+            yaw_std=yaw_std,
+            pitch_std=pitch_std,
+            cqs=cqs,
+            valid_frame_count=len(valid_frames),
+            total_frame_count=len(self._frames),
+        )
+
+    def is_complete(self) -> bool:
+        """检查校准是否完成"""
+        if not self._is_calibrating:
+            return self._is_complete
+
+        elapsed = time.time() - self._start_time
+        if elapsed >= self.collection_duration:
+            self._finish()
+            return True
+
+        return False
+
+    def _finish(self) -> None:
+        """完成校准并计算结果"""
+        self._is_calibrating = False
+        self._is_complete = True
+
+        stats = self._compute_statistics()
+        if stats is None:
+            logger.warning("校准帧数不足: %d < %d", len(self._frames), self.min_valid_frames)
+            return
+
         logger.info(
             "校准完成: CQS=%.3f, EAR=%.4f±%.4f, YAW_std=%.2f, PITCH_std=%.2f, 有效帧=%d/%d",
-            cqs, ear_mean, ear_std, yaw_std, pitch_std, len(valid_frames), len(self._frames)
+            stats.cqs, stats.ear_mean, stats.ear_std, stats.yaw_std, stats.pitch_std,
+            stats.valid_frame_count, stats.total_frame_count
         )
 
     def get_result(self) -> Optional[BaselineResult]:
@@ -277,51 +317,22 @@ class BaselineCalibrator:
         if not self._is_complete:
             return None
 
-        if len(self._frames) < self.min_valid_frames:
+        stats = self._compute_statistics()
+        if stats is None:
             return None
 
-        # 去掉头尾
-        trim_count = int(len(self._frames) * self.trim_ratio)
-        sorted_frames = sorted(self._frames, key=lambda f: f.timestamp)
-        trimmed = sorted_frames[trim_count:-trim_count] if trim_count > 0 and trim_count * 2 < len(sorted_frames) else sorted_frames
-
-        # 过滤有效帧
-        valid_frames = [
-            f for f in trimmed
-            if abs(f.yaw) <= self.yaw_thresh and abs(f.pitch) <= self.pitch_thresh
-        ]
-
-        if len(valid_frames) < self.min_valid_frames:
-            return None
-
-        # 计算统计值
-        ears = [f.ear for f in valid_frames]
-        yaws = [f.yaw for f in valid_frames]
-        pitches = [f.pitch for f in valid_frames]
-
-        ear_mean = float(np.mean(ears))
-        ear_std = float(np.std(ears))
-        yaw_std = float(np.std(yaws))
-        pitch_std = float(np.std(pitches))
-
-        # CQS
-        ear_cv = ear_std / max(ear_mean, 1e-6)
-        ratio_score = len(valid_frames) / max(len(self._frames), 1) * 0.5
-        cv_score = max(0.0, (1.0 - ear_cv * 3.0)) * 0.5
-        cqs = round(min(1.0, ratio_score + cv_score), 3)
-
-        is_valid = cqs >= self.cqs_threshold and len(valid_frames) >= self.min_valid_frames
+        is_valid = stats.cqs >= self.cqs_threshold and stats.valid_frame_count >= self.min_valid_frames
 
         return BaselineResult(
             session_id="",  # 会在调用时填充
             is_valid=is_valid,
-            cqs_score=cqs,
-            ear_mean=ear_mean,
-            ear_std=ear_std,
-            yaw_std=yaw_std,
-            pitch_std=pitch_std,
-            valid_frame_count=len(valid_frames),
-            total_frame_count=len(self._frames),
+            cqs_score=stats.cqs,
+            ear_mean=stats.ear_mean,
+            ear_std=stats.ear_std,
+            yaw_std=stats.yaw_std,
+            pitch_std=stats.pitch_std,
+            valid_frame_count=stats.valid_frame_count,
+            total_frame_count=stats.total_frame_count,
             glasses_mode=self._glasses_mode,
         )
 

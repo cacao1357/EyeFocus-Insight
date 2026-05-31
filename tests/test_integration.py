@@ -110,12 +110,10 @@ class TestEyeFocusAppIntegration:
         app._overlay = MagicMock()
 
         # 初始化分析器（使用 mock）
-        from analyzer.baseline import BaselineCalibrator
         from analyzer.focus import FocusAnalyzer
         from analyzer.glasses import GlassesDetector
         from analyzer.fatigue import FatigueAnalyzer
 
-        app._calibrator = MagicMock()  # Mock BaselineCalibrator
         app._focus_analyzer = MagicMock()  # Mock FocusAnalyzer
         app._glasses_detector = MagicMock()  # Mock GlassesDetector
         app._fatigue_analyzer = MagicMock()  # Mock FatigueAnalyzer
@@ -431,7 +429,9 @@ class TestEyeFocusAppIntegration:
         app._db.write_fatigue_record.assert_called_once()
 
     def test_process_frame_calibration_mode(self, app):
-        """测试校准模式"""
+        """测试校准模式（使用 UserCalibrationManager）"""
+        from analyzer.user_calibration import CalibrationState
+
         frame = make_mock_frame()
         mock_face_result = make_mock_face_result()
 
@@ -452,36 +452,29 @@ class TestEyeFocusAppIntegration:
             gaze_score=100.0, is_looking_at_screen=True, gaze_offset=(0.0, 0.0)
         )
 
-        # Mock calibrator to not complete (prevent _finish_calibration being called)
-        app._calibrator.is_complete = MagicMock(return_value=False)
-
-        # 启动校准模式
-        app._calibrating = True
+        # 设置校准管理器处于 AUTO_CALIB 状态
+        app._calib_manager.state = CalibrationState.AUTO_CALIB
+        app._calib_manager.add_frame = MagicMock()
 
         app._process_frame(frame)
 
-        # 验证校准器被调用
-        app._calibrator.add_frame.assert_called()
+        # 验证校准管理器 add_frame 被调用
+        app._calib_manager.add_frame.assert_called()
 
     def test_app_state_transitions(self, app):
         """测试应用状态转换"""
         assert app._running is False
-        assert app._calibrating is False
         assert app._paused is False
 
         # 模拟开始
         app._running = True
-        app._calibrating = True
 
         assert app._running is True
-        assert app._calibrating is True
 
         # 模拟停止
         app._running = False
-        app._calibrating = False
 
         assert app._running is False
-        assert app._calibrating is False
 
     def test_multiple_frames_processing(self, app):
         """测试连续多帧处理"""

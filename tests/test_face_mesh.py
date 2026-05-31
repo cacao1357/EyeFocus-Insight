@@ -14,6 +14,7 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from detector.face_mesh import FaceMeshDetector, FaceMeshResult
+from detector.euler_utils import solve_head_pose_from_matrix
 
 
 class TestFaceMeshResult:
@@ -68,13 +69,13 @@ class TestFaceMeshResult:
 
 
 class TestSolveHeadPoseFromMatrix:
-    """_solve_head_pose_from_matrix 单元测试 — 纯数学函数"""
+    """solve_head_pose_from_matrix 单元测试 — 纯数学函数"""
 
     def test_identity_matrix_returns_zeros(self):
         """单位矩阵应返回接近零的角度"""
         # 单位矩阵的旋转部分也是单位矩阵，表示无旋转
         matrix = np.eye(4).flatten()  # 4x4 单位矩阵扁平化
-        yaw, pitch, roll = FaceMeshDetector._solve_head_pose_from_matrix(matrix)
+        yaw, pitch, roll = solve_head_pose_from_matrix(matrix)
 
         assert yaw is not None
         assert pitch is not None
@@ -99,7 +100,7 @@ class TestSolveHeadPoseFromMatrix:
         matrix[2, 0] = -np.sin(angle)
         matrix[2, 2] = np.cos(angle)
 
-        yaw, pitch, roll = FaceMeshDetector._solve_head_pose_from_matrix(matrix.flatten())
+        yaw, pitch, roll = solve_head_pose_from_matrix(matrix.flatten())
 
         assert yaw is not None
         assert pitch is not None
@@ -109,7 +110,7 @@ class TestSolveHeadPoseFromMatrix:
     def test_4x4_matrix_input(self):
         """测试 4x4 矩阵输入（不扁平化）"""
         matrix = np.eye(4)
-        yaw, pitch, roll = FaceMeshDetector._solve_head_pose_from_matrix(matrix)
+        yaw, pitch, roll = solve_head_pose_from_matrix(matrix)
 
         assert yaw is not None
         assert pitch is not None
@@ -120,18 +121,18 @@ class TestSolveHeadPoseFromMatrix:
         """无效矩阵形状返回 None"""
         # 3x3 矩阵（不是 4x4）
         invalid_matrix = np.eye(3).flatten()
-        result = FaceMeshDetector._solve_head_pose_from_matrix(invalid_matrix)
+        result = solve_head_pose_from_matrix(invalid_matrix)
         assert result == (None, None, None)
 
     def test_invalid_matrix_5x5_returns_none(self):
         """5x5 矩阵返回 None"""
         invalid_matrix = np.eye(5).flatten()
-        result = FaceMeshDetector._solve_head_pose_from_matrix(invalid_matrix)
+        result = solve_head_pose_from_matrix(invalid_matrix)
         assert result == (None, None, None)
 
     def test_none_input_returns_none(self):
         """None 输入返回 None"""
-        result = FaceMeshDetector._solve_head_pose_from_matrix(None)
+        result = solve_head_pose_from_matrix(None)
         assert result == (None, None, None)
 
     def test_pitch_extraction(self):
@@ -155,7 +156,7 @@ class TestSolveHeadPoseFromMatrix:
         matrix[2, 1] = sr * cy
         matrix[2, 2] = cr * cy
 
-        yaw, pitch, roll = FaceMeshDetector._solve_head_pose_from_matrix(matrix.flatten())
+        yaw, pitch, roll = solve_head_pose_from_matrix(matrix.flatten())
 
         assert pitch is not None
         # pitch 应该约为 0（因为没有 X 轴旋转）
@@ -174,7 +175,7 @@ class TestSolveHeadPoseFromMatrix:
         matrix[1, 0] = np.sin(angle)
         matrix[1, 1] = np.cos(angle)
 
-        yaw, pitch, roll = FaceMeshDetector._solve_head_pose_from_matrix(matrix.flatten())
+        yaw, pitch, roll = solve_head_pose_from_matrix(matrix.flatten())
 
         assert roll is not None
         assert yaw is not None

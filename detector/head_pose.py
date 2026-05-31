@@ -17,6 +17,7 @@ from typing import Optional, Tuple
 import numpy as np
 
 from config import HEAD_POSE
+from detector.euler_utils import solve_head_pose_from_matrix
 
 logger = logging.getLogger("eyefocus.detector")
 
@@ -64,9 +65,6 @@ class HeadPoseDetector:
         Returns:
             HeadPoseResult 或 None（检测失败）
         """
-        if transformation_matrix is None:
-            return None
-
         # 转换为 numpy 数组
         if not isinstance(transformation_matrix, np.ndarray):
             mat = np.array(transformation_matrix).flatten()
@@ -77,27 +75,10 @@ class HeadPoseDetector:
         if mat.shape != (16,):
             return None
 
-        matrix = mat.reshape(4, 4)
+        yaw_deg, pitch_deg, roll_deg = solve_head_pose_from_matrix(mat)
 
-        # 提取 3x3 旋转矩阵
-        rmat = matrix[:3, :3].astype(np.float64)
-
-        # 欧拉角分解（OpenCV 约定：pitch-x, yaw-y, roll-z）
-        sy = np.sqrt(rmat[0, 0] ** 2 + rmat[1, 0] ** 2)
-        singular = sy < 1e-6
-
-        if singular:
-            pitch = np.arctan2(-rmat[2, 0], sy)
-            yaw = np.arctan2(-rmat[0, 1], rmat[1, 1]) if not singular else 0.0
-            roll = 0.0
-        else:
-            pitch = np.arctan2(-rmat[2, 0], sy)
-            yaw = np.arctan2(rmat[1, 0], rmat[0, 0])
-            roll = np.arctan2(rmat[2, 1], rmat[2, 2])
-
-        yaw_deg = float(np.degrees(yaw))
-        pitch_deg = float(np.degrees(pitch))
-        roll_deg = float(np.degrees(roll))
+        if yaw_deg is None:
+            return None
 
         # 判断是否为正面姿态
         is_frontal = (

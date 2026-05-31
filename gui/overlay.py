@@ -19,8 +19,52 @@ from typing import Optional, Tuple
 
 import cv2
 import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger("eyefocus.gui")
+
+# 默认中文字体路径（Windows 系统字体）
+DEFAULT_FONT_PATH = "C:/Windows/Fonts/simhei.ttf"
+# 尝试加载中文字体
+try:
+    _chinese_font = ImageFont.truetype(DEFAULT_FONT_PATH, 20)
+    _chinese_font_small = ImageFont.truetype(DEFAULT_FONT_PATH, 16)
+    _chinese_font_large = ImageFont.truetype(DEFAULT_FONT_PATH, 28)
+except Exception:
+    _chinese_font = None
+    _chinese_font_small = None
+    _chinese_font_large = None
+    logger.warning("无法加载中文字体，中文可能显示为方块")
+
+
+def put_chinese_text(img: np.ndarray, text: str, position: Tuple[int, int],
+                     font: ImageFont.FreeTypeFont = None, color: Tuple[int, int, int] = (255, 255, 255)) -> np.ndarray:
+    """在图像上绘制中文文本（使用 PIL）
+
+    Args:
+        img: OpenCV 图像 (BGR)
+        text: 文本内容
+        position: (x, y) 位置
+        font: PIL 字体对象
+        color: BGR 颜色
+
+    Returns:
+        绘制后的图像
+    """
+    if _chinese_font is None:
+        return img  # 无字体支持时返回原图
+
+    font_obj = font or _chinese_font
+
+    # 转换为 PIL 图像
+    img_pil = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(img_pil)
+
+    # 绘制文本
+    draw.text(position, text, font=font_obj, fill=color[::-1])  # PIL 使用 RGB
+
+    # 转换回 OpenCV 图像
+    return cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
 
 
 class AlertLevel(Enum):
@@ -182,12 +226,12 @@ class FocusOverlay:
         if light_condition is not None:
             overlay = self._draw_light_indicator(overlay, light_condition)
 
-        # 绘制校准 UI
+        # 绘制校准 UI（绘制在 overlay 上，在 blend 之前，这样获得与状态栏相同的透明度）
         if hasattr(self, '_calib_display') and self._calib_display and self._calib_display.is_calibrating:
             if self._calib_phase and self._calib_phase.result:
-                frame = self._draw_calibration_result(frame)
+                overlay = self._draw_calibration_result(overlay)
             else:
-                frame = self._draw_calibration_full(frame)
+                overlay = self._draw_calibration_full(overlay)
 
         # 混合原始帧和叠加层
         return cv2.addWeighted(overlay, self.config.alpha, frame, 1 - self.config.alpha, 0)
@@ -490,7 +534,7 @@ class FocusOverlay:
         self._calib_phase = None
 
     def _draw_calibration_full(self, frame: np.ndarray) -> np.ndarray:
-        """绘制完整校准 UI"""
+        """绘制完整校准 UI - 底部条形设计，不遮挡人脸"""
         if not self._calib_display or not self._calib_display.is_calibrating:
             return frame
 
@@ -499,108 +543,110 @@ class FocusOverlay:
         if not phase:
             return frame
 
-        panel_w = 400
-        panel_h = 250
-        panel_x = (w - panel_w) // 2
-        panel_y = (h - panel_h) // 2
+        # 底部条形面板设计（不遮挡人脸）
+        bar_h = 120
+        bar_y = h - bar_h - 10  # 底部留边距
+        bar_x = 10
+        bar_w = w - 20
 
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (panel_x - 10, panel_y - 10),
-                       (panel_x + panel_w + 10, panel_y + panel_h + 10),
-                       (20, 20, 20), -1)
-        frame = cv2.addWeighted(overlay, 0.8, frame, 0.2, 0)
+        # 底部深色条形背景
+        cv2.rectangle(frame,
+                      (bar_x, bar_y),
+                      (bar_x + bar_w, bar_y + bar_h),
+                      (15, 15, 15), -1)
 
-        phase_text = f"[阶段 {phase.phase + 1}/6] {phase.name}"
-        cv2.putText(frame, phase_text,
-                    (panel_x + 20, panel_y + 35),
-                    self.config.font, 0.7, (255, 255, 255), 2)
+        # 顶部边框线（青色）
+        cv2.line(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y), (0, 200, 100), 2)
 
-        cv2.putText(frame, phase.instruction,
-                    (panel_x + 20, panel_y + 70),
-                    self.config.font, 0.5, (200, 200, 200), 1)
+        # 左侧：阶段信息
+        phase_text = f"[{phase.phase + 1}/6] {phase.name}"
+        frame = put_chinese_text(frame, phase_text,
+                                (bar_x + 15, bar_y + 30), _chinese_font_large, (0, 255, 0))
 
+        # 指示文字
+        frame = put_chinese_text(frame, phase.instruction,
+                                (bar_x + 15, bar_y + 60), _chinese_font, (220, 220, 220))
+
+        # 右侧：状态信息
         if not phase.is_input_mode:
-            countdown_text = f"剩余: {phase.remaining} 秒"
-            cv2.putText(frame, countdown_text,
-                        (panel_x + 20, panel_y + 110),
-                        self.config.font, 0.6, (0, 255, 0), 2)
+            # 倒计时显示（统一使用中文）
+            countdown_text = f"剩余 {phase.remaining}s"
+            frame = put_chinese_text(frame, countdown_text,
+                                    (bar_x + bar_w - 150, bar_y + 40), _chinese_font_large, (0, 255, 0))
+        else:
+            # 输入模式
+            input_text = f"检测到 {phase.program_count} 次眨眼"
+            frame = put_chinese_text(frame, input_text,
+                                    (bar_x + bar_w - 280, bar_y + 30), _chinese_font, (255, 200, 0))
 
-        if phase.round_num > 0:
-            round_text = f"眨眼计数: 第 {phase.round_num}/{phase.total_rounds} 轮"
-            cv2.putText(frame, round_text,
-                        (panel_x + 20, panel_y + 145),
-                        self.config.font, 0.5, (255, 255, 0), 1)
-
-            detected_text = f"检测到: {phase.detected_blinks} 次眨眼"
-            cv2.putText(frame, detected_text,
-                        (panel_x + 20, panel_y + 170),
-                        self.config.font, 0.5, (0, 255, 255), 1)
-
-        if phase.is_input_mode:
-            input_text = f"请输入您的眨眼次数（程序检测到 {phase.program_count} 次）"
-            cv2.putText(frame, input_text,
-                        (panel_x + 20, panel_y + 145),
-                        self.config.font, 0.5, (255, 200, 0), 1)
-
-            # 显示用户输入
             if phase.input_buffer:
                 buffer_text = f"您输入: {phase.input_buffer}"
-                cv2.putText(frame, buffer_text,
-                            (panel_x + 20, panel_y + 170),
-                            self.config.font, 0.6, (0, 255, 255), 2)
+                frame = put_chinese_text(frame, buffer_text,
+                                        (bar_x + bar_w - 280, bar_y + 65), _chinese_font_large, (0, 255, 255))
 
-            hint_text = "按数字键输入，按 Enter 确认"
-            cv2.putText(frame, hint_text,
-                        (panel_x + 20, panel_y + 200),
-                        self.config.font, 0.4, (150, 150, 150), 1)
+            frame = put_chinese_text(frame, "数字键输入，Enter确认",
+                                    (bar_x + bar_w - 280, bar_y + 95), _chinese_font_small, (180, 180, 180))
 
-        cv2.putText(frame, "按 ESC 取消校准",
-                    (panel_x + 20, panel_y + panel_h - 20),
-                    self.config.font, 0.4, (100, 100, 100), 1)
+        # 眨眼计数（中间显示）
+        if phase.round_num > 0 and not phase.is_input_mode:
+            round_text = f"眨眼 {phase.round_num}/{phase.total_rounds} 轮"
+            frame = put_chinese_text(frame, round_text,
+                                    (bar_x + bar_w // 2 - 80, bar_y + 40), _chinese_font, (255, 255, 0))
+            detected_text = f"已检测: {phase.detected_blinks} 次"
+            frame = put_chinese_text(frame, detected_text,
+                                    (bar_x + bar_w // 2 - 80, bar_y + 70), _chinese_font, (0, 255, 255))
+
+        # 底部操作提示（使用中文）
+        hint_text = "按 ESC 或 Q 退出校准"
+        frame = put_chinese_text(frame, hint_text,
+                                (bar_x + 15, bar_y + bar_h - 15), _chinese_font_small, (100, 100, 100))
 
         return frame
 
     def _draw_calibration_result(self, frame: np.ndarray) -> np.ndarray:
-        """绘制校准结果"""
+        """绘制校准结果 - 底部条形设计"""
         if not self._calib_phase or not self._calib_phase.result:
             return frame
 
         h, w = frame.shape[:2]
         result = self._calib_phase.result
 
-        panel_w = 450
-        panel_h = 200
-        panel_x = (w - panel_w) // 2
-        panel_y = (h - panel_h) // 2
+        # 底部条形面板
+        bar_h = 100
+        bar_y = h - bar_h - 10
+        bar_x = 10
+        bar_w = w - 20
 
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (panel_x - 10, panel_y - 10),
-                       (panel_x + panel_w + 10, panel_y + panel_h + 10),
-                       (30, 30, 30), -1)
-        frame = cv2.addWeighted(overlay, 0.85, frame, 0.15, 0)
+        # 深色背景
+        cv2.rectangle(frame,
+                      (bar_x, bar_y),
+                      (bar_x + bar_w, bar_y + bar_h),
+                      (15, 15, 15), -1)
 
-        cv2.putText(frame, "校准完成",
-                    (panel_x + 20, panel_y + 35),
-                    self.config.font, 0.8, (0, 255, 0), 2)
+        # 顶部边框线（绿色表示成功）
+        cv2.line(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y), (0, 255, 0), 2)
 
-        ear_text = f"EAR 基线: {result.signal.ear_mean:.4f}"
-        cv2.putText(frame, ear_text,
-                    (panel_x + 20, panel_y + 75),
-                    self.config.font, 0.5, (255, 255, 255), 1)
+        # 标题
+        frame = put_chinese_text(frame, "校准完成",
+                                (bar_x + 15, bar_y + 30), _chinese_font_large, (0, 255, 0))
 
-        threshold_text = f"眨眼阈值: {result.final_blink_threshold:.4f}"
-        cv2.putText(frame, threshold_text,
-                    (panel_x + 20, panel_y + 100),
-                    self.config.font, 0.5, (255, 255, 255), 1)
+        # 参数显示（统一使用中文 PIL）
+        params = [
+            f"EAR: {result.signal.ear_mean:.3f}",
+            f"眨眼阈值: {result.final_blink_threshold:.3f}",
+            f"眯眼阈值: {result.final_squint_threshold:.3f}",
+            f"调整: {result.final_adjustment_factor:.2f}x"
+        ]
 
-        adj_text = f"调整因子: {result.final_adjustment_factor:.3f}"
-        cv2.putText(frame, adj_text,
-                    (panel_x + 20, panel_y + 125),
-                    self.config.font, 0.5, (255, 255, 255), 1)
+        x_pos = bar_x + 15
+        for param in params:
+            frame = put_chinese_text(frame, param,
+                                    (x_pos, bar_y + 65), _chinese_font, (255, 255, 255))
+            x_pos += 160
 
-        cv2.putText(frame, "按 Enter 开始检测",
-                    (panel_x + 20, panel_y + 170),
-                    self.config.font, 0.5, (0, 255, 0), 1)
+        # 继续提示
+        frame = put_chinese_text(frame, "按任意键继续...",
+                                (bar_x + bar_w - 150, bar_y + 90), _chinese_font_small, (150, 150, 150))
 
         return frame
 

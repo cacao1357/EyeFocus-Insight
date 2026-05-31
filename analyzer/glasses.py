@@ -16,6 +16,7 @@ analyzer/glasses.py — 眼镜检测模块
 """
 
 import logging
+import math
 from dataclasses import dataclass
 from typing import Optional
 
@@ -28,7 +29,7 @@ logger = logging.getLogger("eyefocus.analyzer")
 
 # 默认配置
 DEFAULT_SQUINT_RATIO_THRESHOLD = 0.85
-DEFAULT_INNER_CANTHUS_DISTANCE_THRESHOLD = 28.0  # 像素（基于 Phase 0 实测）
+DEFAULT_INNER_CANTHUS_RATIO_THRESHOLD = 0.5  # 归一化比值（基于 Phase 0 实测 28px/55px ≈ 0.51）
 DEFAULT_CONFIDENCE_WEIGHT_SQUINT = 0.6
 DEFAULT_CONFIDENCE_WEIGHT_DISTANCE = 0.4
 
@@ -38,6 +39,10 @@ LEFT_INNER_CANTHUS = 133  # 左眼内侧眼角
 RIGHT_INNER_CANTHUS = 362  # 右眼内侧眼角
 LEFT_OUTER_CANTHUS = 33  # 左眼外侧眼角
 RIGHT_OUTER_CANTHUS = 263  # 右眼外侧眼角
+
+# 眼部关键点索引（用于计算瞳孔距离，与 gaze.py 保持一致）
+LEFT_EYE_INDICES = (33, 160, 158, 133, 153, 144)
+RIGHT_EYE_INDICES = (362, 385, 387, 263, 380, 373)
 
 # Blendshapes 名称
 BLENDSHAPE_SQUINT_LEFT = "eyeSquintLeft"
@@ -51,6 +56,7 @@ class GlassesInfo:
     """眼镜检测信息（调试用）"""
     squint_ratio: float
     inner_canthus_distance: float
+    inner_canthus_ratio: float  # inner_canthus_distance / pupil_distance
     squint_left: float
     squint_right: float
     wide_left: float
@@ -73,7 +79,7 @@ class GlassesDetector:
     def __init__(
         self,
         squint_ratio_thresh: float = DEFAULT_SQUINT_RATIO_THRESHOLD,
-        inner_canthus_dist_thresh: float = DEFAULT_INNER_CANTHUS_DISTANCE_THRESHOLD,
+        inner_canthus_ratio_thresh: float = DEFAULT_INNER_CANTHUS_RATIO_THRESHOLD,
         squint_weight: float = DEFAULT_CONFIDENCE_WEIGHT_SQUINT,
         distance_weight: float = DEFAULT_CONFIDENCE_WEIGHT_DISTANCE,
     ):
@@ -81,12 +87,12 @@ class GlassesDetector:
 
         Args:
             squint_ratio_thresh: 眯眼比率阈值
-            inner_canthus_dist_thresh: 内侧眼角距离阈值（像素）
+            inner_canthus_ratio_thresh: 内侧眼角/瞳孔距离比值阈值
             squint_weight: blendshapes 方法的置信度权重
             distance_weight: 眼角距离方法的置信度权重
         """
         self.squint_ratio_thresh = squint_ratio_thresh
-        self.inner_canthus_dist_thresh = inner_canthus_dist_thresh
+        self.inner_canthus_ratio_thresh = inner_canthus_ratio_thresh
         self.squint_weight = squint_weight
         self.distance_weight = distance_weight
 
@@ -162,6 +168,7 @@ class GlassesDetector:
             confidence=confidence,
             squint_ratio=squint_result[2] if squint_result else None,
             inner_canthus_distance=distance_result[2] if distance_result else None,
+            inner_canthus_ratio=distance_result[3] if distance_result else None,
             method=method,
         )
 
@@ -216,32 +223,64 @@ class GlassesDetector:
             logger.warning("blendshapes 检测失败: %s", e)
             return None
 
+    def _compute_pupil_distance(self, landmarks: np.ndarray) -> Optional[float]:
+        """计算双眼瞳孔距离（用于归一化）
+
+        使用左右眼外侧眼角（33 和 263）的距离作为瞳孔距离的近似。
+        这与 gaze.py 中眼宽计算使用的是同一组关键点。
+
+        Returns:
+            瞳孔距离（像素），或 None（计算失败）
+        """
+        try:
+            left_eye = np.array([landmarks[i] for i in LEFT_EYE_INDICES])
+            right_eye = np.array([landmarks[i] for i in RIGHT_EYE_INDICES])
+
+            # 左眼外侧眼角（索引 0 = 33）和内侧眼角（索引 3 = 133）之间的距离
+            left_pupil_x = (left_eye[0][0] + left_eye[3][0]) / 2
+            left_pupil_y = (left_eye[0][1] + left_eye[3][1]) / 2
+            right_pupil_x = (right_eye[0][0] + right_eye[3][0]) / 2
+            right_pupil_y = (right_eye[0][1] + right_eye[3][1]) / 2
+
+            return math.sqrt((right_pupil_x - left_pupil_x) ** 2 + (right_pupil_y - left_pupil_y) ** 2)
+        except Exception:
+            return None
+
     def _detect_by_distance(
         self,
         landmarks: np.ndarray,
     ) -> Optional[tuple]:
-        """通过眼角关键点距离检测
+        """通过眼角关键点距离检测（归一化比值版本）
 
         戴眼镜用户的内侧眼角距离通常较小（眼镜框遮挡）
+        使用 inner_canthus_distance / pupil_distance 比值来判定，
+        这样在不同分辨率下都能正常工作。
 
         Returns:
-            (is_glasses, confidence, distance) 元组，或 None
+            (is_glasses, confidence, distance, ratio) 元组，或 None
         """
         try:
+            # 计算瞳孔距离（归一化基准）
+            pupil_distance = self._compute_pupil_distance(landmarks)
+            if pupil_distance is None or pupil_distance < 1e-4:
+                return None
+
+            # 计算内侧眼角距离
             left_inner = landmarks[LEFT_INNER_CANTHUS]
             right_inner = landmarks[RIGHT_INNER_CANTHUS]
-
             distance = float(np.linalg.norm(left_inner - right_inner))
 
-            is_glasses = distance < self.inner_canthus_dist_thresh
+            # 计算比值并判定
+            ratio = distance / pupil_distance
+            is_glasses = ratio < self.inner_canthus_ratio_thresh
 
-            # 置信度
+            # 置信度（基于比值与阈值的偏差）
             if is_glasses:
-                confidence = min(1.0, (self.inner_canthus_dist_thresh - distance) / 5.0 + 0.7)
+                confidence = min(1.0, (self.inner_canthus_ratio_thresh - ratio) / 0.05 + 0.7)
             else:
-                confidence = min(1.0, (distance - self.inner_canthus_dist_thresh) / 5.0 + 0.7)
+                confidence = min(1.0, (ratio - self.inner_canthus_ratio_thresh) / 0.05 + 0.7)
 
-            return (is_glasses, confidence, distance)
+            return (is_glasses, confidence, distance, ratio)
 
         except Exception as e:
             logger.warning("眼角距离检测失败: %s", e)
@@ -281,7 +320,7 @@ class GlassesDetector:
             "glasses_count": self._glasses_count,
             "glasses_rate": self.get_glasses_rate(),
             "squint_ratio_thresh": self.squint_ratio_thresh,
-            "inner_canthus_dist_thresh": self.inner_canthus_dist_thresh,
+            "inner_canthus_ratio_thresh": self.inner_canthus_ratio_thresh,
         }
 
 

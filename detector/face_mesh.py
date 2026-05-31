@@ -15,6 +15,8 @@ import cv2
 import mediapipe as mp
 import numpy as np
 
+from detector.euler_utils import solve_head_pose_from_matrix
+
 logger = logging.getLogger("eyefocus.detector")
 
 
@@ -169,7 +171,7 @@ class FaceMeshDetector:
             and result.facial_transformation_matrixes[0] is not None
         ):
             matrix = np.array(result.facial_transformation_matrixes[0]).flatten()
-            yaw, pitch, roll = self._solve_head_pose_from_matrix(matrix)
+            yaw, pitch, roll = solve_head_pose_from_matrix(matrix)
 
         # 提取 blendshapes
         blendshapes = None
@@ -198,51 +200,6 @@ class FaceMeshDetector:
         )
 
     @staticmethod
-    def _solve_head_pose_from_matrix(
-        transformation_matrix: np.ndarray,
-    ) -> Tuple[Optional[float], Optional[float], Optional[float]]:
-        """从 MediaPipe 变换矩阵提取头部姿态欧拉角
-
-        Args:
-            transformation_matrix: 4x4 变换矩阵（扁平 16 元素或 4x4）
-
-        Returns:
-            (yaw, pitch, roll) 元组，单位为度
-        """
-        if transformation_matrix is None:
-            return None, None, None
-
-        # reshape to 4x4
-        if transformation_matrix.shape == (16,):
-            mat = transformation_matrix.reshape(4, 4)
-        elif transformation_matrix.shape == (4, 4):
-            mat = transformation_matrix
-        else:
-            return None, None, None
-
-        # 提取 3x3 旋转矩阵
-        rmat = mat[:3, :3].astype(np.float64)
-
-        # 分解为欧拉角 (pitch-x, yaw-y, roll-z)
-        sy = np.sqrt(rmat[0, 0] ** 2 + rmat[1, 0] ** 2)
-        singular = sy < 1e-6
-
-        if singular:
-            pitch = np.arctan2(-rmat[2, 0], sy)
-            yaw = np.arctan2(-rmat[0, 1], rmat[1, 1]) if not singular else 0.0
-            roll = 0.0
-        else:
-            pitch = np.arctan2(-rmat[2, 0], sy)
-            yaw = np.arctan2(rmat[1, 0], rmat[0, 0])
-            roll = np.arctan2(rmat[2, 1], rmat[2, 2])
-
-        return (
-            float(np.degrees(yaw)),
-            float(np.degrees(pitch)),
-            float(np.degrees(roll)),
-        )
-
-    @staticmethod
     def normalize_yaw(yaw: float) -> float:
         """归一化偏航角到 (-90, 90] 范围，处理 ±180° 边界
 
@@ -258,17 +215,31 @@ class FaceMeshDetector:
             return yaw + 180.0
         return yaw
 
-    def close(self) -> None:
+    def close(self, timeout: float = 2.0) -> None:
         """关闭检测器，释放资源
 
-        注意：MediaPipe 的 close() 方法存在已知 bug，
-        可能会无限期阻塞。在主程序中使用线程超控制。
+        使用独立线程调用 MediaPipe 的 close()，并通过 join(timeout)
+        实现超时控制，防止 close() 可能无限阻塞。
+
+        Args:
+            timeout: 超时时间（秒），默认 2.0 秒
         """
-        with self._lock:
-            try:
-                self._detector.close()
-            except Exception as e:
-                logger.warning("FaceMeshDetector.close() 异常: %s", e)
+        def _close_async():
+            with self._lock:
+                try:
+                    self._detector.close()
+                except Exception as e:
+                    logger.warning("FaceMeshDetector._detector.close() 异常: %s", e)
+
+        close_thread = threading.Thread(target=_close_async, name="FaceMeshDetector-close")
+        close_thread.start()
+        close_thread.join(timeout=timeout)
+
+        if close_thread.is_alive():
+            logger.warning(
+                "FaceMeshDetector.close() 超时 (%.1fs)，MediaPipe close() 可能阻塞",
+                timeout
+            )
 
     def __enter__(self):
         return self
@@ -299,15 +270,21 @@ def create_face_mesh_detector(
 
     return FaceMeshDetector(
         model_path=model_path,
-        num_faces=num_faces or FACE_MESH.num_faces,
+        num_faces=num_faces if num_faces is not None else FACE_MESH.num_faces,
         min_detection_confidence=(
-            min_detection_confidence or FACE_MESH.min_detection_confidence
+            min_detection_confidence
+            if min_detection_confidence is not None
+            else FACE_MESH.min_detection_confidence
         ),
         min_presence_confidence=(
-            min_presence_confidence or FACE_MESH.min_presence_confidence
+            min_presence_confidence
+            if min_presence_confidence is not None
+            else FACE_MESH.min_presence_confidence
         ),
         min_tracking_confidence=(
-            min_tracking_confidence or FACE_MESH.min_tracking_confidence
+            min_tracking_confidence
+            if min_tracking_confidence is not None
+            else FACE_MESH.min_tracking_confidence
         ),
         running_mode="video",
     )

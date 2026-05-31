@@ -18,6 +18,7 @@ analyzer/user_calibration.py — 用户校准管理器
 import logging
 import time
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Protocol, List, Optional, Callable
 from datetime import datetime
 
@@ -80,7 +81,7 @@ class CalibrationCallbacks(Protocol):
         ...
 
 
-class CalibrationState:
+class CalibrationState(StrEnum):
     """校准状态枚举"""
     IDLE = "idle"
     AUTO_CALIB = "auto_calib"
@@ -210,6 +211,49 @@ class UserCalibrationManager:
         if self._state == CalibrationState.AUTO_CALIB:
             self._run_auto_calib()
 
+    def add_frame(self, ear: float, yaw: float, pitch: float) -> bool:
+        """每帧采集数据（用于 AUTO_CALIB 阶段）
+
+        在 _process_frame() 中每帧调用，而不是依赖 tick() 每秒调用。
+
+        Args:
+            ear: 当前帧的 EAR 值
+            yaw: 偏航角（度）
+            pitch: 俯仰角（度）
+
+        Returns:
+            是否被接受（True 表示有效帧）
+        """
+        if self._state != CalibrationState.AUTO_CALIB:
+            return False
+
+        elapsed = time.time() - self._phase_start_time
+
+        # 采集 EAR 数据
+        self._signal_collector.ears.append(ear)
+        if ear < self._signal_collector.ear_min:
+            self._signal_collector.ear_min = ear
+
+        # 采集头部姿态数据
+        self._signal_collector.yaws.append(yaw)
+        self._signal_collector.pitches.append(pitch)
+
+        # 每秒更新倒计时回调
+        remaining = int(self.phases["auto_calib"] - elapsed)
+        if remaining >= 0:
+            self.callbacks.on_countdown_tick(remaining)
+
+        # 检查是否完成（7秒到后自动推进）
+        if elapsed >= self.phases["auto_calib"]:
+            self.callbacks.on_phase_complete(0, {
+                "ear_mean": sum(self._signal_collector.ears) / len(self._signal_collector.ears) if self._signal_collector.ears else 0,
+                "frame_count": len(self._signal_collector.ears),
+            })
+            self._transition_to_next_phase()
+            return True
+
+        return True
+
     def on_user_input(self, user_blink_count: int) -> None:
         """用户输入眨眼次数"""
         if self._state != CalibrationState.BLINK_INPUT:
@@ -295,9 +339,20 @@ class UserCalibrationManager:
 
         # AUTO_CALIB 阶段需要特殊处理（收集数据并自动推进）
         if self._state == CalibrationState.AUTO_CALIB:
+            remaining = int(self.phases["auto_calib"] - elapsed)
+            if remaining >= 0:
+                self.callbacks.on_countdown_tick(remaining)
             self._run_auto_calib()
             return
 
+        # BLINK_COUNTING 阶段：每秒采集眨眼数据
+        if self._state == CalibrationState.BLINK_COUNTING:
+            self._collect_blink_counting_data()
+            if elapsed >= current_phase_duration:
+                self._on_blink_counting_complete()
+            return
+
+        # 其他阶段：统一倒计时 + 数据采集
         if current_phase_duration > 0:
             remaining = int(current_phase_duration - elapsed)
             if remaining >= 0:
@@ -384,13 +439,31 @@ class UserCalibrationManager:
         elif self._state == CalibrationState.HEAD_RIGHT:
             self.callbacks.on_phase_complete(4, {})
 
-        elif self._state == CalibrationState.BLINK_COUNTING:
-            program_count = self._blink_collector.detected_blinks
-            self.callbacks.on_blink_round_end(self._current_blink_round, program_count)
-            self._state = CalibrationState.BLINK_INPUT
-            return
-
         self._transition_to_next_phase()
+
+    def _collect_blink_counting_data(self) -> None:
+        """BLINK_COUNTING 阶段：每秒采集眨眼数据"""
+        if self._get_ear_callback:
+            ear = self._get_ear_callback()
+            # 计算阈值（使用基线 EAR）
+            ear_mean = sum(self._signal_collector.ears) / len(self._signal_collector.ears) if self._signal_collector.ears else 0.25
+            blink_threshold = ear_mean * 0.75
+            squint_threshold = ear_mean * 0.90
+            current_time = time.time() - self._phase_start_time
+            self._blink_collector.record_frame(ear, blink_threshold, squint_threshold, current_time)
+
+            # 更新 UI 显示
+            detected = self._blink_collector.detected_blinks
+            remaining = int(self.blink_duration - (time.time() - self._phase_start_time))
+            self.callbacks.on_blink_round_tick(remaining, detected)
+
+    def _on_blink_counting_complete(self) -> None:
+        """眨眼计数阶段完成"""
+        program_count = self._blink_collector.detected_blinks
+        self.callbacks.on_blink_round_end(self._current_blink_round, program_count)
+        self._state = CalibrationState.BLINK_INPUT
+        logger.info("眨眼计数轮 %d 完成，检测到 %d 次眨眼，等待用户输入",
+                   self._current_blink_round, program_count)
 
     def _transition_to_next_phase(self) -> None:
         """转换到下一阶段"""

@@ -65,8 +65,8 @@ class FrameRecord:
 
 
 @dataclass
-class BlinkEvent:
-    """眨眼事件模型"""
+class BlinkRecord:
+    """眨眼记录模型（用于数据库存储）"""
     session_id: str
     start_timestamp: float
     end_timestamp: float
@@ -109,6 +109,7 @@ class GlassesDetectionResult:
     confidence: float  # 置信度 0-1
     squint_ratio: Optional[float] = None  # blendshapes 眯眼比率
     inner_canthus_distance: Optional[float] = None  # 眼角内侧距离
+    inner_canthus_ratio: Optional[float] = None  # 归一化比值 inner_canthus_distance / pupil_distance
     method: Optional[str] = None  # 检测方法: "blendshapes", "distance", "both"
 
 

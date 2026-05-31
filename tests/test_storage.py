@@ -18,7 +18,7 @@ from storage.models import (
     FrameRecord,
     FocusRecord,
     FatigueRecord,
-    BlinkEvent,
+    BlinkRecord,
     GlassesMode,
     FatigueLevel,
 )
