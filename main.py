@@ -544,8 +544,9 @@ class CalibrationCoordinator:
         return 0.0
 
     def _get_head_pose(self) -> tuple:
-        """获取当前头部姿态"""
-        return (self._app._latest_yaw, self._app._latest_pitch)
+        """获取当前头部姿态（从 FrameProcessor 获取）"""
+        fp = self._app._frame_processor
+        return (fp._latest_yaw, fp._latest_pitch)
 
     def start(self) -> None:
         """启动校准流程"""
@@ -1113,9 +1114,9 @@ class EyeFocusApp:
 
         cv2.imshow("EyeFocus Insight", display)
         # DEBUG: Log every 60 frames to verify rendering
-        if self._frame_count % 60 == 0:
+        if self._frame_processor._frame_count % 60 == 0:
             logger.info("渲染帧 #%d: face=%s, focus=%s, fatigue=%s, calib_active=%s",
-                       self._frame_count, self._latest_face_detected, focus_score_val, fatigue_level_str, self.is_calibration_flow_active())
+                       self._frame_processor._frame_count, self._latest_face_detected, focus_score_val, fatigue_level_str, self.is_calibration_flow_active())
 
     def _update_fps(self) -> None:
         """更新 FPS 计数"""
@@ -1133,14 +1134,7 @@ class EyeFocusApp:
             logger.error("校准协调器未初始化")
             return False
 
-        # 设置数据回调（使用 FrameProcessor 获取最新数据）
-        if self._frame_processor:
-            self._frame_processor.set_calibration_callbacks(
-                ear_callback=self._frame_processor.get_current_ear,
-                head_pose_callback=self._frame_processor.get_head_pose,
-            )
-
-        # 启动校准
+        # 启动校准（FrameProcessor 通过构造函数注入的 calib_manager 处理数据采集）
         self._calib_coordinator.start()
 
         # 调试：验证 UI 是否被设置
