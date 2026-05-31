@@ -11,4 +11,16 @@ build/
 *.spec
 *.task
 .vscode/
-.idea/.venv312/
+.idea/
+# 本地配置文件（仅本地知道，不同步给其他成员）
+CLAUDE.md
+MEMORY.md
+.claude/
+*.local.yaml
+*.local.json
+.DS_Store
+Thumbs.db
+Session.vim
+*.swp
+*.swo
+*~
