@@ -41,6 +41,12 @@ from detector.face_mesh import FaceMeshDetector, create_face_mesh_detector
 from detector.eye_aspect import EyeAspectDetector, create_eye_aspect_detector
 from detector.gaze import GazeDetector, create_gaze_detector
 from detector.light import LightDetector, create_light_detector
+from analyzer.user_calibration import (
+    UserCalibrationManager,
+    CalibrationCallbacks,
+    create_user_calibration_manager,
+)
+from storage.models import CalibrationResult
 from gui.overlay import FocusOverlay, CalibrationProgress
 from storage.db import DatabaseManager, create_database_manager
 from storage.models import (
@@ -51,6 +57,8 @@ from storage.models import (
     GlassesMode,
     Session,
 )
+
+from analyzer.user_calibration import CalibrationState
 
 
 logger = logging.getLogger("eyefocus.main")
@@ -64,6 +72,88 @@ class AppConfig:
     enable_calibration: bool = True
     calibration_duration: float = 7.0
     data_dir: str = "data"
+
+
+class CalibrationFlowCallbacks:
+    """校准流程回调实现"""
+
+    def __init__(self, app: 'EyeFocusApp'):
+        self.app = app
+        self._input_buffer: str = ""
+        self._input_mode: bool = False
+
+    def on_phase_start(self, phase: int, phase_name: str, instruction: str) -> None:
+        """阶段开始"""
+        self.app._overlay.show_calibration_phase(phase, phase_name, instruction)
+        self._input_mode = False
+        self._input_buffer = ""
+
+    def on_countdown_tick(self, remaining: int) -> None:
+        """倒计时更新"""
+        self.app._overlay.update_calibration_countdown(remaining)
+
+    def on_detected_signals_update(self, ear: float, yaw: float, pitch: float) -> None:
+        """信号更新"""
+        pass
+
+    def on_phase_complete(self, phase: int, collected_data: dict) -> None:
+        """阶段完成"""
+        self.app._overlay.show_phase_complete(phase)
+
+    def on_blink_round_start(self, round_num: int, total_rounds: int, duration: int) -> None:
+        """眨眼轮开始"""
+        self.app._overlay.show_blink_round(round_num, total_rounds, duration)
+
+    def on_blink_round_tick(self, remaining: int, detected_blinks: int) -> None:
+        """眨眼轮更新"""
+        self.app._overlay.update_blink_round(remaining, detected_blinks)
+
+    def on_blink_round_end(self, round_num: int, program_count: int) -> None:
+        """眨眼轮结束，等待输入"""
+        self.app._overlay.show_blink_input(round_num, program_count)
+        self._input_mode = True
+        self._input_buffer = ""
+
+    def on_calibration_complete(self, result: CalibrationResult) -> None:
+        """校准完成"""
+        self.app._overlay.show_calibration_result(result)
+        self._input_mode = False
+        self._apply_calibration_result(result)
+
+    def on_error(self, phase: int, message: str) -> None:
+        """错误"""
+        logger.error("校准错误 [阶段 %d]: %s", phase, message)
+
+    def on_digit_input(self, digit: str) -> None:
+        """数字输入"""
+        if self._input_mode:
+            self._input_buffer += digit
+
+    def on_enter_pressed(self) -> None:
+        """确认输入"""
+        if self._input_mode and hasattr(self.app, '_calib_manager') and self.app._calib_manager:
+            try:
+                count = int(self._input_buffer) if self._input_buffer else 0
+                self.app._calib_manager.on_user_input(count)
+            except ValueError:
+                logger.warning("无效输入: %s", self._input_buffer)
+            self._input_buffer = ""
+            self._input_mode = False
+
+    def _apply_calibration_result(self, result: CalibrationResult) -> None:
+        """应用校准结果到各模块"""
+        if hasattr(self.app, '_eye_detector') and self.app._eye_detector:
+            self.app._eye_detector.set_baseline(result.signal.ear_mean)
+
+        if self.app._db and self.app._session_id:
+            self.app._db.update_session(
+                self.app._session_id,
+                baseline_ear=result.signal.ear_mean,
+                is_calibrated=True,
+            )
+
+        logger.info("校准结果已应用: EAR=%.4f, 眨眼阈值=%.4f",
+                    result.signal.ear_mean, result.final_blink_threshold)
 
 
 class EyeFocusApp:
@@ -124,6 +214,10 @@ class EyeFocusApp:
         self._latest_light_result = None
         self._latest_glasses_result = None
 
+        # 校准相关
+        self._calib_manager: Optional[UserCalibrationManager] = None
+        self._calib_callbacks: Optional[CalibrationFlowCallbacks] = None
+
     def initialize(self) -> bool:
         """初始化所有模块
 
@@ -161,6 +255,12 @@ class EyeFocusApp:
             # 连接分析器与检测器
             self._focus_analyzer.set_blink_detector(self._eye_detector)
             self._fatigue_analyzer.start()
+
+            # 初始化校准管理器
+            self._calib_callbacks = CalibrationFlowCallbacks(self)
+            self._calib_manager = create_user_calibration_manager(
+                callbacks=self._calib_callbacks
+            )
 
             logger.info("初始化完成 (session: %s)", self._session_id)
             return True
@@ -211,11 +311,24 @@ class EyeFocusApp:
                 # 更新 FPS
                 self._update_fps()
 
-                # 检查退出键
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
-                    logger.info("用户请求退出")
-                    break
+                # 校准流程键盘处理
+                if self._calib_callbacks and self._calib_callbacks._input_mode:
+                    if 48 <= key <= 57:  # 数字键
+                        self._calib_callbacks.on_digit_input(chr(key))
+                    elif key == 13 or key == 10:  # Enter
+                        self._calib_callbacks.on_enter_pressed()
+                    elif key == 27:  # ESC
+                        if self._calib_manager:
+                            self._calib_manager.on_cancel()
+                            self._overlay.hide_calibration_ui()
+                else:
+                    # 正常模式键盘处理
+                    if key == ord('c') or key == ord('C'):
+                        # 手动触发校准
+                        self.start_calibration_flow()
+                    elif key == ord('q'):
+                        logger.info("用户请求退出")
+                        break
 
         finally:
             cap.release()
@@ -294,6 +407,7 @@ class EyeFocusApp:
             blink_rate=focus_result.blink_rate,
             ear_nadir=ear_nadir,
             head_stability=focus_result.head_score,
+            avg_ear=eye_result.ear_avg,
         )
         self._latest_fatigue_result = fatigue_result
 
@@ -452,6 +566,14 @@ class EyeFocusApp:
         if result and result.is_valid:
             # 更新会话
             if self._db and self._session_id:
+                # 眼镜模式转换：bool -> GlassesMode enum
+                glasses_mode = None
+                if self._latest_glasses_result:
+                    glasses_mode = (
+                        GlassesMode.WITH_GLASSES
+                        if self._latest_glasses_result.is_glasses
+                        else GlassesMode.WITHOUT_GLASSES
+                    )
                 self._db.update_session(
                     self._session_id,
                     baseline_ear=result.ear_mean,
@@ -459,6 +581,7 @@ class EyeFocusApp:
                     baseline_pitch_std=result.pitch_std,
                     cqs_score=result.cqs_score,
                     is_calibrated=True,
+                    glasses_mode=glasses_mode,
                 )
 
             # 更新分析器基线
@@ -467,6 +590,8 @@ class EyeFocusApp:
                 yaw_std=result.yaw_std,
                 pitch_std=result.pitch_std,
             )
+            # T145: 同步更新 EAR 检测器动态阈值
+            self._eye_detector.set_baseline(result.ear_mean)
 
             logger.info(
                 "校准完成: CQS=%.3f, EAR=%.4f",
@@ -488,6 +613,28 @@ class EyeFocusApp:
             logger.info("开始校准...")
             return True
         return False
+
+    def start_calibration_flow(self) -> bool:
+        """启动新的用户校准流程"""
+        if self._calib_manager is None:
+            logger.error("校准管理器未初始化")
+            return False
+
+        self._calib_manager.set_ear_callback(
+            lambda: self._eye_detector.get_current_ear() if hasattr(self._eye_detector, 'get_current_ear') else 0.0
+        )
+        self._calib_manager.set_head_pose_callback(
+            lambda: (0.0, 0.0)
+        )
+
+        self._calib_manager.start()
+        return True
+
+    def is_calibration_flow_active(self) -> bool:
+        """检查校准流程是否在进行中"""
+        if self._calib_manager is None:
+            return False
+        return self._calib_manager.state != CalibrationState.IDLE
 
     def _register_signal_handlers(self) -> None:
         """注册信号处理器"""
