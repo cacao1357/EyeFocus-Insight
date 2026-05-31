@@ -11,6 +11,7 @@ analyzer/focus.py — 专注度评分算法
 """
 
 import logging
+import time
 from collections import deque
 from dataclasses import dataclass
 from typing import Deque, Optional
@@ -144,6 +145,10 @@ class FocusAnalyzer:
         self._kalman = KalmanFilter1D() if enable_kalman else None
         self._last_focus_score = 0.0
 
+        # 人脸丢失时的衰减策略
+        self._face_lost_start_time: Optional[float] = None  # 人脸丢失起始时间
+        self._last_valid_focus_score: float = 0.0  # 上次有效的专注度分数
+
         # EAR 阈值（基于基线）
         self._ear_low_thresh = baseline_ear * 0.7
         self._ear_high_thresh = baseline_ear * 1.3
@@ -208,13 +213,42 @@ class FocusAnalyzer:
         Returns:
             FocusResult 对象
         """
+        current_time = time.time()
+
         if not face_detected:
-            # 人脸丢失，大幅降低专注度
-            raw_score = 0.0
-            eye_score = 0.0
-            head_score = 0.0
-            gaze_score = 0.0
+            # 人脸丢失：hold-last-value + 衰减策略
+            if self._face_lost_start_time is None:
+                self._face_lost_start_time = current_time
+
+            lost_duration = current_time - self._face_lost_start_time
+
+            if lost_duration < 2.0:
+                # < 2秒: hold last valid score
+                focus_score = self._last_valid_focus_score
+                raw_score = focus_score
+                eye_score = 0.0
+                head_score = 0.0
+                gaze_score = 0.0
+            elif lost_duration < 10.0:
+                # 2-10秒: 线性衰减
+                decay_ratio = (lost_duration - 2.0) / 8.0  # 2到10秒区间
+                focus_score = self._last_valid_focus_score * (1.0 - decay_ratio)
+                raw_score = focus_score
+                eye_score = 0.0
+                head_score = 0.0
+                gaze_score = 0.0
+            else:
+                # > 10秒: 归零，标记应暂停
+                focus_score = 0.0
+                raw_score = 0.0
+                eye_score = 0.0
+                head_score = 0.0
+                gaze_score = 0.0
+                self._last_valid_focus_score = 0.0
         else:
+            # 人脸正常检测
+            self._face_lost_start_time = None
+
             # 计算各项分数
             eye_score = self._compute_eye_score(ear)
             head_score = self._compute_head_score(yaw, pitch)
@@ -227,7 +261,10 @@ class FocusAnalyzer:
                 + gaze_score * self.gaze_weight
             )
 
-        # 卡尔曼滤波平滑
+            # 更新 last valid score
+            self._last_valid_focus_score = raw_score
+
+        # 卡尔曼滤波平滑（仅在人脸检测到时使用）
         if self._kalman and face_detected:
             focus_score = self._kalman.update(raw_score)
         else:
@@ -343,6 +380,8 @@ class FocusAnalyzer:
         if self._kalman:
             self._kalman.reset()
         self._last_focus_score = 0.0
+        self._face_lost_start_time = None
+        self._last_valid_focus_score = 0.0
 
     def get_stats(self) -> dict:
         """获取分析统计信息"""
