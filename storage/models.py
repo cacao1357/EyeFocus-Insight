@@ -62,6 +62,14 @@ class FrameRecord:
     brightness: float  # 帧亮度 0-255
     face_detected: bool
     blendshapes: Optional[dict] = None  # MediaPipe blendshapes 数据
+    # 以下字段与 PROJECT_PLAN.md §7 对齐
+    blink_flag: bool = False
+    perclos: Optional[float] = None
+    gaze_status: Optional[str] = None  # 'screen' / 'away'
+    fatigue_label: Optional[str] = None  # 'normal' / 'mild' / 'severe'
+    focus_score: Optional[float] = None
+    focus_breakdown: Optional[str] = None  # JSON
+    light_level: Optional[str] = None  # 'bright' / 'normal' / 'dark'
 
 
 @dataclass

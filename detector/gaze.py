@@ -212,5 +212,9 @@ class GazeDetector:
 
 
 def create_gaze_detector() -> GazeDetector:
-    """工厂函数：创建视线检测器"""
-    return GazeDetector()
+    """工厂函数：创建视线检测器（支持 YAML 配置覆盖）"""
+    from config import get_yaml_value
+    return GazeDetector(
+        yaw_thresh=get_yaml_value("gaze", "yaw_thresh", default=20.0),
+        pitch_thresh=get_yaml_value("gaze", "pitch_thresh", default=15.0),
+    )

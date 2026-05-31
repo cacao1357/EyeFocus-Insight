@@ -185,5 +185,9 @@ class LightDetector:
 
 
 def create_light_detector() -> LightDetector:
-    """工厂函数：创建光照检测器"""
-    return LightDetector()
+    """工厂函数：创建光照检测器（支持 YAML 配置覆盖）"""
+    from config import get_yaml_value
+    return LightDetector(
+        brightness_thresh_dark=get_yaml_value("light", "brightness_thresh_dark", default=50.0),
+        brightness_thresh_bright=get_yaml_value("light", "brightness_thresh_bright", default=100.0),
+    )

@@ -6,7 +6,9 @@ analyzer/glasses.py — 眼镜检测模块
 
 检测方案：
 1. blendshapes 眯眼比率：squint / (squint + wide) > 0.85 → 戴眼镜
-2. 眼角关键点距离：内侧眼角距离 < 阈值 → 戴眼镜
+2. 眼角关键点距离比值：inner_canthus_distance / pupil_distance > 阈值 → 戴眼镜
+   注意：眼镜框宽度通常使鼻托位置眼角距离变大（而非变小），
+   此方向假设尚未通过实测验证，如有问题请反转比较。
 3. 手动开关兜底：用户可强制指定模式
 4. 双保险逻辑：两者之一触发即判定为戴眼镜
 
@@ -271,14 +273,16 @@ class GlassesDetector:
             distance = float(np.linalg.norm(left_inner - right_inner))
 
             # 计算比值并判定
+            # 注意：眼镜框宽度通常使鼻托位置眼角距离变大，所以比值大 → 戴眼镜
             ratio = distance / pupil_distance
-            is_glasses = ratio < self.inner_canthus_ratio_thresh
+            is_glasses = ratio > self.inner_canthus_ratio_thresh
 
             # 置信度（基于比值与阈值的偏差）
+            # 偏差越大，置信度越高
             if is_glasses:
-                confidence = min(1.0, (self.inner_canthus_ratio_thresh - ratio) / 0.05 + 0.7)
-            else:
                 confidence = min(1.0, (ratio - self.inner_canthus_ratio_thresh) / 0.05 + 0.7)
+            else:
+                confidence = min(1.0, (self.inner_canthus_ratio_thresh - ratio) / 0.05 + 0.7)
 
             return (is_glasses, confidence, distance, ratio)
 

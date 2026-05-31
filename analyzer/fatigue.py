@@ -505,9 +505,11 @@ class FatigueAnalyzer:
 
 
 def create_fatigue_analyzer(baseline_blink_rate: float = 15.0) -> FatigueAnalyzer:
-    """工厂函数：创建疲劳分析器
-
-    Args:
-        baseline_blink_rate: 个人基线眨眼频率（次/分钟）
-    """
-    return FatigueAnalyzer(baseline_blink_rate=baseline_blink_rate)
+    """工厂函数：创建疲劳分析器（支持 YAML 配置覆盖）"""
+    from config import get_yaml_value
+    return FatigueAnalyzer(
+        baseline_blink_rate=baseline_blink_rate,
+        perclos_window=get_yaml_value("fatigue", "perclos_window", default=30.0),
+        perclos_threshold=get_yaml_value("fatigue", "perclos_threshold", default=0.15),
+        fatigue_cqs_weight=get_yaml_value("fatigue", "fatigue_cqs_weight", default=0.3),
+    )

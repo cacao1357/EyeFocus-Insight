@@ -397,5 +397,13 @@ class FocusAnalyzer:
 
 
 def create_focus_analyzer(baseline_ear: float = 0.25) -> FocusAnalyzer:
-    """工厂函数：创建专注度分析器"""
-    return FocusAnalyzer(baseline_ear=baseline_ear)
+    """工厂函数：创建专注度分析器（支持 YAML 配置覆盖）"""
+    from config import get_yaml_value
+    return FocusAnalyzer(
+        baseline_ear=baseline_ear,
+        eye_weight=get_yaml_value("focus", "eye_weight", default=0.35),
+        head_weight=get_yaml_value("focus", "head_weight", default=0.30),
+        gaze_weight=get_yaml_value("focus", "gaze_weight", default=0.35),
+        window_size=get_yaml_value("focus", "window_size", default=5.0),
+        enable_kalman=get_yaml_value("focus", "enable_kalman", default=True),
+    )

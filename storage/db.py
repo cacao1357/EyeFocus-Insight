@@ -78,6 +78,13 @@ CREATE TABLE IF NOT EXISTS frame_records (
     brightness REAL,
     face_detected INTEGER,
     blendshapes_json TEXT,
+    blink_flag INTEGER DEFAULT 0,
+    perclos REAL,
+    gaze_status TEXT,
+    fatigue_label TEXT,
+    focus_score REAL,
+    focus_breakdown TEXT,
+    light_level TEXT,
     FOREIGN KEY (session_id) REFERENCES sessions(session_id)
 );
 
@@ -391,8 +398,9 @@ class DatabaseManager:
                 """
                 INSERT INTO frame_records
                 (session_id, timestamp, ear_left, ear_right, ear_avg,
-                 yaw, pitch, roll, gaze_score, brightness, face_detected, blendshapes_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 yaw, pitch, roll, gaze_score, brightness, face_detected, blendshapes_json,
+                 blink_flag, perclos, gaze_status, fatigue_label, focus_score, focus_breakdown, light_level)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -407,6 +415,13 @@ class DatabaseManager:
                     frame.brightness,
                     1 if frame.face_detected else 0,
                     blendshapes_json,
+                    1 if frame.blink_flag else 0,
+                    frame.perclos,
+                    frame.gaze_status,
+                    frame.fatigue_label,
+                    frame.focus_score,
+                    frame.focus_breakdown,
+                    frame.light_level,
                 ),
             )
 
