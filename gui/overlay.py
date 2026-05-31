@@ -543,8 +543,8 @@ class FocusOverlay:
         if not phase:
             return frame
 
-        # 底部条形面板设计（不遮挡人脸）
-        bar_h = 120
+        # 底部条形面板设计（缩小高度以减少遮挡）
+        bar_h = 80  # 从 120 缩小到 80
         bar_y = h - bar_h - 10  # 底部留边距
         bar_x = 10
         bar_w = w - 20

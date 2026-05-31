@@ -250,8 +250,8 @@ class TestEyeAspectDetector:
 class TestGazeDetector:
 
     def _make_landmarks(self):
-        """创建标准 468 关键点数组（简化版）"""
-        landmarks = np.zeros((468, 3), dtype=np.float64)
+        """创建标准 478 关键点数组（包含虹膜关键点 468-477）"""
+        landmarks = np.zeros((478, 3), dtype=np.float64)
 
         # 设置左眼关键点 (33, 160, 158, 133, 153, 144)
         eye_center_x, eye_center_y = 200, 200
@@ -273,6 +273,16 @@ class TestGazeDetector:
         landmarks[380] = [eye_center_x2 + eye_width * 0.5, eye_center_y2 + eye_height, 0]
         landmarks[373] = [eye_center_x2 - eye_width * 0.5, eye_center_y2 + eye_height, 0]
 
+        # 设置虹膜关键点（左 468-472，右 473-477）
+        # 虹膜中心大约在眼睑中心位置
+        iris_center_x, iris_center_y = eye_center_x, eye_center_y
+        iris_center_x2, iris_center_y2 = eye_center_x2, eye_center_y2
+        iris_radius = 5.0
+        for i in range(5):
+            angle = 2 * np.pi * i / 5
+            landmarks[468 + i] = [iris_center_x + iris_radius * np.cos(angle), iris_center_y + iris_radius * np.sin(angle), 0]
+            landmarks[473 + i] = [iris_center_x2 + iris_radius * np.cos(angle), iris_center_y2 + iris_radius * np.sin(angle), 0]
+
         return landmarks
 
     def test_detect_normal_eyes(self):
@@ -285,7 +295,7 @@ class TestGazeDetector:
         assert result is not None
         assert isinstance(result.gaze_offset, tuple)
         assert len(result.gaze_offset) == 2
-        assert 0.0 <= result.gaze_score <= 100.0
+        assert 0.0 <= result.gaze_concentration <= 100.0
 
     def test_detect_none_landmarks(self):
         """测试 None 输入"""
@@ -308,7 +318,7 @@ class TestGazeDetector:
         result = detector.detect(landmarks, head_pose_yaw=0.0, head_pose_pitch=0.0)
 
         if result is not None:
-            assert 0.0 <= result.gaze_score <= 100.0
+            assert 0.0 <= result.gaze_concentration <= 100.0
 
     def test_factory_function(self):
         """测试工厂函数"""

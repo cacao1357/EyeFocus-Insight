@@ -662,6 +662,23 @@ class EyeFocusApp:
         self._fps: float = 0.0
         self._fps_start_time: float = 0.0
         self._fps_frame_count: int = 0
+        self._frame_count: int = 0
+        self._yaw_history: Deque[float] = deque(maxlen=30)
+        self._pitch_history: Deque[float] = deque(maxlen=30)
+        self._prev_landmarks: Optional[np.ndarray] = None
+        self._latest_yaw: float = 0.0
+        self._latest_pitch: float = 0.0
+        self._latest_face_detected: bool = False
+        self._latest_focus_result = None
+        self._latest_fatigue_result = None
+        self._latest_gaze_score: float = 100.0
+        self._latest_light_result = None
+        self._latest_glasses_result = None
+        self._last_written_blink_count: int = 0
+        self._last_frame_write_time: float = 0.0
+        self._last_fatigue_write_time: float = 0.0
+        self._frame_write_interval: float = 1.0 / 15.0
+        self._fatigue_write_interval: float = 1.0
 
         # 线程管理
         self._shutdown_event: threading.Event = threading.Event()

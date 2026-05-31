@@ -18,8 +18,8 @@ from detector.light import (
 
 
 def make_frame(brightness: int) -> np.ndarray:
-    """创建指定亮度的灰度帧"""
-    return np.full((480, 640), brightness, dtype=np.uint8)
+    """创建指定亮度的 BGR 帧"""
+    return np.full((480, 640, 3), brightness, dtype=np.uint8)
 
 
 # ---------------------------------------------------------------------------

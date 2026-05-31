@@ -121,7 +121,7 @@ class LightDetector:
         """根据亮度值分类光照条件（3级：Dark≤50, Normal 50-100, Bright>100）"""
         if brightness <= self.thresh_dark:
             return LightCondition.DARK
-        elif brightness >= self.thresh_bright:
+        elif brightness > self.thresh_bright:
             return LightCondition.BRIGHT
         else:
             return LightCondition.NORMAL
