@@ -84,7 +84,8 @@ EyeFocus-Insight/
 │   ├── baseline.py      # 基线校准
 │   ├── focus.py        # 专注度分析
 │   ├── fatigue.py      # 疲劳分析
-│   └── glasses.py      # 眼镜检测
+│   ├── glasses.py      # 眼镜检测
+│   └── user_calibration.py  # 用户多轮校准
 ├── storage/            # 存储模块
 │   ├── models.py       # 数据模型定义
 │   └── db.py          # SQLite 数据库层
