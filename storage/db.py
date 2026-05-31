@@ -21,6 +21,7 @@ import logging
 import os
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -116,6 +117,38 @@ CREATE TABLE IF NOT EXISTS blink_events (
     duration_seconds REAL,
     ear_nadir REAL,
     FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+);
+
+CREATE TABLE IF NOT EXISTS calibration (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    timestamp REAL,
+    ear_mean REAL,
+    ear_min REAL,
+    ear_mid REAL,
+    yaw_mean REAL,
+    yaw_left_max REAL,
+    yaw_right_max REAL,
+    pitch_mean REAL,
+    pitch_up_max REAL,
+    pitch_down_max REAL,
+    glasses_mode INTEGER,
+    is_accepted INTEGER,
+    notes TEXT,
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+);
+
+CREATE TABLE IF NOT EXISTS blink_calibration_round (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    calibration_id INTEGER,
+    round_index INTEGER,
+    duration_seconds INTEGER,
+    user_blink_count INTEGER,
+    program_blink_count INTEGER,
+    program_squint_count INTEGER,
+    error_rate REAL,
+    adjustment_factor REAL,
+    FOREIGN KEY (calibration_id) REFERENCES calibration(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_frame_records_session
@@ -560,6 +593,91 @@ class DatabaseManager:
             )
             for row in rows
         ]
+
+    # ========== Calibration Records ==========
+
+    def save_calibration(self, calibration_id: int, session_id: str,
+                          signal: 'CalibrationSignal',
+                          is_accepted: bool = True,
+                          notes: str = "") -> None:
+        """保存校准信号数据"""
+        yaw_left, yaw_right = signal.yaw_range if signal.yaw_range else (0.0, 0.0)
+        pitch_up, pitch_down = signal.pitch_range if signal.pitch_range else (0.0, 0.0)
+
+        with self._get_cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE calibration SET
+                    timestamp = ?,
+                    ear_mean = ?,
+                    ear_min = ?,
+                    ear_mid = ?,
+                    yaw_mean = ?,
+                    yaw_left_max = ?,
+                    yaw_right_max = ?,
+                    pitch_mean = ?,
+                    pitch_up_max = ?,
+                    pitch_down_max = ?,
+                    glasses_mode = ?,
+                    is_accepted = ?,
+                    notes = ?
+                WHERE id = ?
+                """,
+                (
+                    signal.timestamp,
+                    signal.ear_mean,
+                    signal.ear_min,
+                    signal.ear_mid,
+                    signal.yaw_mean,
+                    yaw_left,
+                    yaw_right,
+                    signal.pitch_mean,
+                    pitch_up,
+                    pitch_down,
+                    1 if signal.glasses_mode else 0,
+                    1 if is_accepted else 0,
+                    notes,
+                    calibration_id,
+                ),
+            )
+
+
+    def save_blink_calibration_round(self, calibration_id: int,
+                                      round_data: 'BlinkCalibrationRound') -> None:
+        """保存单轮眨眼校准数据"""
+        with self._get_cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO blink_calibration_round
+                (calibration_id, round_index, duration_seconds,
+                 user_blink_count, program_blink_count, program_squint_count,
+                 error_rate, adjustment_factor)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    calibration_id,
+                    round_data.round_index,
+                    round_data.duration_seconds,
+                    round_data.user_blink_count,
+                    round_data.program_blink_count,
+                    round_data.program_squint_count,
+                    round_data.error_rate,
+                    round_data.adjustment_factor,
+                ),
+            )
+
+
+    def create_calibration(self, session_id: str) -> int:
+        """创建校准记录"""
+        with self._get_cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO calibration (session_id, timestamp)
+                VALUES (?, ?)
+                """,
+                (session_id, time.time()),
+            )
+            return cursor.lastrowid
 
     # ========== 数据聚合统计 ==========
 
