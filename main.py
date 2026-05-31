@@ -159,6 +159,8 @@ class FrameProcessor:
         glasses_detector: GlassesDetector,
         focus_analyzer: FocusAnalyzer,
         fatigue_analyzer: FatigueAnalyzer,
+        calib_manager: Optional["UserCalibrationManager"] = None,
+        is_calibration_active: Optional[Callable[[], bool]] = None,
         db: Optional[DatabaseManager] = None,
         session_id: Optional[str] = None,
     ):
@@ -169,6 +171,8 @@ class FrameProcessor:
         self._glasses_detector = glasses_detector
         self._focus_analyzer = focus_analyzer
         self._fatigue_analyzer = fatigue_analyzer
+        self._calib_manager = calib_manager
+        self._is_calibration_active = is_calibration_active
         self._db = db
         self._session_id = session_id
 
@@ -197,24 +201,11 @@ class FrameProcessor:
         self._latest_glasses_result = None
         self._latest_yaw: float = 0.0  # 最新头部偏航角
         self._latest_pitch: float = 0.0  # 最新头部俯仰角
+        self._latest_face_detected: bool = False  # 人脸是否检测到
 
         # 校准回调
         self._ear_callback: Optional[Callable[[], float]] = None
         self._head_pose_callback: Optional[Callable[[], tuple]] = None
-
-    def set_calibration_callbacks(
-        self,
-        ear_callback: Callable[[], float],
-        head_pose_callback: Callable[[], tuple],
-    ) -> None:
-        """设置校准回调"""
-        self._ear_callback = ear_callback
-        self._head_pose_callback = head_pose_callback
-
-    def set_database(self, db: DatabaseManager, session_id: str) -> None:
-        """设置数据库连接"""
-        self._db = db
-        self._session_id = session_id
 
     def process_frame(self, frame: np.ndarray) -> None:
         """处理单帧
@@ -227,6 +218,7 @@ class FrameProcessor:
 
         # 人脸检测
         face_result = self._face_detector.detect_from_frame(frame, timestamp_ms)
+        self._latest_face_detected = face_result.face_detected
 
         if not face_result.face_detected:
             # 人脸丢失
@@ -510,10 +502,12 @@ class CalibrationCoordinator:
     """校准流程协调器 - 负责校准流程与 UI 的协调
 
     这个类封装了：
-    - UserCalibrationManager 的管理
-    - 校准回调的实现
-    - 输入缓冲区的管理
-    - 校准结果的应雾
+    - UserCalibrationManager 的生命周期管理（start/tick/cancel）
+    - UI 输入处理（数字输入、确认）
+    - 实时数据回调（EAR、头部姿态）提供给校准管理器
+
+    注意：校准协议回调（on_phase_start 等）由 CalibrationFlowCallbacks
+    实现并传递给 UserCalibrationManager，数据回调由本类设置。
     """
 
     def __init__(
@@ -539,7 +533,7 @@ class CalibrationCoordinator:
         # tick 计时器
         self._last_tick_time: float = 0.0
 
-        # 设置回调
+        # 设置实时数据回调（供校准管理器采集数据用）
         self._calib_manager.set_ear_callback(self._get_ear)
         self._calib_manager.set_head_pose_callback(self._get_head_pose)
 
@@ -627,70 +621,6 @@ class CalibrationCoordinator:
         self._input_buffer = ""
         self._input_mode = False
 
-    # --- 回调实现 ---
-
-    def _on_phase_start(self, phase: int, phase_name: str, instruction: str) -> None:
-        """阶段开始"""
-        self._overlay.show_calibration_phase(phase, phase_name, instruction)
-        self._input_mode = False
-        self._input_buffer = ""
-
-    def _on_countdown_tick(self, remaining: int) -> None:
-        """倒计时更新"""
-        self._overlay.update_calibration_countdown(remaining)
-
-    def _on_phase_complete(self, phase: int, collected_data: dict) -> None:
-        """阶段完成"""
-        self._overlay.show_phase_complete(phase)
-
-    def _on_blink_round_start(self, round_num: int, total_rounds: int, duration: int) -> None:
-        """眨眼轮开始"""
-        self._overlay.show_blink_round(round_num, total_rounds, duration)
-
-    def _on_blink_round_tick(self, remaining: int, detected_blinks: int) -> None:
-        """眨眼轮更新"""
-        self._overlay.update_blink_round(remaining, detected_blinks)
-
-    def _on_blink_round_end(self, round_num: int, program_count: int) -> None:
-        """眨眼轮结束，等待输入"""
-        self._overlay.show_blink_input(round_num, program_count)
-        self._input_mode = True
-        self._input_buffer = ""
-
-    def _on_calibration_complete(self, result: CalibrationResult) -> None:
-        """校准完成"""
-        self._overlay.show_calibration_result(result)
-        self._input_mode = False
-        self._apply_calibration_result(result)
-
-    def _on_error(self, phase: int, message: str) -> None:
-        """错误"""
-        logger.error("校准错误 [阶段 %d]: %s", phase, message)
-
-    def _apply_calibration_result(self, result: CalibrationResult) -> None:
-        """应用校准结果到各模块"""
-        if self._eye_detector:
-            self._eye_detector.set_baseline(result.signal.ear_mean)
-
-        if self._fatigue_analyzer and result.blink_rounds:
-            # 计算用户眨眼基线频率（次/分钟）
-            total_blinks = sum(r.blink_count for r in result.blink_rounds)
-            total_duration = len(result.blink_rounds) * 20.0  # 每轮20秒
-            if total_duration > 0:
-                baseline_br = total_blinks / (total_duration / 60.0)
-                self._fatigue_analyzer.set_baseline_blink_rate(baseline_br)
-
-        if self._db and self._session_id:
-            self._db.update_session(
-                self._session_id,
-                baseline_ear=result.signal.ear_mean,
-                is_calibrated=True,
-            )
-
-        logger.info("校准结果已应用: EAR=%.4f, 眨眼阈值=%.4f, 眨眼基线=%.1f次/分钟",
-                    result.signal.ear_mean, result.final_blink_threshold,
-                    self._fatigue_analyzer.baseline_blink_rate if self._fatigue_analyzer else 0)
-
 
 class EyeFocusApp:
     """EyeFocus Insight 主应用类 (Facade)
@@ -727,29 +657,10 @@ class EyeFocusApp:
         self._current_session: Optional[Session] = None
         self._session_id: Optional[str] = None
 
-        # 帧统计（仍由主应用维护）
+        # 帧统计
         self._fps: float = 0.0
         self._fps_start_time: float = 0.0
         self._fps_frame_count: int = 0
-
-        # 帧处理相关属性（保持与 inline _process_frame 兼容）
-        self._frame_count: int = 0
-        self._yaw_history: Deque[float] = deque(maxlen=30)
-        self._pitch_history: Deque[float] = deque(maxlen=30)
-        self._prev_landmarks: Optional[np.ndarray] = None
-        self._latest_yaw: float = 0.0
-        self._latest_pitch: float = 0.0
-        self._latest_face_detected: bool = False
-        self._latest_focus_result = None
-        self._latest_fatigue_result = None
-        self._latest_gaze_score = 100.0
-        self._latest_light_result = None
-        self._latest_glasses_result = None
-        self._last_written_blink_count: int = 0
-        self._last_frame_write_time: float = 0.0
-        self._last_fatigue_write_time: float = 0.0
-        self._frame_write_interval: float = 1.0 / 15.0
-        self._fatigue_write_interval: float = 1.0
 
         # 线程管理
         self._shutdown_event: threading.Event = threading.Event()
@@ -816,6 +727,8 @@ class EyeFocusApp:
                 glasses_detector=self._glasses_detector,
                 focus_analyzer=self._focus_analyzer,
                 fatigue_analyzer=self._fatigue_analyzer,
+                calib_manager=self._calib_manager,
+                is_calibration_active=lambda: self.is_calibration_flow_active(),
                 db=self._db,
                 session_id=self._session_id,
             )
@@ -872,7 +785,14 @@ class EyeFocusApp:
                 ret, frame = self._camera_manager.get_frame()
 
                 if ret and frame is not None:
-                    self._process_frame(frame)
+                    self._frame_processor.process_frame(frame)
+                    # 从 FrameProcessor 获取最新结果用于渲染
+                    self._latest_focus_result = self._frame_processor._latest_focus_result
+                    self._latest_fatigue_result = self._frame_processor._latest_fatigue_result
+                    self._latest_gaze_score = self._frame_processor._latest_gaze_score
+                    self._latest_light_result = self._frame_processor._latest_light_result
+                    self._latest_glasses_result = self._frame_processor._latest_glasses_result
+                    self._latest_face_detected = self._frame_processor._latest_face_detected
                     self._render_frame(frame)
                     self._update_fps()
                 else:
@@ -1016,16 +936,6 @@ class EyeFocusApp:
             head_pose_pitch=face_result.pitch or 0.0,
         )
         self._latest_gaze_score = gaze_result.gaze_concentration if gaze_result else 100.0
-
-        # 校准中：使用 UserCalibrationManager 流程（每帧采集）
-        if self.is_calibration_flow_active():
-            if self._calib_manager.state == CalibrationState.AUTO_CALIB:
-                # 每帧采集数据（7秒目标 150-210 帧）
-                self._calib_manager.add_frame(
-                    ear=eye_result.ear_avg,
-                    yaw=face_result.yaw or 0.0,
-                    pitch=face_result.pitch or 0.0,
-                )
 
         # 专注度分析
         focus_result = self._focus_analyzer.analyze(
