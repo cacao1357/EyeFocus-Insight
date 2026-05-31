@@ -48,6 +48,9 @@ pip install -r requirements.txt
 ### 5. 运行程序
 
 ```bash
+# 主程序（自动校准 + 实时检测）
+python main.py
+
 # 帧率基准测试
 python spike/fps_benchmark.py
 
@@ -69,7 +72,24 @@ python spike/ear_variance.py --label with_glasses
 ```
 EyeFocus-Insight/
 ├── config.py           # 集中配置管理
+├── main.py             # 主程序入口
 ├── requirements.txt    # 依赖列表
+├── detector/           # 检测器模块
+│   ├── face_mesh.py    # MediaPipe 人脸网格
+│   ├── eye_aspect.py   # EAR 眨眼检测
+│   ├── head_pose.py    # 头部姿态检测
+│   ├── gaze.py         # 视线方向检测
+│   └── light.py        # 光照条件感知
+├── analyzer/           # 分析器模块
+│   ├── baseline.py      # 基线校准
+│   ├── focus.py        # 专注度分析
+│   ├── fatigue.py      # 疲劳分析
+│   └── glasses.py      # 眼镜检测
+├── storage/            # 存储模块
+│   ├── models.py       # 数据模型定义
+│   └── db.py          # SQLite 数据库层
+├── gui/                # GUI 模块
+│   └── overlay.py      # 实时叠加层
 ├── spike/             # Phase 0 验证脚本
 │   ├── fps_benchmark.py        # S1: 帧率测试
 │   ├── baseline_proto.py       # S2: 基线校准
@@ -80,8 +100,11 @@ EyeFocus-Insight/
 │       ├── D1/
 │       ├── D2/
 │       └── T1/
-├── PHASE0_PLAN.md   # Phase 0 执行计划
-└── TESTING_GUIDE.md  # 测试指南
+├── docs/               # 文档
+│   └── old_schemes/    # 旧版本方案归档
+├── PHASE0_PLAN.md      # Phase 0 执行计划
+├── PHASE0_SUMMARY.md   # Phase 0 验证报告
+└── PHASE1_PLAN.md      # Phase 1 开发计划
 ```
 
 ---
@@ -99,9 +122,9 @@ EyeFocus-Insight/
 
 ## 当前进度
 
-**Phase 0 验证阶段** — 技术可行性已确认。
+**Phase 1 开发阶段** — MVP 核心功能实现中。
 
-详细测试结果见 [PHASE0_SUMMARY.md](./PHASE0_SUMMARY.md)。
+Phase 0 验证结果见 [PHASE0_SUMMARY.md](./PHASE0_SUMMARY.md)。
 
 | 检查项 | 状态 |
 |--------|------|
@@ -112,6 +135,8 @@ EyeFocus-Insight/
 | S5 EAR 方差分析 | ✅ 完成 |
 | S6 依赖验证 | ✅ PASS |
 | S7 光照测试 | ✅ PASS |
+
+**Phase 1 任务** 见 [PHASE1_PLAN.md](./PHASE1_PLAN.md)。
 
 ---
 
