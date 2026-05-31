@@ -293,6 +293,11 @@ class UserCalibrationManager:
         elapsed = time.time() - self._phase_start_time
         current_phase_duration = self._get_current_phase_duration()
 
+        # AUTO_CALIB 阶段需要特殊处理（收集数据并自动推进）
+        if self._state == CalibrationState.AUTO_CALIB:
+            self._run_auto_calib()
+            return
+
         if current_phase_duration > 0:
             remaining = int(current_phase_duration - elapsed)
             if remaining >= 0:
