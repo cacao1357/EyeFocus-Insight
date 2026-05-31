@@ -115,7 +115,7 @@ class EyeAspectDetector:
         self._recent_ears: Deque[float] = deque(maxlen=30)
 
         # 眨眼事件记录
-        self._blink_events: List[BlinkEvent] = []
+        self._blink_events: Deque[BlinkEvent] = deque(maxlen=5000)
         self._current_blink_start: Optional[int] = None
         self._current_blink_start_time: Optional[float] = None
         self._current_blink_ear_nadir: float = float('inf')
@@ -330,8 +330,8 @@ class EyeAspectDetector:
                 should_record = False
 
                 if is_blink_classified:
-                    # 眨眼事件：置信度 > 0.6 才计入
-                    if confidence > DEFAULT_CONFIDENCE_THRESHOLD_HIGH:
+                    # 眨眼事件：置信度 > 0.4 才计入（降低阈值以提高召回率）
+                    if confidence > 0.4:  # 降低阈值从 0.6 到 0.4
                         should_record = True
                         logger.debug(
                             "眨眼事件(确认): start=%d, end=%d, duration=%.3fs, nadir=%.4f, conf=%.2f",
