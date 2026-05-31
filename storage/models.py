@@ -137,3 +137,43 @@ class SystemStatus:
     current_session_id: Optional[str] = None
     fps: float = 0.0
     last_error: Optional[str] = None
+
+
+@dataclass
+class CalibrationSignal:
+    """单信号采集结果"""
+    ear_mean: float = 0.0           # EAR 均值（睁眼基线）
+    ear_min: float = 0.0           # EAR 最小值（闭眼阈值参考）
+    ear_mid: float = 0.0           # EAR 中间值（眯眼阈值参考）
+    yaw_mean: float = 0.0          # 头部偏转均值
+    yaw_range: tuple = (0.0, 0.0)  # (左偏最大值, 右偏最大值)
+    pitch_mean: float = 0.0        # 头部俯仰均值
+    pitch_range: tuple = (0.0, 0.0)  # (仰角最大值, 俯角最大值)
+    glasses_mode: bool = False      # 眼镜模式
+    timestamp: float = 0.0         # 采集时间戳
+
+
+@dataclass
+class BlinkCalibrationRound:
+    """单轮眨眼校准数据"""
+    round_index: int = 0           # 第几轮（1-3）
+    duration_seconds: int = 0       # 本轮时长（秒）
+    user_blink_count: int = 0      # 用户手动计数
+    program_blink_count: int = 0   # 程序统计计数
+    program_squint_count: int = 0  # 程序统计眯眼次数
+    error_rate: float = 0.0        # 误差率
+    adjustment_factor: float = 1.0 # 本轮调整因子
+
+
+@dataclass
+class CalibrationResult:
+    """完整校准结果"""
+    session_id: str = ""
+    timestamp: datetime = field(default_factory=datetime.now)
+    signal: CalibrationSignal = field(default_factory=CalibrationSignal)
+    blink_rounds: List[BlinkCalibrationRound] = field(default_factory=list)
+    final_adjustment_factor: float = 1.0  # 多轮平均调整因子
+    final_blink_threshold: float = 0.26  # 调整后的眨眼阈值
+    final_squint_threshold: float = 0.20  # 调整后的眯眼阈值
+    is_accepted: bool = True      # 用户是否接受
+    notes: str = ""              # 用户备注
