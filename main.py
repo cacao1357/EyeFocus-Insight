@@ -128,17 +128,27 @@ class CalibrationFlowCallbacks:
         """数字输入"""
         if self._input_mode:
             self._input_buffer += digit
+            # 同步更新 overlay 显示
+            self.app._overlay.update_input_buffer(self._input_buffer)
 
     def on_enter_pressed(self) -> None:
         """确认输入"""
-        if self._input_mode and hasattr(self.app, '_calib_manager') and self.app._calib_manager:
-            try:
-                count = int(self._input_buffer) if self._input_buffer else 0
-                self.app._calib_manager.on_user_input(count)
-            except ValueError:
-                logger.warning("无效输入: %s", self._input_buffer)
-            self._input_buffer = ""
-            self._input_mode = False
+        if hasattr(self.app, '_calib_manager') and self.app._calib_manager:
+            # 检查校准管理器是否处于 BLINK_INPUT 状态
+            from analyzer.user_calibration import CalibrationState
+            if self.app._calib_manager.state == CalibrationState.BLINK_INPUT:
+                try:
+                    count = int(self._input_buffer) if self._input_buffer else 0
+                    self.app._calib_manager.on_user_input(count)
+                except ValueError:
+                    logger.warning("无效输入: %s", self._input_buffer)
+                self._input_buffer = ""
+                self._input_mode = False
+                return
+
+        # 如果不在 BLINK_INPUT 状态，清空输入
+        self._input_buffer = ""
+        self._input_mode = False
 
     def _apply_calibration_result(self, result: CalibrationResult) -> None:
         """应用校准结果到各模块"""
@@ -284,9 +294,9 @@ class EyeFocusApp:
         # 注册信号处理器
         self._register_signal_handlers()
 
-        # 自动开始校准（如果启用）
+        # 自动开始校准（如果启用）- 使用新的 UserCalibrationManager 流程
         if self.config.enable_calibration:
-            self.start_calibration()
+            self.start_calibration_flow()
 
         # 启动主循环
         self._main_loop()
@@ -483,9 +493,14 @@ class EyeFocusApp:
         Args:
             frame: BGR 格式 OpenCV 图像
         """
-        # 构建校准进度
+        # 构建校准进度（使用新的 UserCalibrationManager 流程）
         calibration_progress = None
-        if self._calibrating:
+        if self.is_calibration_flow_active():
+            # 新的校准流程 UI 由 FocusOverlay 内部处理
+            # 这里传入 None 让 overlay 使用 CalibrationPhaseInfo 显示
+            calibration_progress = None
+        elif self._calibrating:
+            # 旧校准流程（BaselineCalibrator）
             status = self._calibrator.get_status()
             # 计算目标帧数（假设 30 FPS）
             total_frames = int(self.config.calibration_duration * 30)

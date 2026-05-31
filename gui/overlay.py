@@ -86,6 +86,7 @@ class CalibrationPhaseInfo:
     detected_blinks: int = 0
     program_count: int = 0
     result: Optional['CalibrationResult'] = None
+    input_buffer: str = ""  # 用户输入缓冲区显示
 
 
 @dataclass
@@ -470,6 +471,12 @@ class FocusOverlay:
             self._calib_phase.round_num = round_num
             self._calib_phase.program_count = program_count
             self._calib_phase.is_input_mode = True
+            self._calib_phase.input_buffer = ""  # 重置输入缓冲区显示
+
+    def update_input_buffer(self, buffer: str) -> None:
+        """更新输入缓冲区显示"""
+        if self._calib_phase:
+            self._calib_phase.input_buffer = buffer
 
     def show_calibration_result(self, result: 'CalibrationResult') -> None:
         """显示校准结果"""
@@ -534,6 +541,13 @@ class FocusOverlay:
             cv2.putText(frame, input_text,
                         (panel_x + 20, panel_y + 145),
                         self.config.font, 0.5, (255, 200, 0), 1)
+
+            # 显示用户输入
+            if phase.input_buffer:
+                buffer_text = f"您输入: {phase.input_buffer}"
+                cv2.putText(frame, buffer_text,
+                            (panel_x + 20, panel_y + 170),
+                            self.config.font, 0.6, (0, 255, 255), 2)
 
             hint_text = "按数字键输入，按 Enter 确认"
             cv2.putText(frame, hint_text,
