@@ -12,6 +12,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from detector.eye_aspect import EyeAspectDetector, create_eye_aspect_detector
 from detector.head_pose import HeadPoseDetector, HeadPoseResult, create_head_pose_detector
 from detector.gaze import GazeDetector, GazeResult, create_gaze_detector
 
@@ -76,8 +77,166 @@ class TestHeadPoseDetector:
         assert isinstance(detector, HeadPoseDetector)
 
 
+class TestEyeAspectDetector:
+    """EyeAspectDetector 单元测试 — T145/T146/T147"""
+
+    def _make_landmarks(self, ear_value: float = 0.35):
+        """创建标准 468 关键点数组"""
+        landmarks = np.zeros((468, 3), dtype=np.float64)
+
+        # 基于目标 EAR 值反推眼睑尺寸
+        # EAR = (a + b) / (2 * c)，其中 a≈b，c=眼宽
+        eye_width = 30.0
+        # a = b = EAR * 2 * c / 2 = EAR * c
+        eye_vertical = ear_value * eye_width
+
+        # 左眼 (33, 160, 158, 133, 153, 144)
+        cx, cy = 200, 200
+        landmarks[33] = [cx - eye_width, cy, 0]
+        landmarks[160] = [cx - eye_width * 0.5, cy - eye_vertical, 0]
+        landmarks[158] = [cx + eye_width * 0.5, cy - eye_vertical, 0]
+        landmarks[133] = [cx + eye_width, cy, 0]
+        landmarks[153] = [cx + eye_width * 0.5, cy + eye_vertical, 0]
+        landmarks[144] = [cx - eye_width * 0.5, cy + eye_vertical, 0]
+
+        # 右眼 (362, 385, 387, 263, 380, 373)
+        cx2, cy2 = 440, 200
+        landmarks[362] = [cx2 - eye_width, cy2, 0]
+        landmarks[385] = [cx2 - eye_width * 0.5, cy2 - eye_vertical, 0]
+        landmarks[387] = [cx2 + eye_width * 0.5, cy2 - eye_vertical, 0]
+        landmarks[263] = [cx2 + eye_width, cy2, 0]
+        landmarks[380] = [cx2 + eye_width * 0.5, cy2 + eye_vertical, 0]
+        landmarks[373] = [cx2 - eye_width * 0.5, cy2 + eye_vertical, 0]
+
+        return landmarks
+
+    def test_initial_state(self):
+        """测试初始状态"""
+        detector = EyeAspectDetector()
+        stats = detector.get_stats()
+        assert stats["ear_threshold"] == 0.26  # 默认固定阈值
+        assert stats["has_baseline"] is False
+
+    def test_set_baseline_updates_threshold(self):
+        """T145: 测试 set_baseline 更新动态阈值"""
+        detector = EyeAspectDetector()
+        detector.set_baseline(0.35)
+        stats = detector.get_stats()
+        # 眨眼阈值 = baseline * 0.75
+        assert stats["ear_threshold"] == pytest.approx(0.2625, abs=0.001)
+        assert stats["has_baseline"] is True
+        assert stats["baseline_ear"] == 0.35
+
+    def test_open_threshold_is_baseline_090(self):
+        """T145: 测试睁眼阈值 = baseline * 0.90"""
+        detector = EyeAspectDetector()
+        detector.set_baseline(0.35)
+        assert detector.open_threshold == pytest.approx(0.315, abs=0.001)
+
+    def test_compute_returns_ear(self):
+        """测试 EAR 计算"""
+        detector = EyeAspectDetector()
+        landmarks = self._make_landmarks(ear_value=0.35)
+        result = detector.compute(landmarks)
+        assert isinstance(result.ear_left, float)
+        assert isinstance(result.ear_right, float)
+        assert isinstance(result.ear_avg, float)
+        assert 0.2 < result.ear_avg < 0.6
+
+    def test_blink_detection_below_threshold(self):
+        """测试眨眼检测（EAR 低于阈值）"""
+        detector = EyeAspectDetector()
+        # 睁眼
+        open_landmarks = self._make_landmarks(ear_value=0.35)
+        result = detector.compute(open_landmarks)
+        assert result.is_blink is False
+
+        # 闭眼（EAR 低于阈值）
+        closed_landmarks = self._make_landmarks(ear_value=0.1)
+        result = detector.compute(closed_landmarks)
+        assert result.is_blink is True
+
+    def test_classify_eye_event_blink(self):
+        """T146: 测试眨眼分类（< 400ms = 眨眼）"""
+        detector = EyeAspectDetector()
+        assert detector._classify_eye_event(0.2) is True   # 200ms → 眨眼
+        assert detector._classify_eye_event(0.3) is True   # 300ms → 眨眼
+        assert detector._classify_eye_event(0.39) is True  # 390ms → 眨眼
+
+    def test_classify_eye_event_squint(self):
+        """T146: 测试眯眼分类（>= 400ms = 眯眼）"""
+        detector = EyeAspectDetector()
+        assert detector._classify_eye_event(0.4) is False   # 400ms → 眯眼
+        assert detector._classify_eye_event(0.5) is False   # 500ms → 眯眼
+        assert detector._classify_eye_event(1.0) is False   # 1000ms → 眯眼
+
+    def test_compute_blink_confidence_default(self):
+        """T147: 测试默认置信度为 1.0"""
+        detector = EyeAspectDetector()
+        confidence = detector._compute_blink_confidence()
+        assert confidence == 1.0
+
+    def test_compute_blink_confidence_reduced_by_head_pose(self):
+        """T147: 测试头部姿态异常降低置信度"""
+        detector = EyeAspectDetector()
+        detector.set_head_pose_weight(0.5)
+        confidence = detector._compute_blink_confidence()
+        assert confidence == 0.5
+
+    def test_compute_blink_confidence_reduced_by_face_stability(self):
+        """T147: 测试面部晃动降低置信度"""
+        detector = EyeAspectDetector()
+        detector.set_face_stability_weight(0.3)
+        confidence = detector._compute_blink_confidence()
+        assert confidence == 0.3
+
+    def test_compute_blink_confidence_combined(self):
+        """T147: 测试多信号融合"""
+        detector = EyeAspectDetector()
+        detector.set_head_pose_weight(0.5)
+        detector.set_face_stability_weight(0.6)
+        confidence = detector._compute_blink_confidence()
+        assert confidence == pytest.approx(0.3, abs=0.01)
+
+    def test_reset_clears_state(self):
+        """测试 reset() 清除状态"""
+        detector = EyeAspectDetector()
+        detector.set_baseline(0.35)
+        detector._blinks_in_progress = 2
+        detector._frame_count = 100
+
+        detector.reset()
+
+        stats = detector.get_stats()
+        assert stats["has_baseline"] is False
+        assert stats["blinks_in_progress"] == 0
+        assert stats["frame_count"] == 0
+        assert stats["head_pose_weight"] == 1.0
+        assert stats["face_stability_weight"] == 1.0
+
+    def test_factory_with_baseline(self):
+        """测试工厂函数支持 baseline_ear 参数"""
+        from detector.eye_aspect import create_eye_aspect_detector
+        detector = create_eye_aspect_detector(baseline_ear=0.35)
+        stats = detector.get_stats()
+        assert stats["has_baseline"] is True
+        assert stats["ear_threshold"] == pytest.approx(0.2625, abs=0.001)
+
+    def test_blink_rate_empty(self):
+        """测试无眨眼事件时返回 0"""
+        detector = EyeAspectDetector()
+        rate, count = detector.get_blink_rate()
+        assert rate == 0.0
+        assert count == 0
+
+    def test_factory_function(self):
+        """测试工厂函数"""
+        from detector.eye_aspect import create_eye_aspect_detector
+        detector = create_eye_aspect_detector()
+        assert isinstance(detector, EyeAspectDetector)
+
+
 class TestGazeDetector:
-    """GazeDetector 单元测试"""
 
     def _make_landmarks(self):
         """创建标准 468 关键点数组（简化版）"""

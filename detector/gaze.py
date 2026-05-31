@@ -19,12 +19,14 @@ from typing import Optional, Tuple
 
 import numpy as np
 
+from config import HEAD_POSE
+
 logger = logging.getLogger("eyefocus.detector")
 
 
-# 默认配置
-DEFAULT_GAZE_YAW_THRESH = 15.0   # 视线横向偏移阈值（度）
-DEFAULT_GAZE_PITCH_THRESH = 12.0  # 视线纵向偏移阈值（度）
+# 默认配置：从 HEAD_POSE 加载，与头部姿态阈值保持一致
+DEFAULT_GAZE_YAW_THRESH = HEAD_POSE.yaw_thresh   # 视线横向偏移阈值（度）
+DEFAULT_GAZE_PITCH_THRESH = HEAD_POSE.pitch_thresh  # 视线纵向偏移阈值（度）
 
 
 @dataclass

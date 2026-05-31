@@ -3,16 +3,16 @@ detector/eye_aspect.py — EAR 眨眼检测算法
 
 提供 EyeAspectDetector 类，实现：
 - EAR (Eye Aspect Ratio) 计算
-- 眨眼事件检测
-- 眨眼频率统计（滑动窗口）
-- 个体化阈值标定
+- 眨眼事件检测（基于个人基线的动态阈值）
+- 眯眼 vs 眨眼区分（时间窗口 400ms）
+- 多信号融合眨眼置信度（头部姿态 + 面部稳定性）
 
 参考: Soukupová & Čech (2016) Real-Time Eye Blink Detection
 """
 
 import logging
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Deque, List, Optional, Tuple
 
 import numpy as np
@@ -21,10 +21,17 @@ logger = logging.getLogger("eyefocus.detector")
 
 
 # 默认 EAR 阈值配置
-DEFAULT_EAR_THRESHOLD = 0.26  # 眨眼阈值，高于此值视为睁眼状态
+DEFAULT_EAR_THRESHOLD = 0.26  # 眨眼阈值（固定fallback）
 DEFAULT_EAR_MIN = 0.08  # EAR 最小值（眼睛闭合）
-DEFAULT_BLINK_DURATION_THRESHOLD = 0.3  # 秒，低于此时间为眨眼
+DEFAULT_SQUINT_VS_BLINK_THRESHOLD = 0.4  # 秒，<此时间为眨眼，>=此时间为眯眼
 DEFAULT_BLINK_CONFIRM_FRAMES = 2  # 连续低于阈值才确认为眨眼
+
+# 眯眼 vs 眨眼区分参数
+SQUINT_THRESHOLD_SECONDS = 0.4  # 400ms
+
+# 多信号融合置信度参数
+DEFAULT_CONFIDENCE_THRESHOLD_HIGH = 0.6  # 置信度 > 0.6 才计入眨眼
+DEFAULT_CONFIDENCE_THRESHOLD_LOW = 0.3  # 置信度 < 0.3 忽略
 
 
 @dataclass
@@ -36,6 +43,7 @@ class BlinkEvent:
     end_time: float
     duration: float  # 秒
     ear_nadir: float  # 眨眼时的最小 EAR
+    is_confirmed: bool = True  # 是否通过置信度验证
 
 
 @dataclass
@@ -55,8 +63,14 @@ class EyeAspectDetector:
     使用眼睛纵横比 (Eye Aspect Ratio) 检测眨眼。
     EAR = (|p2-p6| + |p3-p5|) / (2 * |p1-p4|)
 
+    特性：
+    - 基于个人基线的动态阈值（set_baseline）
+    - 眯眼 vs 眨眼区分（时间窗口）
+    - 多信号融合眨眼置信度（头部姿态 + 面部稳定性）
+
     使用方法：
         detector = EyeAspectDetector()
+        detector.set_baseline(0.35)  # 设置个人基线 EAR
         result = detector.compute(landmarks)  # landmarks: (478, 2) 关键点
     """
 
@@ -68,45 +82,99 @@ class EyeAspectDetector:
         self,
         ear_threshold: float = DEFAULT_EAR_THRESHOLD,
         ear_min: float = DEFAULT_EAR_MIN,
-        blink_duration_thresh: float = DEFAULT_BLINK_DURATION_THRESHOLD,
+        squint_threshold: float = SQUINT_THRESHOLD_SECONDS,
         confirm_frames: int = DEFAULT_BLINK_CONFIRM_FRAMES,
-        enable_adaptive_threshold: bool = False,
-        adaptive_window_size: int = 30,
+        baseline_ear: Optional[float] = None,
         fps: float = 30.0,
     ):
         """初始化 EAR 检测器
 
         Args:
-            ear_threshold: EAR 眨眼阈值，低于此值认为是眨眼
+            ear_threshold: EAR 眨眼阈值（固定 fallback）
             ear_min: EAR 最小值，用于判断眼睛是否完全闭合
-            blink_duration_thresh: 眨眼持续时间阈值（秒）
+            squint_threshold: 眯眼阈值（秒），>= 此时间为眯眼
             confirm_frames: 确认眨眼的连续帧数
-            enable_adaptive_threshold: 是否启用自适应阈值
-            adaptive_window_size: 自适应阈值窗口大小（帧数）
+            baseline_ear: 个人基线 EAR（用于动态阈值）
             fps: 帧率（用于计算时长）
         """
         self.ear_threshold = ear_threshold
         self.ear_min = ear_min
-        self.blink_duration_thresh = blink_duration_thresh
+        self.squint_threshold = squint_threshold
         self.confirm_frames = confirm_frames
-        self.enable_adaptive_threshold = enable_adaptive_threshold
-        self.adaptive_window_size = adaptive_window_size
         self.fps = fps
 
+        # 个人基线（用于动态阈值）
+        self._baseline_ear: Optional[float] = baseline_ear
+        self._has_baseline: bool = baseline_ear is not None
+        if self._has_baseline:
+            self.ear_threshold = baseline_ear * 0.75
+        self._has_baseline: bool = baseline_ear is not None
+
         # 眨眼检测状态
-        self._blink_frames: Deque[bool] = deque(maxlen=adaptive_window_size)
-        self._recent_ears: Deque[float] = deque(maxlen=adaptive_window_size)
+        self._blink_frames: Deque[bool] = deque(maxlen=30)
+        self._recent_ears: Deque[float] = deque(maxlen=30)
 
         # 眨眼事件记录
         self._blink_events: List[BlinkEvent] = []
         self._current_blink_start: Optional[int] = None
         self._current_blink_start_time: Optional[float] = None
+        self._current_blink_ear_nadir: float = float('inf')
+
+        # 眯眼 vs 眨眼区分：记录闭眼持续时间
+        self._eye_closed_start_time: Optional[float] = None
 
         # 帧计数
         self._frame_count: int = 0
 
-        # 自适应阈值
-        self._adaptive_threshold: Optional[float] = None
+        # 多信号融合：头部姿态和面部稳定性
+        self._head_pose_weight: float = 1.0  # 1.0=正常，0.5=异常
+        self._face_stability_weight: float = 1.0  # 1.0=稳定，0.3=晃动
+
+        # BUG FIX: 初始化 _blinks_in_progress
+        self._blinks_in_progress: int = 0
+
+    def set_baseline(self, ear: float) -> None:
+        """设置个人基线 EAR，动态更新眨眼阈值
+
+        眨眼阈值 = baseline_ear × 0.75
+        睁眼判定 = EAR > baseline_ear × 0.90
+
+        Args:
+            ear: 个人基线 EAR 均值
+        """
+        self._baseline_ear = ear
+        self._has_baseline = True
+        # 动态阈值：眨眼阈值 = 基线 × 0.75
+        self.ear_threshold = ear * 0.75
+        logger.info("EAR 动态阈值已更新: %.4f (基线=%.4f)", self.ear_threshold, ear)
+
+    def set_head_pose_weight(self, weight: float) -> None:
+        """设置头部姿态置信度权重
+
+        Args:
+            weight: 1.0=姿态正常, 0.5=姿态异常
+        """
+        self._head_pose_weight = max(0.0, min(1.0, weight))
+
+    def set_face_stability_weight(self, weight: float) -> None:
+        """设置面部稳定性置信度权重
+
+        Args:
+            weight: 1.0=面部稳定, 0.3=面部晃动
+        """
+        self._face_stability_weight = max(0.0, min(1.0, weight))
+
+    @property
+    def blink_threshold(self) -> float:
+        """获取当前眨眼阈值"""
+        return self.ear_threshold
+
+    @property
+    def open_threshold(self) -> float:
+        """获取睁眼判定阈值（基线 × 0.90）"""
+        if self._baseline_ear is not None:
+            return self._baseline_ear * 0.90
+        return self.ear_threshold * 1.15  # fallback: 固定阈值的 ~1.15 倍
 
     def compute(self, landmarks: np.ndarray) -> EyeAspectResult:
         """计算单帧 EAR 值
@@ -131,7 +199,7 @@ class EyeAspectDetector:
         # 更新历史
         self._recent_ears.append(ear_avg)
 
-        # 检测眨眼
+        # 检测眨眼（使用动态阈值）
         is_blink = ear_avg < self.ear_threshold
         left_open = ear_left >= self.ear_min
         right_open = ear_right >= self.ear_min
@@ -171,11 +239,43 @@ class EyeAspectDetector:
 
         return float((a + b) / (2.0 * c))
 
+    def _compute_blink_confidence(self) -> float:
+        """计算眨眼置信度（多信号融合）
+
+        confidence = base_conf × head_pose_weight × face_stability_weight
+
+        Returns:
+            置信度 0.0 - 1.0
+        """
+        base_conf = 1.0
+        confidence = base_conf * self._head_pose_weight * self._face_stability_weight
+        return max(0.0, min(1.0, confidence))
+
+    def _classify_eye_event(self, duration_seconds: float) -> bool:
+        """分类眼睑事件：眨眼 vs 眯眼
+
+        Args:
+            duration_seconds: 眼睑闭合持续时间（秒）
+
+        Returns:
+            True=眨眼, False=眯眼
+        """
+        # < 400ms = 眨眼，>= 400ms = 眯眼
+        return duration_seconds < SQUINT_THRESHOLD_SECONDS
+
     def _update_blink_state(self, is_blink: bool, ear_avg: float) -> None:
         """更新眨眼检测状态机
 
         状态转移：
-        开眼 -> 闭眼（眨眼开始）-> 开眼（眨眼结束）
+        开眼 -> 闭眼（眨眼/眯眼开始）-> 开眼（眨眼/眯眼结束）
+
+        眯眼 vs 眨眼区分：
+        - 闭眼 < 400ms → 判定为眨眼
+        - 闭眼 >= 400ms → 判定为眯眼（不计入眨眼事件）
+
+        多信号融合：
+        - confidence > 0.6 → 计入眨眼事件
+        - confidence < 0.3 → 忽略
         """
         self._blink_frames.append(is_blink)
 
@@ -183,6 +283,12 @@ class EyeAspectDetector:
         if is_blink and self._current_blink_start is None:
             self._current_blink_start = self._frame_count
             self._current_blink_start_time = (self._frame_count - 1) / self.fps
+            self._current_blink_ear_nadir = float('inf')
+            self._eye_closed_start_time = self._current_blink_start_time
+
+        # 更新 EAR 最低值
+        if self._current_blink_start is not None and ear_avg < self._current_blink_ear_nadir:
+            self._current_blink_ear_nadir = ear_avg
 
         # 睁眼结束
         elif not is_blink and self._current_blink_start is not None:
@@ -193,13 +299,44 @@ class EyeAspectDetector:
                 blink_start = self._current_blink_start
                 duration = (blink_end - blink_start) / self.fps
 
+                # 计算闭眼持续时间
+                eye_closed_duration = duration
+
+                # 眯眼 vs 眨眼分类
+                is_blink_classified = self._classify_eye_event(eye_closed_duration)
+
+                # 多信号融合置信度
+                confidence = self._compute_blink_confidence()
+
                 # 获取 EAR 最低值
                 window_start = max(0, len(self._recent_ears) - self.confirm_frames - 1)
                 window_ears = list(self._recent_ears)[window_start:]
                 ear_nadir = min(window_ears) if window_ears else ear_avg
 
-                # 过滤过长的"闭眼"（可能是注意力转移而非眨眼）
-                if duration < self.blink_duration_thresh * 3:
+                # 判定规则
+                should_record = False
+
+                if is_blink_classified:
+                    # 眨眼事件：置信度 > 0.6 才计入
+                    if confidence > DEFAULT_CONFIDENCE_THRESHOLD_HIGH:
+                        should_record = True
+                        logger.debug(
+                            "眨眼事件(确认): start=%d, end=%d, duration=%.3fs, nadir=%.4f, conf=%.2f",
+                            blink_start, blink_end, duration, ear_nadir, confidence
+                        )
+                    else:
+                        logger.debug(
+                            "眨眼事件(低置信度%.2f跳过): start=%d, end=%d, duration=%.3fs",
+                            confidence, blink_start, blink_end, duration
+                        )
+                else:
+                    # 眯眼事件：不计入眨眼，单独统计
+                    logger.debug(
+                        "眯眼事件(跳过): duration=%.3fs >= %.3fs",
+                        eye_closed_duration, SQUINT_THRESHOLD_SECONDS
+                    )
+
+                if should_record:
                     event = BlinkEvent(
                         start_frame=blink_start,
                         end_frame=blink_end,
@@ -207,15 +344,26 @@ class EyeAspectDetector:
                         end_time=self._current_blink_start_time + duration,
                         duration=duration,
                         ear_nadir=ear_nadir,
+                        is_confirmed=True,
                     )
                     self._blink_events.append(event)
-                    logger.debug(
-                        "眨眼事件: start=%d, end=%d, duration=%.3fs, nadir=%.4f",
-                        blink_start, blink_end, duration, ear_nadir
+                elif is_blink_classified and confidence >= DEFAULT_CONFIDENCE_THRESHOLD_LOW:
+                    # 可疑眨眼：置信度在 [0.3, 0.6] 之间，标记但不计入主要统计
+                    event = BlinkEvent(
+                        start_frame=blink_start,
+                        end_frame=blink_end,
+                        start_time=self._current_blink_start_time,
+                        end_time=self._current_blink_start_time + duration,
+                        duration=duration,
+                        ear_nadir=ear_nadir,
+                        is_confirmed=False,
                     )
+                    self._blink_events.append(event)
 
             self._current_blink_start = None
             self._current_blink_start_time = None
+            self._current_blink_ear_nadir = float('inf')
+            self._eye_closed_start_time = None
 
     def get_blink_rate(
         self,
@@ -239,11 +387,11 @@ class EyeAspectDetector:
                 self._blink_events[-1].end_time if self._blink_events else 0.0
             )
 
-        # 筛选窗口内的眨眼
+        # 筛选窗口内的眨眼（只计入确认的眨眼）
         window_start = current_time - window_seconds
         recent_blinks = [
             e for e in self._blink_events
-            if window_start <= e.end_time <= current_time
+            if e.is_confirmed and window_start <= e.end_time <= current_time
         ]
 
         blink_count = len(recent_blinks)
@@ -313,30 +461,56 @@ class EyeAspectDetector:
         self._blink_events.clear()
         self._current_blink_start = None
         self._current_blink_start_time = None
+        self._current_blink_ear_nadir = float('inf')
+        self._eye_closed_start_time = None
         self._blinks_in_progress = 0
         self._frame_count = 0
-        self._adaptive_threshold = None
+        self._head_pose_weight = 1.0
+        self._face_stability_weight = 1.0
+        # 重置基线
+        self._has_baseline = False
+        self._baseline_ear = None
+        # 恢复默认阈值
+        self.ear_threshold = DEFAULT_EAR_THRESHOLD
 
     def get_stats(self) -> dict:
         """获取检测统计信息"""
+        confirmed = sum(1 for e in self._blink_events if e.is_confirmed)
+        suspicious = sum(1 for e in self._blink_events if not e.is_confirmed)
         return {
             "ear_threshold": self.ear_threshold,
+            "open_threshold": self.open_threshold,
+            "baseline_ear": self._baseline_ear,
+            "has_baseline": self._has_baseline,
             "frame_count": self._frame_count,
             "total_blinks": len(self._blink_events),
+            "confirmed_blinks": confirmed,
+            "suspicious_blinks": suspicious,
             "blinks_in_progress": self._blinks_in_progress,
             "recent_ear_mean": float(np.mean(list(self._recent_ears))) if self._recent_ears else 0.0,
             "recent_ear_std": float(np.std(list(self._recent_ears))) if self._recent_ears else 0.0,
+            "head_pose_weight": self._head_pose_weight,
+            "face_stability_weight": self._face_stability_weight,
         }
 
 
 def create_eye_aspect_detector(
     ear_threshold: Optional[float] = None,
     ear_min: Optional[float] = None,
+    baseline_ear: Optional[float] = None,
 ) -> EyeAspectDetector:
-    """工厂函数：从 config 加载参数创建检测器"""
+    """工厂函数：从 config 加载参数创建检测器
+
+    Args:
+        ear_threshold: EAR 眨眼阈值（可选）
+        ear_min: EAR 最小值（可选）
+        baseline_ear: 个人基线 EAR（可选，设置后自动计算动态阈值）
+    """
     from config import EYE
 
-    return EyeAspectDetector(
-        ear_threshold=ear_threshold or DEFAULT_EAR_THRESHOLD,  # 使用默认值 0.26
+    detector = EyeAspectDetector(
+        ear_threshold=ear_threshold or DEFAULT_EAR_THRESHOLD,
         ear_min=ear_min or EYE.ear_min,
+        baseline_ear=baseline_ear,
     )
+    return detector
