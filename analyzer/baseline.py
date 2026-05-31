@@ -233,7 +233,7 @@ class BaselineCalibrator:
         trim_count = int(len(self._frames) * self.trim_ratio)
         if trim_count > 0:
             sorted_frames = sorted(self._frames, key=lambda f: f.timestamp)
-            trimmed = sorted_frames[trim_count:-trim_count] if trim_count < len(sorted_frames) else sorted_frames
+            trimmed = sorted_frames[trim_count:-trim_count] if trim_count > 0 and trim_count * 2 < len(sorted_frames) else sorted_frames
         else:
             trimmed = self._frames
 
@@ -283,7 +283,7 @@ class BaselineCalibrator:
         # 去掉头尾
         trim_count = int(len(self._frames) * self.trim_ratio)
         sorted_frames = sorted(self._frames, key=lambda f: f.timestamp)
-        trimmed = sorted_frames[trim_count:-trim_count] if trim_count < len(sorted_frames) else sorted_frames
+        trimmed = sorted_frames[trim_count:-trim_count] if trim_count > 0 and trim_count * 2 < len(sorted_frames) else sorted_frames
 
         # 过滤有效帧
         valid_frames = [

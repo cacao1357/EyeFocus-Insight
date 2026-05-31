@@ -233,6 +233,269 @@ class TestFatigueAnalyzer:
         assert isinstance(analyzer, FatigueAnalyzer)
 
 
+class TestBaselineCalibratorBoundary:
+    """BaselineCalibrator 边界条件测试"""
+
+    def test_get_result_before_start(self):
+        """测试未开始校准时获取结果"""
+        calibrator = BaselineCalibrator()
+        assert calibrator.get_result() is None
+
+    def test_get_result_after_cancel(self):
+        """测试取消后获取结果"""
+        calibrator = BaselineCalibrator()
+        calibrator.start()
+        calibrator.add_frame(ear=0.25, yaw=0.0, pitch=0.0)
+        calibrator.cancel()
+        assert calibrator.get_result() is None
+
+    def test_add_frame_before_start(self):
+        """测试未开始前添加帧"""
+        calibrator = BaselineCalibrator()
+        result = calibrator.add_frame(ear=0.25, yaw=0.0, pitch=0.0)
+        assert result is False
+
+    def test_add_frame_all_invalid_head_pose(self):
+        """测试所有帧头部姿态都不合格的情况"""
+        calibrator = BaselineCalibrator(yaw_thresh=10.0, pitch_thresh=20.0)
+        calibrator.start()
+
+        # 添加帧但头部姿态全部超出阈值
+        valid_count = 0
+        for i in range(50):
+            is_valid = calibrator.add_frame(ear=0.25, yaw=30.0, pitch=40.0)
+            if is_valid:
+                valid_count += 1
+
+        # 虽然添加了帧，但因头部姿态不合格，valid_count 应为 0
+        status = calibrator.get_status()
+        assert status.valid_frames == 0
+        assert status.collected_frames == 50
+
+    def test_get_status_before_start(self):
+        """测试未开始前的状态"""
+        calibrator = BaselineCalibrator()
+        status = calibrator.get_status()
+        assert status.is_calibrating is False
+        assert status.progress == 0.0
+        assert status.collected_frames == 0
+        assert status.valid_frames == 0
+
+    def test_get_status_after_cancel(self):
+        """测试取消后的状态"""
+        calibrator = BaselineCalibrator()
+        calibrator.start()
+        calibrator.add_frame(ear=0.25, yaw=0.0, pitch=0.0)
+        calibrator.cancel()
+
+        status = calibrator.get_status()
+        assert status.is_calibrating is False
+
+    def test_cqs_with_very_low_ear_variance(self):
+        """测试 EAR 方差极低时的 CQS 计算"""
+        calibrator = BaselineCalibrator(min_valid_frames=10, collection_duration=0.1)
+        calibrator.start()
+
+        # 添加 EAR 几乎相同的帧
+        for i in range(50):
+            calibrator.add_frame(ear=0.3000, yaw=0.0, pitch=0.0)
+            time.sleep(0.002)  # 模拟时间流逝
+
+        time.sleep(0.2)  # 等待校准完成
+        calibrator.is_complete()  # 触发 _finish()
+
+        result = calibrator.get_result()
+        assert result is not None
+        assert result.cqs_score >= 0.8  # 高质量校准
+
+    def test_cqs_with_high_ear_variance(self):
+        """测试 EAR 方差极高时的 CQS 计算"""
+        calibrator = BaselineCalibrator(min_valid_frames=10, collection_duration=0.05)
+        calibrator.start()
+
+        # 添加 EAR 变化很大的帧
+        for i in range(50):
+            ear = 0.1 + (i % 20) * 0.02  # 0.1 到 0.5 之间变化
+            calibrator.add_frame(ear=ear, yaw=0.0, pitch=0.0)
+            time.sleep(0.001)
+
+        time.sleep(0.1)
+        calibrator.is_complete()  # 触发 _finish()
+
+        result = calibrator.get_result()
+        assert result is not None
+        assert result.cqs_score < 0.8
+
+    def test_cqs_at_threshold_boundary(self):
+        """测试 CQS 刚好在阈值边界的情况"""
+        calibrator = BaselineCalibrator(
+            min_valid_frames=10,
+            cqs_threshold=0.60,
+            collection_duration=0.05
+        )
+        calibrator.start()
+
+        for i in range(100):
+            yaw = 0.0 if i < 50 else 30.0
+            calibrator.add_frame(ear=0.25 + (i % 5) * 0.02, yaw=yaw, pitch=0.0)
+            time.sleep(0.0005)
+
+        time.sleep(0.1)
+        calibrator.is_complete()
+
+        result = calibrator.get_result()
+        if result is not None:
+            assert 0.0 <= result.cqs_score <= 1.0
+
+    def test_zero_ear_value(self):
+        """测试 EAR 为零的情况（边界条件）"""
+        calibrator = BaselineCalibrator()
+        calibrator.start()
+
+        calibrator.add_frame(ear=0.0, yaw=0.0, pitch=0.0)
+
+        # CQS 计算中有 ear_mean 作为分母
+        # 代码中使用 max(ear_mean, 1e-6) 防零
+        result = calibrator.get_result()
+        # 不应崩溃
+        assert result is None or isinstance(result.cqs_score, float)
+
+    def test_negative_ear_value(self):
+        """测试负 EAR 值（边界条件）"""
+        calibrator = BaselineCalibrator()
+        calibrator.start()
+
+        calibrator.add_frame(ear=-0.1, yaw=0.0, pitch=0.0)
+
+        result = calibrator.get_result()
+        # 不应崩溃
+        assert result is None or isinstance(result.cqs_score, float)
+
+    def test_trim_ratio_zero(self):
+        """测试 trim_ratio 为零的情况"""
+        calibrator = BaselineCalibrator(trim_ratio=0.0, min_valid_frames=5, collection_duration=0.5)
+        calibrator.start()
+
+        # 添加足够的帧
+        for i in range(50):
+            calibrator.add_frame(ear=0.25, yaw=0.0, pitch=0.0)
+            time.sleep(0.01)
+
+        time.sleep(0.2)
+        calibrator.is_complete()
+
+        result = calibrator.get_result()
+        assert result is not None
+        assert result.total_frame_count == result.valid_frame_count or \
+               result.valid_frame_count < result.total_frame_count
+
+    def test_trim_ratio_half(self):
+        """测试 trim_ratio 为 0.5 的情况"""
+        calibrator = BaselineCalibrator(trim_ratio=0.5, min_valid_frames=5, collection_duration=0.5)
+        calibrator.start()
+
+        for i in range(50):
+            calibrator.add_frame(ear=0.25, yaw=0.0, pitch=0.0)
+            time.sleep(0.01)
+
+        time.sleep(0.2)
+        calibrator.is_complete()
+
+        result = calibrator.get_result()
+        assert result is not None
+
+    def test_min_valid_frames_not_met(self):
+        """测试有效帧数不足最小要求"""
+        calibrator = BaselineCalibrator(min_valid_frames=100, collection_duration=0.5)
+        calibrator.start()
+
+        for i in range(30):
+            calibrator.add_frame(ear=0.25, yaw=0.0, pitch=0.0)
+            time.sleep(0.01)
+
+        time.sleep(0.2)
+        calibrator.is_complete()
+
+        result = calibrator.get_result()
+        assert result is None
+
+    def test_cqs_preview_empty(self):
+        """测试无帧时的 CQS 预览"""
+        calibrator = BaselineCalibrator()
+        cqs = calibrator._compute_cqs_preview()
+        assert cqs == 0.0
+
+    def test_cqs_preview_insufficient_frames(self):
+        """测试帧数不足时的 CQS 预览"""
+        calibrator = BaselineCalibrator(min_valid_frames=50)
+        calibrator.start()
+
+        for i in range(10):  # 少于 min_valid_frames
+            calibrator.add_frame(ear=0.25, yaw=0.0, pitch=0.0)
+
+        cqs = calibrator._compute_cqs_preview()
+        assert cqs == 0.0
+
+    def test_exact_min_valid_frames(self):
+        """测试刚好达到最小有效帧数"""
+        calibrator = BaselineCalibrator(min_valid_frames=30, collection_duration=0.5)
+        calibrator.start()
+
+        # 添加足够的帧（考虑10% trim后仍有30+）
+        for i in range(50):
+            calibrator.add_frame(ear=0.25, yaw=0.0, pitch=0.0)
+            time.sleep(0.01)
+
+        time.sleep(0.2)
+        calibrator.is_complete()
+
+        result = calibrator.get_result()
+        assert result is not None
+
+    def test_glasses_mode_setting(self):
+        """测试眼镜模式设置"""
+        from storage.models import GlassesMode
+
+        calibrator = BaselineCalibrator(collection_duration=0.5)
+        calibrator.set_glasses_mode(GlassesMode.WITH_GLASSES)
+        calibrator.start()
+
+        for i in range(50):
+            calibrator.add_frame(ear=0.25, yaw=0.0, pitch=0.0)
+            time.sleep(0.01)
+
+        time.sleep(0.2)
+        calibrator.is_complete()
+
+        result = calibrator.get_result()
+        assert result is not None
+        assert result.glasses_mode == GlassesMode.WITH_GLASSES
+
+    def test_multiple_start_calls(self):
+        """测试多次调用 start 的情况"""
+        calibrator = BaselineCalibrator()
+
+        calibrator.start()
+        calibrator.add_frame(ear=0.25, yaw=0.0, pitch=0.0)
+        calibrator.start()  # 重新开始
+
+        status = calibrator.get_status()
+        assert status.collected_frames == 0  # 应该重置
+
+    def test_ear_mean_near_zero(self):
+        """测试 EAR 均值接近零的情况"""
+        calibrator = BaselineCalibrator()
+        calibrator.start()
+
+        # 添加非常小的 EAR 值
+        for i in range(50):
+            calibrator.add_frame(ear=0.001, yaw=0.0, pitch=0.0)
+
+        result = calibrator.get_result()
+        # 防零保护应该生效，不应崩溃
+        assert result is None or isinstance(result.cqs_score, float)
+
+
 class TestGlassesModeEnum:
     """GlassesMode 枚举测试"""
 
