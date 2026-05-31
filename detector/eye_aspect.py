@@ -11,6 +11,7 @@ detector/eye_aspect.py — EAR 眨眼检测算法
 """
 
 import logging
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Deque, List, Optional, Tuple
@@ -108,7 +109,6 @@ class EyeAspectDetector:
         self._has_baseline: bool = baseline_ear is not None
         if self._has_baseline:
             self.ear_threshold = baseline_ear * 0.75
-        self._has_baseline: bool = baseline_ear is not None
 
         # 眨眼检测状态
         self._blink_frames: Deque[bool] = deque(maxlen=30)
@@ -119,12 +119,16 @@ class EyeAspectDetector:
         self._current_blink_start: Optional[int] = None
         self._current_blink_start_time: Optional[float] = None
         self._current_blink_ear_nadir: float = float('inf')
+        self._current_ear: float = 0.0  # 当前帧 EAR 值，用于回调
 
         # 眯眼 vs 眨眼区分：记录闭眼持续时间
         self._eye_closed_start_time: Optional[float] = None
 
         # 帧计数
         self._frame_count: int = 0
+
+        # 会话开始时间（用于绝对时间戳）
+        self._session_start_time: Optional[float] = None
 
         # 多信号融合：头部姿态和面部稳定性
         self._head_pose_weight: float = 1.0  # 1.0=正常，0.5=异常
@@ -164,6 +168,10 @@ class EyeAspectDetector:
         """
         self._face_stability_weight = max(0.0, min(1.0, weight))
 
+    def get_current_ear(self) -> float:
+        """获取当前 EAR 值（用于校准回调）"""
+        return self._current_ear
+
     @property
     def blink_threshold(self) -> float:
         """获取当前眨眼阈值"""
@@ -187,6 +195,10 @@ class EyeAspectDetector:
         """
         self._frame_count += 1
 
+        # 初始化会话开始时间（使用绝对时间戳）
+        if self._session_start_time is None:
+            self._session_start_time = time.time()
+
         # 提取左右眼关键点
         left_eye = np.array([landmarks[i] for i in self.LEFT_EYE_INDICES])
         right_eye = np.array([landmarks[i] for i in self.RIGHT_EYE_INDICES])
@@ -198,6 +210,7 @@ class EyeAspectDetector:
 
         # 更新历史
         self._recent_ears.append(ear_avg)
+        self._current_ear = ear_avg  # 保存当前 EAR 值供回调使用
 
         # 检测眨眼（使用动态阈值）
         is_blink = ear_avg < self.ear_threshold
@@ -282,7 +295,7 @@ class EyeAspectDetector:
         # 闭眼开始
         if is_blink and self._current_blink_start is None:
             self._current_blink_start = self._frame_count
-            self._current_blink_start_time = (self._frame_count - 1) / self.fps
+            self._current_blink_start_time = time.time() - self._session_start_time
             self._current_blink_ear_nadir = float('inf')
             self._eye_closed_start_time = self._current_blink_start_time
 
@@ -398,7 +411,7 @@ class EyeAspectDetector:
 
         # 计算实际窗口时长
         if recent_blinks:
-            actual_window = current_time - max(e.start_time for e in recent_blinks)
+            actual_window = current_time - min(e.start_time for e in recent_blinks)
             actual_window = max(actual_window, 1.0)  # 至少 1 秒
             blink_rate = (blink_count / actual_window) * 60.0
         else:
@@ -465,8 +478,10 @@ class EyeAspectDetector:
         self._eye_closed_start_time = None
         self._blinks_in_progress = 0
         self._frame_count = 0
+        self._session_start_time = None
         self._head_pose_weight = 1.0
         self._face_stability_weight = 1.0
+        self._current_ear = 0.0
         # 重置基线
         self._has_baseline = False
         self._baseline_ear = None

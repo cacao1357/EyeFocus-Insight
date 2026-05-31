@@ -177,7 +177,7 @@ class FaceMeshDetector:
             # MediaPipe Category objects use display_name (not name) in some versions
             blendshapes = {}
             for bs in result.face_blendshapes[0]:
-                key = getattr(bs, 'display_name', None) or getattr(bs, 'name', str(bs))
+                key = getattr(bs, 'display_name', None) or getattr(bs, 'category_name', None) or getattr(bs, 'name', str(bs))
                 blendshapes[key] = bs.score
 
         # 置信度 - landmarks[0] is a NormalizedLandmark, use presence or x (which is always valid)

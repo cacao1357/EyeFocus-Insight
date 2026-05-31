@@ -229,6 +229,17 @@ class TestEyeAspectDetector:
         assert rate == 0.0
         assert count == 0
 
+    def test_get_current_ear(self):
+        """测试 get_current_ear() 返回当前 EAR 值"""
+        detector = EyeAspectDetector()
+        # 初始为 0
+        assert detector.get_current_ear() == 0.0
+
+        # compute() 后会更新
+        landmarks = self._make_landmarks(ear_value=0.35)
+        detector.compute(landmarks)
+        assert detector.get_current_ear() > 0
+
     def test_factory_function(self):
         """测试工厂函数"""
         from detector.eye_aspect import create_eye_aspect_detector

@@ -71,8 +71,8 @@ def make_mock_face_result(landmarks=None, ear_value: float = 0.35,
         pitch=pitch,
         roll=0.0,
         blendshapes=blendshapes or {
-            "eyeLookDownLeft": 0.1,
-            "eyeLookDownRight": 0.1,
+            "eyeSquintLeft": 0.1,
+            "eyeSquintRight": 0.1,
             "eyeWideLeft": 0.1,
             "eyeWideRight": 0.1,
         },
@@ -302,8 +302,8 @@ class TestEyeFocusAppIntegration:
         """测试眼镜检测流程"""
         frame = make_mock_frame()
         blendshapes = {
-            "eyeLookDownLeft": 0.9,
-            "eyeLookDownRight": 0.9,
+            "eyeSquintLeft": 0.9,
+            "eyeSquintRight": 0.9,
             "eyeWideLeft": 0.05,
             "eyeWideRight": 0.05,
         }
@@ -606,8 +606,8 @@ class TestModuleIntegration:
 
         # 模拟戴眼镜的 blendshapes
         blendshapes_glasses = {
-            "eyeLookDownLeft": 0.9,
-            "eyeLookDownRight": 0.9,
+            "eyeSquintLeft": 0.9,
+            "eyeSquintRight": 0.9,
             "eyeWideLeft": 0.05,
             "eyeWideRight": 0.05,
         }
@@ -618,8 +618,8 @@ class TestModuleIntegration:
 
         # 模拟不戴眼镜的 blendshapes
         blendshapes_no_glasses = {
-            "eyeLookDownLeft": 0.3,
-            "eyeLookDownRight": 0.3,
+            "eyeSquintLeft": 0.3,
+            "eyeSquintRight": 0.3,
             "eyeWideLeft": 0.3,
             "eyeWideRight": 0.3,
         }
@@ -796,8 +796,8 @@ class TestEndToEndScenarios:
 
         # 模拟戴眼镜用户
         blendshapes = {
-            "eyeLookDownLeft": 0.92,
-            "eyeLookDownRight": 0.93,
+            "eyeSquintLeft": 0.92,
+            "eyeSquintRight": 0.93,
             "eyeWideLeft": 0.03,
             "eyeWideRight": 0.02,
         }
@@ -807,8 +807,8 @@ class TestEndToEndScenarios:
 
         # 模拟不戴眼镜用户
         blendshapes_no_glasses = {
-            "eyeLookDownLeft": 0.4,
-            "eyeLookDownRight": 0.4,
+            "eyeSquintLeft": 0.4,
+            "eyeSquintRight": 0.4,
             "eyeWideLeft": 0.2,
             "eyeWideRight": 0.2,
         }

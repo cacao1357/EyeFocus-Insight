@@ -213,10 +213,13 @@ class EyeFocusApp:
         self._latest_gaze_score = 100.0
         self._latest_light_result = None
         self._latest_glasses_result = None
+        self._latest_yaw: float = 0.0  # 最新头部偏航角
+        self._latest_pitch: float = 0.0  # 最新头部俯仰角
 
         # 校准相关
         self._calib_manager: Optional[UserCalibrationManager] = None
         self._calib_callbacks: Optional[CalibrationFlowCallbacks] = None
+        self._last_tick_time: float = 0.0  # 上次 tick 时间
 
     def initialize(self) -> bool:
         """初始化所有模块
@@ -311,6 +314,13 @@ class EyeFocusApp:
                 # 更新 FPS
                 self._update_fps()
 
+                # 校准流程定时器（每秒调用一次 tick 推进状态机）
+                if self._calib_manager and self._calib_manager.state != CalibrationState.IDLE:
+                    current_time = time.time()
+                    if current_time - self._last_tick_time >= 1.0:
+                        self._calib_manager.tick()
+                        self._last_tick_time = current_time
+
                 # 键盘处理
                 key = cv2.waitKey(1) & 0xFF
 
@@ -355,6 +365,10 @@ class EyeFocusApp:
             return
 
         landmarks = face_result.landmarks
+
+        # 保存头部姿态供校准回调使用
+        self._latest_yaw = face_result.yaw or 0.0
+        self._latest_pitch = face_result.pitch or 0.0
 
         # EAR 计算
         eye_result = self._eye_detector.compute(landmarks)
@@ -623,14 +637,15 @@ class EyeFocusApp:
             logger.error("校准管理器未初始化")
             return False
 
-        self._calib_manager.set_ear_callback(
-            lambda: self._eye_detector.get_current_ear() if hasattr(self._eye_detector, 'get_current_ear') else 0.0
-        )
-        self._calib_manager.set_head_pose_callback(
-            lambda: (0.0, 0.0)
-        )
+        # 设置数据回调（使用实例变量获取最新数据）
+        self._calib_manager.set_ear_callback(lambda: self._eye_detector.get_current_ear())
+        self._calib_manager.set_head_pose_callback(lambda: (self._latest_yaw, self._latest_pitch))
+
+        # 重置 tick 计时器
+        self._last_tick_time = time.time()
 
         self._calib_manager.start()
+        logger.info("用户校准流程已启动")
         return True
 
     def is_calibration_flow_active(self) -> bool:

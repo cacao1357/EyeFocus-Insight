@@ -52,8 +52,8 @@ def make_blendshapes(squint_left=0.5, squint_right=0.5, wide_left=0.1, wide_righ
         squint=(0.9, 0.9), wide=(0.05, 0.05) → ratio = 1.8/(1.8+0.1) = 0.95
     """
     return {
-        "eyeLookDownLeft": squint_left,
-        "eyeLookDownRight": squint_right,
+        "eyeSquintLeft": squint_left,
+        "eyeSquintRight": squint_right,
         "eyeWideLeft": wide_left,
         "eyeWideRight": wide_right,
     }

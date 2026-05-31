@@ -39,9 +39,9 @@ RIGHT_INNER_CANTHUS = 362  # 右眼内侧眼角
 LEFT_OUTER_CANTHUS = 33  # 左眼外侧眼角
 RIGHT_OUTER_CANTHUS = 263  # 右眼外侧眼角
 
-# Blendshapes 名称（Phase 0 实测：眯眼时 eyeLookDown 信号增强）
-BLENDSHAPE_SQUINT_LEFT = "eyeLookDownLeft"
-BLENDSHAPE_SQUINT_RIGHT = "eyeLookDownRight"
+# Blendshapes 名称
+BLENDSHAPE_SQUINT_LEFT = "eyeSquintLeft"
+BLENDSHAPE_SQUINT_RIGHT = "eyeSquintRight"
 BLENDSHAPE_WIDE_LEFT = "eyeWideLeft"
 BLENDSHAPE_WIDE_RIGHT = "eyeWideRight"
 
