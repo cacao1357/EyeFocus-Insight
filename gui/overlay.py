@@ -71,6 +71,30 @@ class OverlayConfig:
     background_color: Tuple[int, int, int] = (40, 40, 40)
 
 
+# ========== 校准 UI 相关 ==========
+
+@dataclass
+class CalibrationPhaseInfo:
+    """校准阶段信息"""
+    phase: int
+    name: str
+    instruction: str
+    remaining: int = 0
+    is_input_mode: bool = False
+    round_num: int = 0
+    total_rounds: int = 0
+    detected_blinks: int = 0
+    program_count: int = 0
+    result: Optional['CalibrationResult'] = None
+
+
+@dataclass
+class CalibrationDisplayData:
+    """校准显示数据"""
+    is_calibrating: bool = False
+    current_phase: Optional[CalibrationPhaseInfo] = None
+
+
 class FocusOverlay:
     """实时专注度 GUI 叠加层
 
@@ -89,6 +113,8 @@ class FocusOverlay:
         self.config = config or OverlayConfig()
         self._alerts: list[AlertMessage] = []
         self._calibration: Optional[CalibrationProgress] = None
+        self._calib_phase: Optional[CalibrationPhaseInfo] = None
+        self._calib_display: Optional[CalibrationDisplayData] = None
         self._last_update: float = time.time()
 
     def draw(
@@ -154,6 +180,13 @@ class FocusOverlay:
         # 绘制光照条件
         if light_condition is not None:
             overlay = self._draw_light_indicator(overlay, light_condition)
+
+        # 绘制校准 UI
+        if hasattr(self, '_calib_display') and self._calib_display and self._calib_display.is_calibrating:
+            if self._calib_phase and self._calib_phase.result:
+                frame = self._draw_calibration_result(frame)
+            else:
+                frame = self._draw_calibration_full(frame)
 
         # 混合原始帧和叠加层
         return cv2.addWeighted(overlay, self.config.alpha, frame, 1 - self.config.alpha, 0)
@@ -395,6 +428,167 @@ class FocusOverlay:
         elif level == AlertLevel.ERROR:
             return self.config.alert_error_color
         return self.config.text_color
+
+    def show_calibration_phase(self, phase: int, phase_name: str, instruction: str) -> None:
+        """显示校准阶段信息"""
+        self._calib_phase = CalibrationPhaseInfo(
+            phase=phase,
+            name=phase_name,
+            instruction=instruction,
+        )
+        self._calib_display = CalibrationDisplayData(
+            is_calibrating=True,
+            current_phase=self._calib_phase,
+        )
+
+    def update_calibration_countdown(self, remaining: int) -> None:
+        """更新校准倒计时"""
+        if self._calib_phase:
+            self._calib_phase.remaining = remaining
+
+    def show_phase_complete(self, phase: int) -> None:
+        """显示阶段完成"""
+        pass
+
+    def show_blink_round(self, round_num: int, total: int, duration: int) -> None:
+        """显示眨眼校准轮开始"""
+        if self._calib_phase:
+            self._calib_phase.round_num = round_num
+            self._calib_phase.total_rounds = total
+            self._calib_phase.remaining = duration
+            self._calib_phase.is_input_mode = False
+
+    def update_blink_round(self, remaining: int, detected_blinks: int) -> None:
+        """更新眨眼校准轮状态"""
+        if self._calib_phase:
+            self._calib_phase.remaining = remaining
+            self._calib_phase.detected_blinks = detected_blinks
+
+    def show_blink_input(self, round_num: int, program_count: int) -> None:
+        """显示眨眼输入框"""
+        if self._calib_phase:
+            self._calib_phase.round_num = round_num
+            self._calib_phase.program_count = program_count
+            self._calib_phase.is_input_mode = True
+
+    def show_calibration_result(self, result: 'CalibrationResult') -> None:
+        """显示校准结果"""
+        if self._calib_phase:
+            self._calib_phase.result = result
+            self._calib_phase.is_input_mode = False
+
+    def hide_calibration_ui(self) -> None:
+        """隐藏校准 UI"""
+        self._calib_display = CalibrationDisplayData(is_calibrating=False)
+        self._calib_phase = None
+
+    def _draw_calibration_full(self, frame: np.ndarray) -> np.ndarray:
+        """绘制完整校准 UI"""
+        if not self._calib_display or not self._calib_display.is_calibrating:
+            return frame
+
+        h, w = frame.shape[:2]
+        phase = self._calib_phase
+        if not phase:
+            return frame
+
+        panel_w = 400
+        panel_h = 250
+        panel_x = (w - panel_w) // 2
+        panel_y = (h - panel_h) // 2
+
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (panel_x - 10, panel_y - 10),
+                       (panel_x + panel_w + 10, panel_y + panel_h + 10),
+                       (20, 20, 20), -1)
+        frame = cv2.addWeighted(overlay, 0.8, frame, 0.2, 0)
+
+        phase_text = f"[阶段 {phase.phase + 1}/6] {phase.name}"
+        cv2.putText(frame, phase_text,
+                    (panel_x + 20, panel_y + 35),
+                    self.config.font, 0.7, (255, 255, 255), 2)
+
+        cv2.putText(frame, phase.instruction,
+                    (panel_x + 20, panel_y + 70),
+                    self.config.font, 0.5, (200, 200, 200), 1)
+
+        if not phase.is_input_mode:
+            countdown_text = f"剩余: {phase.remaining} 秒"
+            cv2.putText(frame, countdown_text,
+                        (panel_x + 20, panel_y + 110),
+                        self.config.font, 0.6, (0, 255, 0), 2)
+
+        if phase.round_num > 0:
+            round_text = f"眨眼计数: 第 {phase.round_num}/{phase.total_rounds} 轮"
+            cv2.putText(frame, round_text,
+                        (panel_x + 20, panel_y + 145),
+                        self.config.font, 0.5, (255, 255, 0), 1)
+
+            detected_text = f"检测到: {phase.detected_blinks} 次眨眼"
+            cv2.putText(frame, detected_text,
+                        (panel_x + 20, panel_y + 170),
+                        self.config.font, 0.5, (0, 255, 255), 1)
+
+        if phase.is_input_mode:
+            input_text = f"请输入您的眨眼次数（程序检测到 {phase.program_count} 次）"
+            cv2.putText(frame, input_text,
+                        (panel_x + 20, panel_y + 145),
+                        self.config.font, 0.5, (255, 200, 0), 1)
+
+            hint_text = "按数字键输入，按 Enter 确认"
+            cv2.putText(frame, hint_text,
+                        (panel_x + 20, panel_y + 200),
+                        self.config.font, 0.4, (150, 150, 150), 1)
+
+        cv2.putText(frame, "按 ESC 取消校准",
+                    (panel_x + 20, panel_y + panel_h - 20),
+                    self.config.font, 0.4, (100, 100, 100), 1)
+
+        return frame
+
+    def _draw_calibration_result(self, frame: np.ndarray) -> np.ndarray:
+        """绘制校准结果"""
+        if not self._calib_phase or not self._calib_phase.result:
+            return frame
+
+        h, w = frame.shape[:2]
+        result = self._calib_phase.result
+
+        panel_w = 450
+        panel_h = 200
+        panel_x = (w - panel_w) // 2
+        panel_y = (h - panel_h) // 2
+
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (panel_x - 10, panel_y - 10),
+                       (panel_x + panel_w + 10, panel_y + panel_h + 10),
+                       (30, 30, 30), -1)
+        frame = cv2.addWeighted(overlay, 0.85, frame, 0.15, 0)
+
+        cv2.putText(frame, "校准完成",
+                    (panel_x + 20, panel_y + 35),
+                    self.config.font, 0.8, (0, 255, 0), 2)
+
+        ear_text = f"EAR 基线: {result.signal.ear_mean:.4f}"
+        cv2.putText(frame, ear_text,
+                    (panel_x + 20, panel_y + 75),
+                    self.config.font, 0.5, (255, 255, 255), 1)
+
+        threshold_text = f"眨眼阈值: {result.final_blink_threshold:.4f}"
+        cv2.putText(frame, threshold_text,
+                    (panel_x + 20, panel_y + 100),
+                    self.config.font, 0.5, (255, 255, 255), 1)
+
+        adj_text = f"调整因子: {result.final_adjustment_factor:.3f}"
+        cv2.putText(frame, adj_text,
+                    (panel_x + 20, panel_y + 125),
+                    self.config.font, 0.5, (255, 255, 255), 1)
+
+        cv2.putText(frame, "按 Enter 开始检测",
+                    (panel_x + 20, panel_y + 170),
+                    self.config.font, 0.5, (0, 255, 0), 1)
+
+        return frame
 
     def show_window(self) -> None:
         """创建窗口"""
