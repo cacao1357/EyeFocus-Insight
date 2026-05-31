@@ -128,7 +128,7 @@ class EyeAspectDetector:
         self._frame_count: int = 0
 
         # 会话开始时间（用于绝对时间戳）
-        self._session_start_time: Optional[float] = None
+        self._session_start_time: Optional[float] = None  # DEPRECATED: 使用绝对时间戳后不再需要
 
         # 多信号融合：头部姿态和面部稳定性
         self._head_pose_weight: float = 1.0  # 1.0=正常，0.5=异常
@@ -194,10 +194,6 @@ class EyeAspectDetector:
             EyeAspectResult 对象
         """
         self._frame_count += 1
-
-        # 初始化会话开始时间（使用绝对时间戳）
-        if self._session_start_time is None:
-            self._session_start_time = time.time()
 
         # 提取左右眼关键点
         left_eye = np.array([landmarks[i] for i in self.LEFT_EYE_INDICES])
@@ -295,7 +291,7 @@ class EyeAspectDetector:
         # 闭眼开始
         if is_blink and self._current_blink_start is None:
             self._current_blink_start = self._frame_count
-            self._current_blink_start_time = time.time() - self._session_start_time
+            self._current_blink_start_time = time.time()  # 绝对时间戳
             self._current_blink_ear_nadir = float('inf')
             self._eye_closed_start_time = self._current_blink_start_time
 

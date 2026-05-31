@@ -9,7 +9,7 @@ detector/gaze.py — 视线方向检测模块
 
 输出：
 - gaze_offset: 视线偏移 (x, y)，归一化到 [-1, 1]
-- gaze_score: 视线集中度分数 (0-100)
+- gaze_concentration: 视线集中度分数 (0-100)
 """
 
 import logging
@@ -58,6 +58,11 @@ class GazeDetector:
     LEFT_EYE_INDICES = (33, 160, 158, 133, 153, 144)
     RIGHT_EYE_INDICES = (362, 385, 387, 263, 380, 373)
 
+    # MediaPipe 虹膜关键点索引（用于瞳孔位置计算）
+    # 左虹膜: 468-472, 右虹膜: 473-477
+    LEFT_IRIS_INDICES = (468, 469, 470, 471, 472)
+    RIGHT_IRIS_INDICES = (473, 474, 475, 476, 477)
+
     def __init__(
         self,
         yaw_thresh: float = DEFAULT_GAZE_YAW_THRESH,
@@ -96,13 +101,17 @@ class GazeDetector:
             left_eye = np.array([landmarks[i] for i in self.LEFT_EYE_INDICES])
             right_eye = np.array([landmarks[i] for i in self.RIGHT_EYE_INDICES])
 
+            # 提取左右虹膜关键点（MediaPipe iris landmarks 468-477）
+            left_iris = np.array([landmarks[i] for i in self.LEFT_IRIS_INDICES])
+            right_iris = np.array([landmarks[i] for i in self.RIGHT_IRIS_INDICES])
+
             # 计算眼睑中心（眼角中点和眼尾中点的中点）
             left_center = self._eye_center(left_eye)
             right_center = self._eye_center(right_eye)
 
-            # 计算瞳孔位置（眼角连线的中心点）
-            left_pupil = self._pupil_position(left_eye)
-            right_pupil = self._pupil_position(right_eye)
+            # 计算瞳孔位置（虹膜中心）
+            left_pupil = self._pupil_position(left_iris)
+            right_pupil = self._pupil_position(right_iris)
 
             # 计算相对于眼睑中心的偏移
             left_offset = left_pupil - left_center
@@ -166,18 +175,16 @@ class GazeDetector:
         return (inner + outer) / 2
 
     def _pupil_position(self, eye_points: np.ndarray) -> np.ndarray:
-        """计算瞳孔位置（近似）
+        """计算瞳孔/虹膜中心位置
 
         Args:
-            eye_points: 6个眼部关键点坐标
+            eye_points: 虹膜关键点数组（5个点：468-472 或 473-477）
 
         Returns:
-            瞳孔位置坐标
+            虹膜中心坐标（5个点的平均）
         """
-        # 简化为眼角连线和眼尾连线的中点
-        top = (eye_points[1] + eye_points[2]) / 2
-        bottom = (eye_points[4] + eye_points[5]) / 2
-        return (top + bottom) / 2
+        # 虹膜中心 = 5个虹膜关键点的平均
+        return np.mean(eye_points, axis=0)
 
     def _compute_gaze_score(
         self,
