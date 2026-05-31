@@ -62,7 +62,7 @@ while time.time() - start_time < 180:  # 3 minutes
         head_pose_yaw=face_result.yaw or 0.0,
         head_pose_pitch=face_result.pitch or 0.0,
     )
-    gaze_score = gaze_result.gaze_score if gaze_result else 100.0
+    gaze_score = gaze_result.gaze_concentration if gaze_result else 100.0
     
     # 存储帧
     frame_record = FrameRecord(

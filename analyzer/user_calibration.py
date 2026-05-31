@@ -252,10 +252,7 @@ class UserCalibrationManager:
                 "ear_mean": sum(self._signal_collector.ears) / len(self._signal_collector.ears) if self._signal_collector.ears else 0,
                 "frame_count": len(self._signal_collector.ears),
             })
-            # BUG FIX: Phase 0 (AUTO_CALIB) 完成时需要调用 on_user_ready()
-            # 来确保校准结果被正确处理，而不是直接 transition
-            # on_user_ready() 会调用 _run_auto_calib() 处理自动校准完成逻辑
-            self.on_user_ready()
+            self._transition_to_next_phase()
             return True
 
         return True

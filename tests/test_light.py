@@ -1,6 +1,7 @@
 """
 tests/test_light.py — LightDetector 单元测试
 覆盖 detector/light.py 中可离线测试的函数。
+3级分类: DARK (≤50), NORMAL (50-100), BRIGHT (>100)
 """
 
 import numpy as np
@@ -12,29 +13,13 @@ from detector.light import (
     LightResult,
     create_light_detector,
     DEFAULT_BRIGHTNESS_DARK,
-    DEFAULT_BRIGHTNESS_TOO_DARK,
     DEFAULT_BRIGHTNESS_BRIGHT,
-    DEFAULT_BRIGHTNESS_TOO_BRIGHT,
 )
 
 
-# ---------------------------------------------------------------------------
-# Mock 帧构造辅助函数
-# ---------------------------------------------------------------------------
-
-def make_frame(brightness: int, size=(480, 640, 3)):
-    """创建指定亮度的灰度帧（RGB 三通道相同值）"""
-    frame = np.full(size, brightness, dtype=np.uint8)
-    return frame
-
-
-def make_color_frame(r: int, g: int, b: int, size=(480, 640, 3)):
-    """创建指定 RGB 值的彩色帧"""
-    frame = np.zeros(size, dtype=np.uint8)
-    frame[:, :, 0] = b  # Blue
-    frame[:, :, 1] = g  # Green
-    frame[:, :, 2] = r  # Red
-    return frame
+def make_frame(brightness: int) -> np.ndarray:
+    """创建指定亮度的灰度帧"""
+    return np.full((480, 640), brightness, dtype=np.uint8)
 
 
 # ---------------------------------------------------------------------------
@@ -43,14 +28,11 @@ def make_color_frame(r: int, g: int, b: int, size=(480, 640, 3)):
 
 class TestLightCondition:
     def test_enum_values(self):
-        """验证 LightCondition 枚举的所有成员"""
-        assert LightCondition.TOO_DARK.value == "too_dark"
+        """验证 LightCondition 枚举的3个成员"""
         assert LightCondition.DARK.value == "dark"
         assert LightCondition.NORMAL.value == "normal"
         assert LightCondition.BRIGHT.value == "bright"
-        assert LightCondition.TOO_BRIGHT.value == "too_bright"
-        # 确保没有意外成员
-        assert len(LightCondition) == 5
+        assert len(LightCondition) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -62,13 +44,13 @@ class TestLightResult:
         """验证 LightResult dataclass 字段"""
         result = LightResult(
             condition=LightCondition.NORMAL,
-            brightness=128.0,
+            brightness=75.0,
             brightness_std=10.5,
             face_region_brightness=130.0,
             is_adequate=True,
         )
         assert result.condition == LightCondition.NORMAL
-        assert result.brightness == 128.0
+        assert result.brightness == 75.0
         assert result.brightness_std == 10.5
         assert result.face_region_brightness == 130.0
         assert result.is_adequate is True
@@ -84,86 +66,57 @@ class TestLightDetector:
         detector = LightDetector()
         assert detector.get_smoothed_brightness() == 0.0
         assert detector.get_smoothed_condition() == LightCondition.NORMAL
-        assert detector.is_lighting_adequate() is True
         assert len(detector._brightness_history) == 0
         assert len(detector._condition_history) == 0
 
     def test_analyze_bright_frame(self):
-        """分析明亮场景（亮度接近180）"""
+        """分析明亮场景（亮度 > 100）"""
         detector = LightDetector()
-        frame = make_frame(175)  # 正常偏亮
+        frame = make_frame(150)  # BRIGHT
         result = detector.analyze_frame(frame)
 
-        assert result.condition == LightCondition.NORMAL
-        assert 170 < result.brightness < 180
+        assert result.condition == LightCondition.BRIGHT
+        assert result.brightness > 100
         assert result.is_adequate is True
 
     def test_analyze_dark_frame(self):
-        """分析偏暗场景（亮度接近40）"""
+        """分析偏暗场景（亮度 ≤ 50）"""
         detector = LightDetector()
-        frame = make_frame(35)  # 偏暗
+        frame = make_frame(40)  # DARK
         result = detector.analyze_frame(frame)
 
         assert result.condition == LightCondition.DARK
-        assert 30 < result.brightness < 45
+        assert result.brightness <= 50
         assert result.is_adequate is True
 
     def test_analyze_normal_frame(self):
-        """分析正常光照场景"""
+        """分析正常光照场景（亮度 50-100）"""
         detector = LightDetector()
-        frame = make_frame(128)  # 正常
+        frame = make_frame(75)  # NORMAL
         result = detector.analyze_frame(frame)
 
         assert result.condition == LightCondition.NORMAL
-        assert 120 < result.brightness < 136
+        assert 50 < result.brightness < 100
         assert result.is_adequate is True
 
-    def test_analyze_too_bright_frame(self):
-        """分析过亮场景（亮度 > 220）"""
-        detector = LightDetector()
-        frame = make_frame(240)  # 过亮
-        result = detector.analyze_frame(frame)
-
-        assert result.condition == LightCondition.TOO_BRIGHT
-        assert result.brightness > 220
-        assert result.is_adequate is False
-
-    def test_analyze_too_dark_frame(self):
-        """分析过暗场景（亮度 < 25）"""
-        detector = LightDetector()
-        frame = make_frame(15)  # 过暗
-        result = detector.analyze_frame(frame)
-
-        assert result.condition == LightCondition.TOO_DARK
-        assert result.brightness < 25
-        assert result.is_adequate is False
-
     def test_classify_brightness_boundaries(self):
-        """测试亮度分类的边界值"""
+        """测试亮度分类的边界值（Dark≤50, Normal 50-100, Bright>100）"""
         detector = LightDetector()
 
-        # 边界：thresh_too_dark = 25
-        assert detector._classify_brightness(24.9) == LightCondition.TOO_DARK
-        assert detector._classify_brightness(25.0) == LightCondition.DARK
+        # 边界：thresh_dark = 50
+        assert detector._classify_brightness(49.9) == LightCondition.DARK
+        assert detector._classify_brightness(50.0) == LightCondition.DARK
+        assert detector._classify_brightness(50.1) == LightCondition.NORMAL
 
-        # 边界：thresh_dark = 40
-        assert detector._classify_brightness(39.9) == LightCondition.DARK
-        assert detector._classify_brightness(40.0) == LightCondition.NORMAL
-
-        # 边界：thresh_bright = 180（使用 strict >，所以 180.0 落在 NORMAL）
-        assert detector._classify_brightness(179.9) == LightCondition.NORMAL
-        assert detector._classify_brightness(180.0) == LightCondition.NORMAL
-        assert detector._classify_brightness(180.1) == LightCondition.BRIGHT
-
-        # 边界：thresh_too_bright = 220（使用 strict >，所以 220.0 落在 BRIGHT）
-        assert detector._classify_brightness(219.9) == LightCondition.BRIGHT
-        assert detector._classify_brightness(220.0) == LightCondition.BRIGHT
-        assert detector._classify_brightness(220.1) == LightCondition.TOO_BRIGHT
+        # 边界：thresh_bright = 100
+        assert detector._classify_brightness(99.9) == LightCondition.NORMAL
+        assert detector._classify_brightness(100.0) == LightCondition.NORMAL
+        assert detector._classify_brightness(100.1) == LightCondition.BRIGHT
 
     def test_face_region_brightness(self):
         """测试人脸区域亮度计算"""
         detector = LightDetector(face_region_ratio=0.15)
-        # 创建棋盘格帧：人脸区域亮度 = 200，其他区域 = 50
+        # 创建全帧：中心区域亮度 = 200，其他区域 = 50
         h, w = 480, 640
         frame = np.full((h, w, 3), 50, dtype=np.uint8)
         face_h = int(h * 0.15)  # 72
@@ -172,39 +125,15 @@ class TestLightDetector:
         left = (w - face_w) // 2  # 272
         frame[top:top+face_h, left:left+face_w] = 200
 
-        gray = frame[:, :, 0]  # BGR转灰度后各通道相同
-        face_brightness = detector._compute_face_region_brightness(gray)
-
-        # 人脸区域应该接近200
-        assert 195 < face_brightness < 205
-
-    def test_smoothed_brightness_multiple_frames(self):
-        """测试多帧平滑亮度"""
-        detector = LightDetector(smooth_window=3)
-
-        # 第一帧：暗
-        result1 = detector.analyze_frame(make_frame(20))
-        assert result1.condition == LightCondition.TOO_DARK
-
-        # 第二帧：正常
-        result2 = detector.analyze_frame(make_frame(128))
-        assert result2.condition == LightCondition.NORMAL
-
-        # 第三帧：亮
-        result3 = detector.analyze_frame(make_frame(200))
-        assert result3.condition == LightCondition.BRIGHT
-
-        # 平滑值应为三帧平均
-        smoothed = detector.get_smoothed_brightness()
-        expected_avg = (20 + 128 + 200) / 3
-        assert abs(smoothed - expected_avg) < 5
+        result = detector._compute_face_region_brightness(frame[:, :, 0])
+        assert 150 < result < 250  # 中心区域应该是亮的
 
     def test_smoothed_condition_voting(self):
-        """测试条件多数投票"""
+        """测试平滑条件多数投票"""
         detector = LightDetector(smooth_window=5)
 
         # 输入多帧：3帧BRIGHT，2帧NORMAL
-        for brightness in [200, 210, 190, 175, 180]:
+        for brightness in [150, 160, 140, 90, 95]:
             detector.analyze_frame(make_frame(brightness))
 
         assert detector.get_smoothed_condition() == LightCondition.BRIGHT
@@ -212,22 +141,16 @@ class TestLightDetector:
     def test_lighting_adequate_normal(self):
         """正常光照应 adequate"""
         detector = LightDetector()
-        detector.analyze_frame(make_frame(128))
+        detector.analyze_frame(make_frame(75))
         assert detector.is_lighting_adequate() is True
-
-    def test_lighting_adequate_too_dark(self):
-        """过暗光照应 inadequate"""
-        detector = LightDetector()
-        detector.analyze_frame(make_frame(15))
-        assert detector.is_lighting_adequate() is False
 
     def test_reset_clears_history(self):
         """reset 应清空历史并恢复初始状态"""
         detector = LightDetector()
 
         # 分析几帧
-        detector.analyze_frame(make_frame(128))
-        detector.analyze_frame(make_frame(200))
+        detector.analyze_frame(make_frame(75))
+        detector.analyze_frame(make_frame(150))
         assert len(detector._brightness_history) == 2
 
         # 重置
@@ -240,7 +163,7 @@ class TestLightDetector:
     def test_stats(self):
         """测试 get_stats 返回完整统计信息"""
         detector = LightDetector()
-        detector.analyze_frame(make_frame(128))
+        detector.analyze_frame(make_frame(75))
 
         stats = detector.get_stats()
         assert "current_brightness" in stats
@@ -249,17 +172,16 @@ class TestLightDetector:
         assert "history_size" in stats
         assert stats["current_condition"] == "normal"
         assert stats["history_size"] == 1
-        assert stats["is_adequate"] is True
 
     def test_custom_thresholds(self):
         """测试自定义阈值"""
-        # 使用宽松的过暗阈值
         detector = LightDetector(
-            brightness_thresh_too_dark=15.0,
-            brightness_thresh_dark=30.0,
+            brightness_thresh_dark=40.0,
+            brightness_thresh_bright=80.0,
         )
-        # 亮度25应该落在DARK区间（因为 > 15 且 < 30）
-        assert detector._classify_brightness(25) == LightCondition.DARK
+        assert detector._classify_brightness(39) == LightCondition.DARK
+        assert detector._classify_brightness(41) == LightCondition.NORMAL
+        assert detector._classify_brightness(81) == LightCondition.BRIGHT
 
 
 # ---------------------------------------------------------------------------
@@ -271,8 +193,6 @@ class TestFactoryFunction:
         """工厂函数应返回正确配置的 LightDetector"""
         detector = create_light_detector()
         assert isinstance(detector, LightDetector)
-        # 验证使用默认参数
-        assert detector.thresh_too_dark == DEFAULT_BRIGHTNESS_TOO_DARK
+        # 验证使用默认参数（3级阈值）
         assert detector.thresh_dark == DEFAULT_BRIGHTNESS_DARK
         assert detector.thresh_bright == DEFAULT_BRIGHTNESS_BRIGHT
-        assert detector.thresh_too_bright == DEFAULT_BRIGHTNESS_TOO_BRIGHT

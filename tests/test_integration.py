@@ -764,7 +764,7 @@ class TestEndToEndScenarios:
             ear=eye_result.ear_avg,
             yaw=0.0,
             pitch=0.0,
-            gaze_score=gaze_result.gaze_score,
+            gaze_score=gaze_result.gaze_concentration,
             brightness=light_result.brightness,
             face_detected=True,
         )

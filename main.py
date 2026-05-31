@@ -290,7 +290,7 @@ class FrameProcessor:
             head_pose_yaw=face_result.yaw or 0.0,
             head_pose_pitch=face_result.pitch or 0.0,
         )
-        self._latest_gaze_score = gaze_result.gaze_score if gaze_result else 100.0
+        self._latest_gaze_score = gaze_result.gaze_concentration if gaze_result else 100.0
 
         # 专注度分析
         focus_result = self._focus_analyzer.analyze(
@@ -672,6 +672,14 @@ class CalibrationCoordinator:
         if self._eye_detector:
             self._eye_detector.set_baseline(result.signal.ear_mean)
 
+        if self._fatigue_analyzer and result.blink_rounds:
+            # 计算用户眨眼基线频率（次/分钟）
+            total_blinks = sum(r.blink_count for r in result.blink_rounds)
+            total_duration = len(result.blink_rounds) * 20.0  # 每轮20秒
+            if total_duration > 0:
+                baseline_br = total_blinks / (total_duration / 60.0)
+                self._fatigue_analyzer.set_baseline_blink_rate(baseline_br)
+
         if self._db and self._session_id:
             self._db.update_session(
                 self._session_id,
@@ -679,8 +687,9 @@ class CalibrationCoordinator:
                 is_calibrated=True,
             )
 
-        logger.info("校准结果已应用: EAR=%.4f, 眨眼阈值=%.4f",
-                    result.signal.ear_mean, result.final_blink_threshold)
+        logger.info("校准结果已应用: EAR=%.4f, 眨眼阈值=%.4f, 眨眼基线=%.1f次/分钟",
+                    result.signal.ear_mean, result.final_blink_threshold,
+                    self._fatigue_analyzer.baseline_blink_rate if self._fatigue_analyzer else 0)
 
 
 class EyeFocusApp:
@@ -1006,7 +1015,7 @@ class EyeFocusApp:
             head_pose_yaw=face_result.yaw or 0.0,
             head_pose_pitch=face_result.pitch or 0.0,
         )
-        self._latest_gaze_score = gaze_result.gaze_score if gaze_result else 100.0
+        self._latest_gaze_score = gaze_result.gaze_concentration if gaze_result else 100.0
 
         # 校准中：使用 UserCalibrationManager 流程（每帧采集）
         if self.is_calibration_flow_active():

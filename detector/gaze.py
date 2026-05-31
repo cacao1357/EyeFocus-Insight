@@ -33,7 +33,7 @@ DEFAULT_GAZE_PITCH_THRESH = HEAD_POSE.pitch_thresh  # 视线纵向偏移阈值�
 class GazeResult:
     """视线方向检测结果"""
     gaze_offset: Tuple[float, float]  # (x, y) 视线偏移，归一化到 [-1, 1]
-    gaze_score: float                 # 视线集中度分数 (0-100)
+    gaze_concentration: float          # 视线集中度分数 (0-100)，区别于 FocusResult.gaze_score
     is_looking_at_screen: bool         # 是否在看屏幕
     left_eye_offset: Tuple[float, float]
     right_eye_offset: Tuple[float, float]
@@ -141,7 +141,7 @@ class GazeDetector:
 
             return GazeResult(
                 gaze_offset=(gaze_offset_x, gaze_offset_y),
-                gaze_score=gaze_score,
+                gaze_concentration=gaze_score,
                 is_looking_at_screen=is_looking_at_screen,
                 left_eye_offset=(float(left_offset_norm[0]), float(left_offset_norm[1])),
                 right_eye_offset=(float(right_offset_norm[0]), float(right_offset_norm[1])),
