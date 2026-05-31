@@ -50,7 +50,7 @@ class KalmanFilter1D:
     def __init__(self, process_variance: float = 0.001, measurement_variance: float = 0.1):
         self.process_variance = process_variance
         self.measurement_variance = measurement_variance
-        self.estimate = 0.0
+        self.estimate: Optional[float] = None
         self.estimation_error = 1.0
 
     def update(self, measurement: float) -> float:
@@ -62,6 +62,11 @@ class KalmanFilter1D:
         Returns:
             平滑后的估计值
         """
+        # 首次更新：直接使用测量值，不进行滤波
+        if self.estimate is None:
+            self.estimate = measurement
+            return self.estimate
+
         # 预测
         self.estimation_error += self.process_variance
 
@@ -74,7 +79,7 @@ class KalmanFilter1D:
 
     def reset(self) -> None:
         """重置滤波器"""
-        self.estimate = 0.0
+        self.estimate = None
         self.estimation_error = 1.0
 
 

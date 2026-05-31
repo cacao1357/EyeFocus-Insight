@@ -520,12 +520,14 @@ class CalibrationCoordinator:
         self,
         calib_manager: UserCalibrationManager,
         overlay: FocusOverlay,
+        app: "EyeFocusApp",
         eye_detector: Optional[EyeAspectDetector] = None,
         db: Optional[DatabaseManager] = None,
         session_id: Optional[str] = None,
     ):
         self._calib_manager = calib_manager
         self._overlay = overlay
+        self._app = app
         self._eye_detector = eye_detector
         self._db = db
         self._session_id = session_id
@@ -549,7 +551,7 @@ class CalibrationCoordinator:
 
     def _get_head_pose(self) -> tuple:
         """获取当前头部姿态"""
-        return (0.0, 0.0)
+        return (self._app._latest_yaw, self._app._latest_pitch)
 
     def start(self) -> None:
         """启动校准流程"""
@@ -728,6 +730,7 @@ class EyeFocusApp:
         self._prev_landmarks: Optional[np.ndarray] = None
         self._latest_yaw: float = 0.0
         self._latest_pitch: float = 0.0
+        self._latest_face_detected: bool = False
         self._latest_focus_result = None
         self._latest_fatigue_result = None
         self._latest_gaze_score = 100.0
@@ -790,7 +793,8 @@ class EyeFocusApp:
             # 初始化校准管理器
             self._calib_callbacks = CalibrationFlowCallbacks(self)
             self._calib_manager = create_user_calibration_manager(
-                callbacks=self._calib_callbacks
+                callbacks=self._calib_callbacks,
+                session_id=self._session_id,
             )
 
             # 初始化子组件
@@ -809,12 +813,11 @@ class EyeFocusApp:
             self._calib_coordinator = CalibrationCoordinator(
                 calib_manager=self._calib_manager,
                 overlay=self._overlay,
+                app=self,
                 eye_detector=self._eye_detector,
                 db=self._db,
                 session_id=self._session_id,
             )
-
-            logger.info("初始化完成 (session: %s)", self._session_id)
 
             logger.info("初始化完成 (session: %s)", self._session_id)
             return True
@@ -888,7 +891,11 @@ class EyeFocusApp:
     def _process_calibration_tick(self) -> None:
         """处理校准流程定时器"""
         if self._calib_coordinator:
+            old_state = self._calib_coordinator.state
             self._calib_coordinator.tick()
+            new_state = self._calib_coordinator.state
+            if old_state != new_state:
+                logger.info("校准状态变化: %s -> %s", old_state, new_state)
 
     def _handle_keyboard(self, key: int) -> None:
         """处理键盘输入
@@ -935,6 +942,7 @@ class EyeFocusApp:
 
         # 人脸检测
         face_result = self._face_detector.detect_from_frame(frame, timestamp_ms)
+        self._latest_face_detected = face_result.face_detected
 
         if not face_result.face_detected:
             # 人脸丢失
@@ -1140,8 +1148,8 @@ class EyeFocusApp:
             frame,
             focus_score=focus_score_val,
             fatigue_level=fatigue_level_str,
-            eye_detected=True,
-            face_detected=True,
+            eye_detected=self._latest_face_detected,
+            face_detected=self._latest_face_detected,
             light_condition=light_condition_str,
             calibration=calibration_progress,
             eye_score=eye_score,
@@ -1172,8 +1180,23 @@ class EyeFocusApp:
             2,
         )
 
+        # 当人脸未检测到时，显示明确提示
+        if not self._latest_face_detected and self.is_calibration_flow_active():
+            cv2.putText(
+                display,
+                "请将面部对准摄像头",
+                (display.shape[1] // 2 - 150, display.shape[0] // 2),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 0, 255),
+                2,
+            )
+
         cv2.imshow("EyeFocus Insight", display)
-        logger.debug("cv2.imshow called")
+        # DEBUG: Log every 60 frames to verify rendering
+        if self._frame_count % 60 == 0:
+            logger.info("渲染帧 #%d: face=%s, focus=%s, fatigue=%s, calib_active=%s",
+                       self._frame_count, self._latest_face_detected, focus_score_val, fatigue_level_str, self.is_calibration_flow_active())
 
     def _update_fps(self) -> None:
         """更新 FPS 计数"""

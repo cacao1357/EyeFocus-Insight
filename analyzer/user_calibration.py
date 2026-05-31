@@ -16,6 +16,7 @@ analyzer/user_calibration.py — 用户校准管理器
 """
 
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -105,10 +106,10 @@ class SignalCollector:
     yaws: List[float] = field(default_factory=list)
     pitches: List[float] = field(default_factory=list)
     ear_min: float = 999.0
-    yaw_left_max: float = 0.0
-    yaw_right_max: float = 0.0
-    pitch_up_max: float = 0.0
-    pitch_down_max: float = 0.0
+    yaw_left_max: float = -math.inf
+    yaw_right_max: float = math.inf
+    pitch_up_max: float = -math.inf
+    pitch_down_max: float = math.inf
 
 
 class BlinkRoundCollector:
@@ -149,11 +150,13 @@ class UserCalibrationManager:
         blink_rounds: int = 3,
         blink_duration: int = 20,
         phases: dict = None,
+        session_id: Optional[str] = None,
     ):
         self.callbacks = callbacks
         self.blink_rounds = blink_rounds
         self.blink_duration = blink_duration
         self.phases = phases or DEFAULT_PHASES.copy()
+        self._session_id = session_id
 
         self._state = CalibrationState.IDLE
         self._current_phase = 0
@@ -249,7 +252,10 @@ class UserCalibrationManager:
                 "ear_mean": sum(self._signal_collector.ears) / len(self._signal_collector.ears) if self._signal_collector.ears else 0,
                 "frame_count": len(self._signal_collector.ears),
             })
-            self._transition_to_next_phase()
+            # BUG FIX: Phase 0 (AUTO_CALIB) 完成时需要调用 on_user_ready()
+            # 来确保校准结果被正确处理，而不是直接 transition
+            # on_user_ready() 会调用 _run_auto_calib() 处理自动校准完成逻辑
+            self.on_user_ready()
             return True
 
         return True
@@ -559,7 +565,7 @@ class UserCalibrationManager:
         )
 
         return CalibrationResult(
-            session_id="",
+            session_id=self._session_id or "",
             timestamp=datetime.now(),
             signal=signal,
             blink_rounds=self._blink_rounds_data.copy(),
@@ -571,6 +577,6 @@ class UserCalibrationManager:
         )
 
 
-def create_user_calibration_manager(callbacks: CalibrationCallbacks) -> UserCalibrationManager:
+def create_user_calibration_manager(callbacks: CalibrationCallbacks, session_id: Optional[str] = None) -> UserCalibrationManager:
     """工厂函数：创建用户校准管理器"""
-    return UserCalibrationManager(callbacks=callbacks)
+    return UserCalibrationManager(callbacks=callbacks, session_id=session_id)
