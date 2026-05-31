@@ -311,6 +311,9 @@ class EyeFocusApp:
                 # 更新 FPS
                 self._update_fps()
 
+                # 键盘处理
+                key = cv2.waitKey(1) & 0xFF
+
                 # 校准流程键盘处理
                 if self._calib_callbacks and self._calib_callbacks._input_mode:
                     if 48 <= key <= 57:  # 数字键
