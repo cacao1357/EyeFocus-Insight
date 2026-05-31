@@ -162,7 +162,7 @@ class GlassesDetector:
             confidence=confidence,
             squint_ratio=squint_result[2] if squint_result else None,
             inner_canthus_distance=distance_result[2] if distance_result else None,
-            method=method if method_parts else None,
+            method=method,
         )
 
     def _detect_by_squint(
@@ -178,10 +178,20 @@ class GlassesDetector:
             (is_glasses, confidence, squint_ratio) 元组，或 None
         """
         try:
-            squint_left = blendshapes.get(BLENDSHAPE_SQUINT_LEFT, 0.0)
-            squint_right = blendshapes.get(BLENDSHAPE_SQUINT_RIGHT, 0.0)
-            wide_left = blendshapes.get(BLENDSHAPE_WIDE_LEFT, 0.0)
-            wide_right = blendshapes.get(BLENDSHAPE_WIDE_RIGHT, 0.0)
+            # 检查必需键是否存在
+            required_keys = {
+                BLENDSHAPE_SQUINT_LEFT,
+                BLENDSHAPE_SQUINT_RIGHT,
+                BLENDSHAPE_WIDE_LEFT,
+                BLENDSHAPE_WIDE_RIGHT,
+            }
+            if not required_keys.issubset(blendshapes.keys()):
+                return None
+
+            squint_left = blendshapes[BLENDSHAPE_SQUINT_LEFT]
+            squint_right = blendshapes[BLENDSHAPE_SQUINT_RIGHT]
+            wide_left = blendshapes[BLENDSHAPE_WIDE_LEFT]
+            wide_right = blendshapes[BLENDSHAPE_WIDE_RIGHT]
 
             squint_sum = squint_left + squint_right
             wide_sum = wide_left + wide_right
