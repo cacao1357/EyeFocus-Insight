@@ -1,15 +1,17 @@
 .venv/
+.venv*/
 __pycache__/
 *.pyc
 *.pyo
 data/*.db
+data/*.db-shm
+data/*.db-wal
 reports/*.html
 reports/*.png
 *.egg-info/
 dist/
 build/
 *.spec
-*.task
 .vscode/
 .idea/
 # 本地配置文件（仅本地知道，不同步给其他成员）
@@ -24,4 +26,15 @@ Session.vim
 *.swp
 *.swo
 *~
-.venv*
+# MediaPipe 模型（首次运行自动下载）
+*.task
+# 临时测试输出
+tmp_*/
+*.bak
+# 临时数据
+*.tmp
+*.log
+# 覆盖率报告
+.coverage
+htmlcov/
+.coverage.*
