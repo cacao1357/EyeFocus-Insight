@@ -183,6 +183,19 @@ class TestLightDetector:
         assert detector._classify_brightness(41) == LightCondition.NORMAL
         assert detector._classify_brightness(81) == LightCondition.BRIGHT
 
+    def test_analyze_frame_brightness_100_is_normal(self):
+        """亮度=100.0 时 analyze_frame 返回 NORMAL（不是 BRIGHT，因为是严格大于）"""
+        detector = LightDetector(brightness_thresh_dark=50.0, brightness_thresh_bright=100.0)
+        frame = make_frame(100)  # 全帧亮度=100
+        result = detector.analyze_frame(frame)
+        assert result.condition == LightCondition.NORMAL
+
+    def test_brightness_threshold_is_strict_greater(self):
+        """_classify_brightness 中 brightness > thresh_bright (严格大于，100.0 仍属 NORMAL)"""
+        detector = LightDetector(brightness_thresh_dark=50.0, brightness_thresh_bright=100.0)
+        assert detector._classify_brightness(100.0) == LightCondition.NORMAL
+        assert detector._classify_brightness(100.1) == LightCondition.BRIGHT
+
 
 # ---------------------------------------------------------------------------
 # TestFactoryFunction

@@ -102,6 +102,38 @@ class TestDatabaseManager:
             assert len(session_id) > 0
             db.close()
 
+    def test_create_session_rapid_unique(self):
+        """v4.0.1 回归: 100 次连续 create_session 必须全部成功且 ID 唯一 (B1)
+        原 bug: datetime 微秒方案同微秒 97% 失败"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "rapid.db")
+            from storage.db import DBConfig
+            db = DatabaseManager(config=DBConfig(db_path=db_path))
+            db.initialize()
+            try:
+                sids = [db.create_session() for _ in range(100)]
+            finally:
+                db.close()
+            assert len(sids) == 100, f"应 100 个成功, 实际 {len(sids)}"
+            assert len(set(sids)) == 100, "100 个 ID 必须唯一"
+
+    def test_create_session_id_format(self):
+        """v4.0.1 回归: session_id 格式 = YYYYMMDD_HHMMSS_<12 hex> (含 uuid)"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "fmt.db")
+            from storage.db import DBConfig
+            db = DatabaseManager(config=DBConfig(db_path=db_path))
+            db.initialize()
+            try:
+                sid = db.create_session()
+            finally:
+                db.close()
+            import re
+            pattern = r"^\d{8}_\d{6}_[0-9a-f]{12}$"
+            assert re.match(pattern, sid), (
+                f"session_id 格式应为 YYYYMMDD_HHMMSS_xxxxxxxxxxxx (含 12 hex uuid), 实际 {sid}"
+            )
+
     def test_write_and_read_frame(self):
         """测试帧数据写入"""
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -247,7 +247,7 @@ class TestGlassesDetector:
     # Distance detection tests
     # ------------------------------------------------------------------------
 
-    def test_detect_by_distance_short(self):
+    def test_detect_by_distance_close_no_glasses(self):
         """测试距离检测：ratio < 0.5 → 不戴眼镜（瞳孔距离 56，内眼角距离 20，ratio≈0.36）"""
         detector = GlassesDetector()
         landmarks = make_landmarks(distance=20.0, pupil_distance=56.0)
@@ -259,7 +259,7 @@ class TestGlassesDetector:
         assert ratio < 0.5
         assert 0.0 <= confidence <= 1.0
 
-    def test_detect_by_distance_long(self):
+    def test_detect_by_distance_far_with_glasses(self):
         """测试距离检测：ratio > 0.5 → 戴眼镜（瞳孔距离 56，内眼角距离 35，ratio≈0.63）"""
         detector = GlassesDetector()
         landmarks = make_landmarks(distance=35.0, pupil_distance=56.0)
@@ -270,6 +270,17 @@ class TestGlassesDetector:
         assert is_glasses is True
         assert ratio > 0.5
         assert 0.0 <= confidence <= 1.0
+
+    def test_detect_by_distance_just_above_threshold(self):
+        """ratio=0.51 严格大于阈值 → 戴眼镜"""
+        detector = GlassesDetector()
+        # pupil=56, want ratio=0.51 → distance = 56*0.51 ≈ 28.56
+        landmarks = make_landmarks(distance=28.56, pupil_distance=56.0)
+        result = detector._detect_by_distance(landmarks)
+        assert result is not None
+        is_glasses, confidence, distance, ratio = result
+        assert ratio > 0.5
+        assert is_glasses is True
 
     def test_detect_by_distance_boundary(self):
         """测试距离检测：ratio = 0.5 边界情况（瞳孔距离 56，内眼角距离 28）"""
@@ -303,31 +314,13 @@ class TestGlassesDetector:
         assert "distance" in result.method
         assert result.confidence > 0
 
-    def test_combined_one_triggers_glasses(self):
-        """测试双重检测：只有其中一个触发戴眼镜"""
+    def test_combined_both_confident_triggers(self):
+        """AND-with-confidence: 两个方法都高 confidence → 报戴眼镜"""
         detector = GlassesDetector()
-
-        # 场景 1：squint 触发，距离小不触发
-        # squint ratio = (0.95+0.95)/(0.95+0.95+0.05+0.05) = 0.95 > 0.85 → squint triggers
-        # distance=35/56≈0.625 < 0.5 → distance不触发
-        landmarks = make_landmarks(distance=35.0)
-        blendshapes = make_blendshapes(squint_left=0.95, squint_right=0.95, wide_left=0.05, wide_right=0.05)
-
+        landmarks = make_landmarks(distance=40.0)  # ratio > 0.5
+        blendshapes = make_blendshapes(squint_left=0.95, squint_right=0.95, wide_left=0.05, wide_right=0.05)  # ratio > 0.85
         result = detector.detect(landmarks=landmarks, blendshapes=blendshapes)
         assert result.is_glasses is True
-        assert "blendshapes" in result.method
-
-        # 场景 2：距离触发，squint 不触发
-        # distance ratio = 20/56≈0.357 < 0.5 → distance不触发
-        # squint ratio = (0.5+0.5)/(0.5+0.5+0.1+0.1) = 0.833 < 0.85 → squint不触发
-        # 但这个场景实际上会返回 none，需要用更大的 distance
-        detector.reset()
-        landmarks = make_landmarks(distance=40.0)  # ratio=40/56≈0.714 > 0.5 → distance触发
-        blendshapes = make_blendshapes(squint_left=0.5, squint_right=0.5, wide_left=0.1, wide_right=0.1)  # ratio ≈ 0.83
-
-        result = detector.detect(landmarks=landmarks, blendshapes=blendshapes)
-        assert result.is_glasses is True
-        assert "distance" in result.method
 
     def test_combined_neither_triggers(self):
         """测试双重检测：两者都不触发戴眼镜"""

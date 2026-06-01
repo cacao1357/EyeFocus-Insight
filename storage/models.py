@@ -36,6 +36,7 @@ class Session:
     baseline_yaw_std: Optional[float] = None
     baseline_pitch_std: Optional[float] = None
     cqs_score: Optional[float] = None
+    baseline_blink_rate: Optional[float] = None
     glasses_mode: GlassesMode = GlassesMode.UNKNOWN
     is_calibrated: bool = False
     is_active: bool = True
@@ -184,5 +185,6 @@ class CalibrationResult:
     final_adjustment_factor: float = 1.0  # 多轮平均调整因子
     final_blink_threshold: float = 0.26  # 调整后的眨眼阈值
     final_squint_threshold: float = 0.20  # 调整后的眯眼阈值
+    baseline_blink_rate: Optional[float] = None  # 个人基线眨眼频率 (次/分钟)
     is_accepted: bool = True      # 用户是否接受
     notes: str = ""              # 用户备注

@@ -134,6 +134,23 @@ class TestEyeFocusAppIntegration:
         app._db.write_fatigue_record = MagicMock()
         app._db.write_blink_event = MagicMock()
 
+        # v4.0 重构：FrameProcessor 是帧处理的单一数据源。
+        # 集成测试 fixture 必须显式构造一个 FrameProcessor 注入到 app 上。
+        from main import FrameProcessor
+        app._frame_processor = FrameProcessor(
+            face_detector=app._face_detector,
+            eye_detector=app._eye_detector,
+            gaze_detector=app._gaze_detector,
+            light_detector=app._light_detector,
+            glasses_detector=app._glasses_detector,
+            focus_analyzer=app._focus_analyzer,
+            fatigue_analyzer=app._fatigue_analyzer,
+            calib_manager=app._calib_manager,
+            is_calibration_active=lambda: False,
+            db=app._db,
+            session_id=app._session_id,
+        )
+
         yield app
 
         # Cleanup
@@ -189,7 +206,7 @@ class TestEyeFocusAppIntegration:
         app._db.write_fatigue_record = MagicMock()
         app._db.write_blink_event = MagicMock()
 
-        app._process_frame(frame)
+        app._frame_processor.process_frame(frame)
 
         # 验证各检测器被调用
         app._face_detector.detect_from_frame.assert_called_once()
@@ -207,7 +224,7 @@ class TestEyeFocusAppIntegration:
         app._face_detector.detect_from_frame.return_value = mock_face_result
 
         # 不应抛出异常
-        app._process_frame(frame)
+        app._frame_processor.process_frame(frame)
 
         # 眨眼检测和视线检测不应被调用
         app._eye_detector.compute.assert_not_called()
@@ -243,7 +260,7 @@ class TestEyeFocusAppIntegration:
             gaze_score=100.0, is_looking_at_screen=True, gaze_offset=(0.0, 0.0)
         )
 
-        app._process_frame(frame)
+        app._frame_processor.process_frame(frame)
 
         # 验证眨眼检测器被调用
         app._eye_detector.compute.assert_called_once()
@@ -270,7 +287,7 @@ class TestEyeFocusAppIntegration:
             gaze_score=85.0, is_looking_at_screen=True, gaze_offset=(2.0, -1.0)
         )
 
-        app._process_frame(frame)
+        app._frame_processor.process_frame(frame)
 
         # 验证视线检测器被调用，传入正确的头部姿态
         call_args = app._gaze_detector.detect.call_args
@@ -298,7 +315,7 @@ class TestEyeFocusAppIntegration:
             gaze_score=100.0, is_looking_at_screen=True, gaze_offset=(0.0, 0.0)
         )
 
-        app._process_frame(frame)
+        app._frame_processor.process_frame(frame)
 
         # 验证光照检测器被调用
         app._light_detector.analyze_frame.assert_called_once()
@@ -331,7 +348,7 @@ class TestEyeFocusAppIntegration:
             gaze_score=100.0, is_looking_at_screen=True, gaze_offset=(0.0, 0.0)
         )
 
-        app._process_frame(frame)
+        app._frame_processor.process_frame(frame)
 
         # 验证眼镜检测器被调用
         app._glasses_detector.detect.assert_called_once()
@@ -360,7 +377,7 @@ class TestEyeFocusAppIntegration:
             gaze_score=90.0, is_looking_at_screen=True, gaze_offset=(0.5, 0.3)
         )
 
-        app._process_frame(frame)
+        app._frame_processor.process_frame(frame)
 
         # 验证专注度分析器被调用
         app._focus_analyzer.analyze.assert_called_once()
@@ -398,7 +415,7 @@ class TestEyeFocusAppIntegration:
             gaze_score=90.0, is_looking_at_screen=True, gaze_offset=(0.5, 0.3)
         )
 
-        app._process_frame(frame)
+        app._frame_processor.process_frame(frame)
 
         # 验证疲劳分析器被调用
         app._fatigue_analyzer.analyze.assert_called_once()
@@ -429,7 +446,7 @@ class TestEyeFocusAppIntegration:
         app._db.write_frame = MagicMock()
         app._db.write_fatigue_record = MagicMock()
 
-        app._process_frame(frame)
+        app._frame_processor.process_frame(frame)
 
         # 验证数据库写入被调用
         app._db.write_frame.assert_called_once()
@@ -438,11 +455,12 @@ class TestEyeFocusAppIntegration:
     def test_process_frame_calibration_mode(self, app):
         """测试校准模式下的帧处理路径
 
-        Note: add_frame() 调用现在由 FrameProcessor 内部处理，
-        在未初始化的 fixture 下无法直接验证。
-        校准数据流通过端到端测试验证。
+        注：校准数据流（add_frame → calib_manager.add_frame）由 T155+T156 单独接线。
+        本测试目前只验证 FrameProcessor.process_frame 在未启用校准时
+        不抛异常、不向 calib_manager.add_frame 注入校准数据。
+        完整的"校准模式 → 校准数据采集"端到端路径在 T162 审计中验证。
         """
-        # 帧处理流程在非初始化状态下仅验证不抛异常
+        # 校准未激活（fixture 默认），所以 calib_manager.add_frame 不应被调用
         frame = make_mock_frame()
         mock_face_result = make_mock_face_result()
 
@@ -464,7 +482,10 @@ class TestEyeFocusAppIntegration:
         )
 
         # 执行帧处理，验证不抛异常
-        app._process_frame(frame)
+        app._frame_processor.process_frame(frame)
+
+        # 校准未激活时，calib_manager.add_frame 不应被调用（T162 端到端验证启用场景）
+        app._calib_manager.add_frame.assert_not_called()
 
     def test_app_state_transitions(self, app):
         """测试应用状态转换"""
@@ -507,10 +528,10 @@ class TestEyeFocusAppIntegration:
 
         # 处理 10 帧
         for i in range(10):
-            app._process_frame(frame)
+            app._frame_processor.process_frame(frame)
 
-        # 验证帧计数增加
-        assert app._frame_count == 10
+        # 验证帧计数增加（v4.0：FrameProcessor 持有 frame_count）
+        assert app._frame_processor.frame_count == 10
 
     def test_fps_calculation(self, app):
         """测试 FPS 计算"""
@@ -529,7 +550,7 @@ class TestEyeFocusAppIntegration:
     def test_cleanup(self, app):
         """测试清理方法"""
         app._running = True
-        app._frame_count = 100
+        # v4.0：_frame_count 移至 FrameProcessor，_cleanup 不再依赖它
 
         # Mock 所有需要关闭的对象
         app._db = MagicMock()
@@ -541,6 +562,112 @@ class TestEyeFocusAppIntegration:
 
         # 验证数据库关闭被调用
         app._db.close.assert_called()
+
+
+class TestEyeFocusAppCameraValidation:
+    """v4.0.2 回归: 摄像头不可用时 initialize() 必须返回 False (B3)"""
+
+    def test_initialize_returns_false_when_camera_unavailable(self, monkeypatch, tmp_path):
+        """无效摄像头 index → initialize() 返回 False，且记录明确错误 (B3)
+
+        策略: 在 EyeFocusApp 创建前 monkeypatch CameraManager，绕过真实检测器加载。
+        """
+        from main import EyeFocusApp, AppConfig
+
+        class FakeCameraManager:
+            def __init__(self, camera_index):
+                self.camera_index = camera_index
+                self.started = False
+            def start(self):
+                self.started = True
+                return False
+            def stop(self):
+                self.started = False
+                return True
+            def is_running(self):
+                return False
+            def get_frame(self):
+                return (False, None)
+            def release(self):
+                self.started = False
+
+        # 把所有可能触发模型加载的工厂函数全部 mock
+        import main as main_module
+        from unittest.mock import MagicMock
+        monkeypatch.setattr(main_module, "CameraManager", FakeCameraManager)
+        monkeypatch.setattr(main_module, "create_face_mesh_detector", MagicMock(return_value=MagicMock()))
+        monkeypatch.setattr(main_module, "create_eye_aspect_detector", MagicMock(return_value=MagicMock()))
+        monkeypatch.setattr(main_module, "create_gaze_detector", MagicMock(return_value=MagicMock()))
+        monkeypatch.setattr(main_module, "create_light_detector", MagicMock(return_value=MagicMock()))
+        monkeypatch.setattr(main_module, "create_glasses_detector", MagicMock(return_value=MagicMock()))
+        monkeypatch.setattr(main_module, "create_focus_analyzer", MagicMock(return_value=MagicMock()))
+        monkeypatch.setattr(main_module, "create_fatigue_analyzer", MagicMock(return_value=MagicMock()))
+        monkeypatch.setattr(main_module, "create_user_calibration_manager", MagicMock(return_value=MagicMock()))
+        import gui.overlay
+        monkeypatch.setattr(gui.overlay, "FocusOverlay", MagicMock())
+
+        import logging
+        log_records = []
+        handler = logging.Handler()
+        handler.emit = lambda r: log_records.append(r.getMessage())
+        logging.getLogger("eyefocus").addHandler(handler)
+        logging.getLogger("eyefocus").setLevel(logging.ERROR)
+        try:
+            app = EyeFocusApp(AppConfig(
+                camera_index=99,
+                enable_calibration=False,
+                data_dir=str(tmp_path),
+            ))
+            ok = app.initialize()
+            assert ok is False, f"无效摄像头 initialize() 应返回 False, 实际 {ok}"
+            err_logs = [m for m in log_records if "摄像头" in m and "无法" in m]
+            assert err_logs, f"应记录摄像头无法打开的错误日志, 实际 {log_records}"
+            assert any("99" in m for m in err_logs), f"错误日志应含 camera_index=99"
+        finally:
+            logging.getLogger("eyefocus").removeHandler(handler)
+
+    def test_initialize_stops_camera_after_validation(self, monkeypatch, tmp_path):
+        """B3 验证: 摄像头 start() 验证后必须 stop()，否则 main_loop start() 会冲突"""
+        from main import EyeFocusApp, AppConfig
+        from unittest.mock import MagicMock
+
+        stop_called = [False]
+        class FakeCameraManager:
+            def __init__(self, camera_index):
+                self.camera_index = camera_index
+            def start(self):
+                return True
+            def stop(self):
+                stop_called[0] = True
+                return True
+            def is_running(self):
+                return False
+            def get_frame(self):
+                return (False, None)
+            def release(self):
+                stop_called[0] = True
+
+        import main as main_module
+        monkeypatch.setattr(main_module, "CameraManager", FakeCameraManager)
+        monkeypatch.setattr(main_module, "create_face_mesh_detector", MagicMock(return_value=MagicMock()))
+        monkeypatch.setattr(main_module, "create_eye_aspect_detector", MagicMock(return_value=MagicMock()))
+        monkeypatch.setattr(main_module, "create_gaze_detector", MagicMock(return_value=MagicMock()))
+        monkeypatch.setattr(main_module, "create_light_detector", MagicMock(return_value=MagicMock()))
+        monkeypatch.setattr(main_module, "create_glasses_detector", MagicMock(return_value=MagicMock()))
+        monkeypatch.setattr(main_module, "create_focus_analyzer", MagicMock(return_value=MagicMock()))
+        monkeypatch.setattr(main_module, "create_fatigue_analyzer", MagicMock(return_value=MagicMock()))
+        monkeypatch.setattr(main_module, "create_user_calibration_manager", MagicMock(return_value=MagicMock()))
+        import gui.overlay
+        monkeypatch.setattr(gui.overlay, "FocusOverlay", MagicMock())
+
+        app = EyeFocusApp(AppConfig(
+            camera_index=0,
+            enable_calibration=False,
+            data_dir=str(tmp_path),
+        ))
+        ok = app.initialize()
+        assert ok is True
+        assert stop_called[0], "B3: 验证后必须 stop()，避免 main_loop start() 冲突"
 
 
 class TestModuleIntegration:

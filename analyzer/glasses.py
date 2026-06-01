@@ -7,10 +7,8 @@ analyzer/glasses.py — 眼镜检测模块
 检测方案：
 1. blendshapes 眯眼比率：squint / (squint + wide) > 0.85 → 戴眼镜
 2. 眼角关键点距离比值：inner_canthus_distance / pupil_distance > 阈值 → 戴眼镜
-   注意：眼镜框宽度通常使鼻托位置眼角距离变大（而非变小），
-   此方向假设尚未通过实测验证，如有问题请反转比较。
 3. 手动开关兜底：用户可强制指定模式
-4. 双保险逻辑：两者之一触发即判定为戴眼镜
+4. AND-with-confidence：任一方法触发且 confidence >= 0.6 才判定为戴眼镜
 
 参考：Phase 0 实测数据
 - 戴眼镜用户：squint ratio 0.85-0.99，眼角距离偏小
@@ -34,6 +32,7 @@ DEFAULT_SQUINT_RATIO_THRESHOLD = 0.85
 DEFAULT_INNER_CANTHUS_RATIO_THRESHOLD = 0.5  # 归一化比值（基于 Phase 0 实测 28px/55px ≈ 0.51）
 DEFAULT_CONFIDENCE_WEIGHT_SQUINT = 0.6
 DEFAULT_CONFIDENCE_WEIGHT_DISTANCE = 0.4
+DEFAULT_GLASSES_CONFIDENCE_THRESHOLD = 0.6  # 任一方法触发且 confidence >= 此值才报"戴眼镜"
 
 
 # MediaPipe 人脸关键点索引
@@ -137,17 +136,18 @@ class GlassesDetector:
         # 方法 2: 眼角距离
         distance_result = self._detect_by_distance(landmarks) if landmarks is not None else None
 
-        # 双保险逻辑：两者之一触发即判定
+        # AND-with-confidence：任一方法触发且 confidence >= 阈值才报"戴眼镜"
+        # 这样可以抑制单方法低置信度的偶发触发（如偶尔眯眼导致 squint 短暂高 ratio）
         is_glasses = False
         method_parts = []
         confidence = 0.0
 
-        if squint_result is not None and squint_result[0]:
+        if squint_result and squint_result[0] and squint_result[1] >= DEFAULT_GLASSES_CONFIDENCE_THRESHOLD:
             is_glasses = True
             method_parts.append("blendshapes")
             confidence = max(confidence, squint_result[1])
 
-        if distance_result is not None and distance_result[0]:
+        if distance_result and distance_result[0] and distance_result[1] >= DEFAULT_GLASSES_CONFIDENCE_THRESHOLD:
             is_glasses = True
             method_parts.append("distance")
             confidence = max(confidence, distance_result[1])

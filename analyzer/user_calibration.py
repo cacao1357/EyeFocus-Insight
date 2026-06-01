@@ -210,14 +210,20 @@ class UserCalibrationManager:
         logger.info("校准开始: 阶段0 自动基线采集")
 
     def on_user_ready(self) -> None:
-        """用户按 Enter确认"""
+        """用户按 Enter确认
+
+        注：AUTO_CALIB 阶段现已改为基于时间自动推进（由 tick() 触发），
+        数据由 FrameProcessor.process_frame 每帧调用 add_frame() 采集。
+        因此 on_user_ready 在 AUTO_CALIB 状态下为 no-op（仅保留向后兼容接口）。
+        """
         if self._state == CalibrationState.AUTO_CALIB:
-            self._run_auto_calib()
+            logger.debug("AUTO_CALIB 阶段无需用户确认，将由 tick() 自动推进")
 
     def add_frame(self, ear: float, yaw: float, pitch: float) -> bool:
         """每帧采集数据（用于 AUTO_CALIB 阶段）
 
-        在 _process_frame() 中每帧调用，而不是依赖 tick() 每秒调用。
+        在 FrameProcessor.process_frame 中每帧调用，
+        而不是依赖 tick() 每秒调用。
 
         Args:
             ear: 当前帧的 EAR 值
@@ -293,44 +299,48 @@ class UserCalibrationManager:
         self._squint_ear_values.clear()
 
     def _get_phase_info(self, phase: int) -> tuple:
-        """获取阶段信息"""
+        """获取阶段信息 (v4.0.2 B5 修复: 动态渲染秒数)
+
+        文案中的秒数从 self.phases dict 动态读取，配置变更时文案自动同步。
+        """
+        p = self.phases
+        # 默认 5/3/2.5，兼容旧配置
+        closed_sec = p.get("closed_eyes", 5)
+        open_sec = p.get("open_eyes", 3)
+        squint_sec = p.get("squint", 2.5)
+        # head_pose 时长 = 单方向秒数（_get_current_phase_duration 已 /4）
+        if "head_pose" in p:
+            head_sec = p["head_pose"] / 4
+        else:
+            yaw = p.get("head_yaw", 2)
+            pitch = p.get("head_pitch", 2)
+            head_sec = (yaw + pitch) / 4
+
         phases = [
             ("自动基线采集", "请保持自然睁眼，系统将自动采集数据..."),
-            ("闭眼校准", "请闭眼并保持 5 秒..."),
-            ("睁眼恢复", "请睁眼并保持 3 秒..."),
-            ("眯眼校准", "请故意眯眼并保持 2-3 秒..."),
-            ("头部姿态", "请按照指示移动头部..."),
+            ("闭眼校准", f"请闭眼并保持 {closed_sec:.0f} 秒..."),
+            ("睁眼恢复", f"请睁眼并保持 {open_sec:.0f} 秒..."),
+            ("眯眼校准", f"请故意眯眼并保持 {squint_sec:.0f} 秒..."),
+            ("头部姿态", f"请按指示移动头部，每个方向 {head_sec:.0f} 秒..."),
             ("眨眼计数校准", "即将开始眨眼计数..."),
         ]
         if phase < len(phases):
             return phases[phase]
         return ("未知", "")
 
-    def _run_auto_calib(self) -> None:
-        """执行自动基线采集阶段"""
-        elapsed = time.time() - self._phase_start_time
-        remaining = int(self.phases["auto_calib"] - elapsed)
+    def _finalize_auto_calib(self) -> None:
+        """AUTO_CALIB 阶段完成时调用：触发回调并切换到下一阶段
 
-        if remaining > 0:
-            self.callbacks.on_countdown_tick(remaining)
-
-        if self._get_ear_callback:
-            ear = self._get_ear_callback()
-            self._signal_collector.ears.append(ear)
-            if ear < self._signal_collector.ear_min:
-                self._signal_collector.ear_min = ear
-
-        if self._get_head_pose_callback:
-            yaw, pitch = self._get_head_pose_callback()
-            self._signal_collector.yaws.append(yaw)
-            self._signal_collector.pitches.append(pitch)
-
-        if elapsed >= self.phases["auto_calib"]:
-            self.callbacks.on_phase_complete(0, {
-                "ear_mean": sum(self._signal_collector.ears) / len(self._signal_collector.ears) if self._signal_collector.ears else 0,
-                "frame_count": len(self._signal_collector.ears),
-            })
-            self._transition_to_next_phase()
+        数据由 FrameProcessor.process_frame 每帧调用 add_frame() 采集，
+        此方法仅负责阶段完成时的一次性收尾（回调 + 状态推进）。
+        """
+        if not self._signal_collector.ears:
+            logger.warning("AUTO_CALIB 阶段未采集到任何数据")
+        self.callbacks.on_phase_complete(0, {
+            "ear_mean": sum(self._signal_collector.ears) / len(self._signal_collector.ears) if self._signal_collector.ears else 0,
+            "frame_count": len(self._signal_collector.ears),
+        })
+        self._transition_to_next_phase()
 
     def tick(self) -> None:
         """定时器触发（每秒调用一次）"""
@@ -340,12 +350,14 @@ class UserCalibrationManager:
         elapsed = time.time() - self._phase_start_time
         current_phase_duration = self._get_current_phase_duration()
 
-        # AUTO_CALIB 阶段需要特殊处理（收集数据并自动推进）
+        # AUTO_CALIB 阶段：仅做倒计时显示与时间到点后的阶段推进
+        # 数据采集已由 FrameProcessor.process_frame 每帧调用 add_frame() 完成
         if self._state == CalibrationState.AUTO_CALIB:
             remaining = int(self.phases["auto_calib"] - elapsed)
             if remaining >= 0:
                 self.callbacks.on_countdown_tick(remaining)
-            self._run_auto_calib()
+            if elapsed >= self.phases["auto_calib"]:
+                self._finalize_auto_calib()
             return
 
         # BLINK_COUNTING 阶段：每秒采集眨眼数据
@@ -379,7 +391,14 @@ class UserCalibrationManager:
             return self.phases["squint"]
         elif self._state in (CalibrationState.HEAD_UP, CalibrationState.HEAD_DOWN,
                              CalibrationState.HEAD_LEFT, CalibrationState.HEAD_RIGHT):
-            return self.phases["head_pose"] / 4
+            # v4.0.1 修复：兼容 head_pose 单字段或 head_yaw+head_pitch 双字段
+            # 调用方任一方式都应不崩溃
+            if "head_pose" in self.phases:
+                return self.phases["head_pose"] / 4
+            # 双字段配置时，每个方向时长 = (head_yaw + head_pitch) / 4 / 2
+            yaw_dur = self.phases.get("head_yaw", 0.0)
+            pitch_dur = self.phases.get("head_pitch", 0.0)
+            return (yaw_dur + pitch_dur) / 4
         elif self._state == CalibrationState.BLINK_COUNTING:
             return self.blink_duration
         return 0
@@ -561,6 +580,14 @@ class UserCalibrationManager:
             timestamp=time.time(),
         )
 
+        # Compute baseline blink rate from blink rounds
+        baseline_blink_rate = None
+        if self._blink_rounds_data:
+            total_user_blinks = sum(r.user_blink_count for r in self._blink_rounds_data)
+            total_duration_min = sum(r.duration_seconds for r in self._blink_rounds_data) / 60.0
+            if total_duration_min > 0 and total_user_blinks > 0:
+                baseline_blink_rate = total_user_blinks / total_duration_min
+
         return CalibrationResult(
             session_id=self._session_id or "",
             timestamp=datetime.now(),
@@ -569,6 +596,7 @@ class UserCalibrationManager:
             final_adjustment_factor=final_adjustment,
             final_blink_threshold=final_blink_threshold,
             final_squint_threshold=squint_threshold,
+            baseline_blink_rate=baseline_blink_rate,
             is_accepted=True,
             notes="",
         )
