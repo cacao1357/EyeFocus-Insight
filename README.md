@@ -99,10 +99,8 @@ EyeFocus-Insight/
 │   ├── head_pose_proto.py      # S3: 头部姿态
 │   ├── ear_variance.py         # S5: EAR 方差
 │   ├── common.py               # 共享算法实现
-│   └── results/                # 测试结果（按成员分类）
-│       ├── D1/
-│       ├── D2/
-│       └── T1/
+│   └── results/                # 测试结果（按成员分类；.json 输出不入仓，.txt 分析报告入仓）
+│       └── D1/                 # D1 已落盘的 6 份手写分析报告（s4/s5/s6/s7/s9/s10）
 ├── tests/              # 单元与集成测试（284 个）
 ├── docs/               # 文档
 │   └── old_schemes/    # 旧版本方案归档
