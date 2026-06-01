@@ -38,12 +38,12 @@ pip install -r requirements.txt
 
 **方式一：自动下载（推荐）**
 
-运行任意 spike 脚本会自动下载模型到 `spike/face_landmarker.task`。
+运行 `python main.py` 启动时若未检测到模型会自动从 [MediaPipe assets](https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task) 加载（v4.0+）。
 
 **方式二：手动下载**
 
 1. 下载 [face_landmarker.task](https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task)
-2. 放入 `spike/` 目录
+2. 放入项目根目录（v4.0+ 已从 `spike/` 迁移至根目录）
 
 ### 5. 运行程序
 
@@ -74,24 +74,26 @@ EyeFocus-Insight/
 ├── config.py           # 集中配置管理
 ├── main.py             # 主程序入口
 ├── requirements.txt    # 依赖列表
+├── face_landmarker.task  # MediaPipe 模型（运行时下载，不入仓）
 ├── detector/           # 检测器模块
 │   ├── face_mesh.py    # MediaPipe 人脸网格
 │   ├── eye_aspect.py   # EAR 眨眼检测
 │   ├── head_pose.py    # 头部姿态检测
 │   ├── gaze.py         # 视线方向检测
+│   ├── euler_utils.py  # 头部姿态矩阵解算
 │   └── light.py        # 光照条件感知
 ├── analyzer/           # 分析器模块
-│   ├── baseline.py      # 基线校准
 │   ├── focus.py        # 专注度分析
 │   ├── fatigue.py      # 疲劳分析
 │   ├── glasses.py      # 眼镜检测
-│   └── user_calibration.py  # 用户多轮校准
+│   └── user_calibration.py  # 用户多轮校准（v1.3+）
 ├── storage/            # 存储模块
 │   ├── models.py       # 数据模型定义
-│   └── db.py          # SQLite 数据库层
+│   └── db.py           # SQLite 数据库层
 ├── gui/                # GUI 模块
 │   └── overlay.py      # 实时叠加层
-├── spike/             # Phase 0 验证脚本
+├── reporter/           # 报告生成（v1.4+）
+├── spike/              # Phase 0 验证脚本
 │   ├── fps_benchmark.py        # S1: 帧率测试
 │   ├── baseline_proto.py       # S2: 基线校准
 │   ├── head_pose_proto.py      # S3: 头部姿态
@@ -101,11 +103,13 @@ EyeFocus-Insight/
 │       ├── D1/
 │       ├── D2/
 │       └── T1/
+├── tests/              # 单元与集成测试（284 个）
 ├── docs/               # 文档
 │   └── old_schemes/    # 旧版本方案归档
+├── PROJECT_PLAN.md     # 总规划方案（v4.0.2）
 ├── PHASE0_PLAN.md      # Phase 0 执行计划
 ├── PHASE0_SUMMARY.md   # Phase 0 验证报告
-└── PHASE1_PLAN.md      # Phase 1 开发计划
+└── PHASE1_PLAN.md      # Phase 1 开发计划（v1.6）
 ```
 
 ---
@@ -123,21 +127,32 @@ EyeFocus-Insight/
 
 ## 当前进度
 
-**Phase 1 开发阶段** — MVP 核心功能实现中。
+**v4.0.2** — 审计修复 + UX 修复完成。
 
-Phase 0 验证结果见 [PHASE0_SUMMARY.md](./PHASE0_SUMMARY.md)。
+总规划见 [PROJECT_PLAN.md](./PROJECT_PLAN.md)。Phase 0 验证见 [PHASE0_SUMMARY.md](./PHASE0_SUMMARY.md)。Phase 1 任务见 [PHASE1_PLAN.md](./PHASE1_PLAN.md)。
 
-| 检查项 | 状态 |
-|--------|------|
-| S1 帧率 (≥25 FPS) | ✅ PASS |
-| S2 基线校准 | ✅ PASS |
-| S3 头部姿态 | ✅ PASS |
-| S4 过滤参数审查 | ✅ 完成 |
-| S5 EAR 方差分析 | ✅ 完成 |
-| S6 依赖验证 | ✅ PASS |
-| S7 光照测试 | ✅ PASS |
+| 版本 | 内容 | 测试 |
+|------|------|------|
+| **v3.4** | 帧处理重构（FrameProcessor 统一） | 251 |
+| **v4.0** | 10 个审计发现修复（死代码/基线接线/AND-confidence/光照边界） | 275 |
+| **v4.0.1** | 实测新发现 2 bug（create_session 同微秒冲突 / head_pose phases KeyError） | 279 |
+| **v4.0.2** | UX 实测 4 bug（无效摄像头/Mediapipe telemetry/动态文案/日志风格） | **284** |
 
-**Phase 1 任务** 见 [PHASE1_PLAN.md](./PHASE1_PLAN.md)。
+### 关键性能指标（v4.0.2 实测）
+
+| 指标 | 目标 | 实测 |
+|------|------|------|
+| 端到端帧率 | ≥ 30 FPS | **70-109 FPS** |
+| 单帧延迟 | ≤ 33 ms | **9.2 ms** |
+| 启动时间 | < 1 s | **27-52 ms** |
+| MediaPipe 推理 | < 15 ms | **7.0 ms (XNNPACK CPU)** |
+| 摄像头检出 | 100% | 100% (5/5 秒) |
+| 持续运行 5s | 无崩溃 | ✅ |
+
+### 已知限制
+
+- **B4 部分**：MediaPipe C++ `W0000` 警告仍出现（mediapipe 0.10.35 绕 env var，不影响功能）
+- **GUI 不可测**：CLI 环境无法测试 GUI 渲染；需在 Windows GUI 桌面实机测试
 
 ---
 
