@@ -24,3 +24,4 @@ Session.vim
 *.swp
 *.swo
 *~
+.venv*
