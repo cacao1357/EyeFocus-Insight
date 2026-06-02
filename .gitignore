@@ -51,3 +51,6 @@ spike/results/**/*.json
 # 数据/报告输出
 /data/
 /reports/
+
+# brainstorm visual companion session dirs (do not track)
+.superpowers/
