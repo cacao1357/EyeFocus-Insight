@@ -1,6 +1,6 @@
 # EyeFocus Insight — 项目总体规划方案
 
-> **版本**：v4.3 | **制定日期**：2026-05-28 | **修订日期**：2026-06-02
+> **版本**：v4.2 | **制定日期**：2026-05-28 | **修订日期**：2026-06-02
 > **方法论**：gstack（YC Office Hours → CEO Review → Eng Review → Build → Ship）
 >
 > **团队规模**：3 人 | **工期**：约 29 天（含 insights Spike + calibration 重设计 + 实施） | **目标平台**：Windows 笔记本 | **项目定位**：课程/作品集
@@ -1275,55 +1275,6 @@ Spike ─── Day 1-3 ────── Day 4-12 ─── Day 13 ─── D
 | **合计** | **127** | **101.5h** | **62.5h** | **21h** | **185h** |
 
 ## 16. 版本迭代记录
-
-### v4.3 — 规划文档审计修订（2026-06-02）
-
-> **变更原因**：用户提出"结合项目实际看看规划文档有没有要调整的地方"。基于 PROJECT_PLAN v4.2 / PHASE1_PLAN v1.8 / PHASE2_PLAN v1.1 与实际项目状态（284/284 测试、9625 行生产代码、78 tracked files、working tree clean）的全面审计，识别 10 个发现，6 项需修订。CLAUDE.md 触发：实测数据与方案预想不符（Issue #1 Phase 1.6 门禁未通过即写完 Phase 2 plan）+ 文档不一致（Issues #2-#5）+ 依赖整洁度（Issue #6）。
-
-#### 6 项修订明细
-
-| # | 等级 | Issue | 修订内容 | 同步文档 |
-|---|------|-------|---------|---------|
-| 1 | 🔴 关键 | Phase 1.6 Spike 门禁未通过即写完 Phase 2 plan | PHASE2_PLAN §2.6 T222-T226 前加 ⚠️ banner 声明所有具体参数为"草稿值，待 S-SUM 覆盖" | PHASE2_PLAN v1.1 → v1.2 |
-| 2 | 🟡 中等 | PHASE1_PLAN §1.1 漏声明 v4.1/v4.2 不含 | §1.1 标题加"v4.0 MVP"版本边界；表底加 §1.1.1 "Phase 1 不含"表（4 个模块移交说明）| PHASE1_PLAN v1.8 → v1.9 |
-| 3 | 🟡 中等 | T144 Phase 1 验收状态 ⏳→✅ | 状态更新 + §七 下一步改"进 Phase 1.6 Spike 门禁" | PHASE1_PLAN v1.8 → v1.9 |
-| 4 | 🟡 中等 | T206 与现有 reporter/insights.py 392 行 v4.0 规则引擎关系未明 | §2.2 T206 任务描述澄清"现有 InsightsEngine 作为基线，T207 叠加 attribution findings" | PHASE2_PLAN v1.1 → v1.2 |
-| 5 | 🟡 中等 | `analyzer/insights/` 与 `reporter/insights.py` 命名空间错位职责不清 | §2.2.2 + §2.5 表格加一段说明两者职责区分 | MODULE_INTERFACES v1.0 → v1.1 |
-| 6 | 🟡 中等 | requirements.txt `pandas>=2.0.0` 全代码 0 引用 | 删除（实际不需 pandas，STMT 用 numpy 处理小时聚合）| requirements.txt |
-
-#### 不修订的发现（🟢 可选 + 现状可接受）
-
-| # | 等级 | Issue | 决定 |
-|---|------|-------|------|
-| 7 | 🟢 轻 | README.md 未同步 v4.1/v4.2 | 暂不修订（README 主要是快速启动，模块概览放 Phase 3 交付时统一加） |
-| 8 | 🟢 轻 | PHASE1 §1.1 不显式标注 v4.0 版本 | 与 Issue #2 一并处理（v1.9 标题已加"v4.0 MVP"）|
-| 9 | 🟢 轻 | 任务编号跨版本不连续 | 不修订（成本 > 收益；mapping 表未来如需要再加） |
-| 10 | 🟢 轻 | 实际工期被压缩 | 不修订（计划工期作为"应有"参考即可） |
-
-#### 关键澄清（v4.3 状态）
-
-| 项 | 现状 | 是否符合 v4.2 计划 |
-|---|------|------------------|
-| 284 测试全绿 | ✅ 实测 284/284 通过 | ✅ 符合 |
-| 14 个 v4.0 核心模块 | ✅ 全部已实现 | ✅ 符合 |
-| 13 个 v4.1 / 14 个 v4.2 任务 | ⏳ 未启动（属 Phase 2 任务）| ✅ 符合（当前处于 Phase 1 → Phase 2 过渡态）|
-| Phase 1.6 Spike S11-S15 | ⏳ 未执行（门禁）| 🟠 Issue #1 风险（已加 banner 提醒）|
-| T144 Phase 1 验收 | ✅ 已完成 | ✅ 符合（v1.9 状态更新） |
-| `calibration/` 目录 | ⏳ 待 Phase 2 启动 | ✅ 符合 |
-| `analyzer/insights/` 目录 | ⏳ 待 Phase 2 启动 | ✅ 符合 |
-
-#### 版本同步
-
-| 文档 | 原版本 | 新版本 | 说明 |
-|------|--------|--------|------|
-| PROJECT_PLAN.md | v4.2 | v4.3 | 本次更新（已归档 v4.2 → `docs/old_schemes/PROJECT_PLAN_v4.2.md`） |
-| PHASE1_PLAN.md | v1.8 | v1.9 | §1.1 加 v4.0 MVP 边界 + §1.1.1 不含表 + T144 ✅ + 版本记录 |
-| PHASE2_PLAN.md | v1.1 | v1.2 | §2.6 T222-T226 ⚠️ banner + §2.2 T206 兼容性说明 + 版本记录 |
-| MODULE_INTERFACES.md | v1.0 | v1.1 | §2.2.2 + §2.5 职责区分说明 + 版本记录 |
-| requirements.txt | - | (无版本号) | 删 `pandas>=2.0.0` |
-| CLAUDE.md | (gitignored) | (本地同步 §1.5) | §1.5 "当前版本" 4 项更新 |
-
----
 
 ### v4.2 — 用户辅助校准模块独立重设计（2026-06-02）
 

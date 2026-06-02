@@ -1,6 +1,6 @@
 # Phase 2 开发计划
 
-> **版本**：v1.1 | **制定日期**：2026-06-02 | **修订日期**：2026-06-02
+> **版本**：v1.2 | **制定日期**：2026-06-02 | **修订日期**：2026-06-02
 > **阶段目标**：calibration 模块重设计 + 报告系统 + 分心识别 + Insights 离线数据分析
 > **负责人**：D1（主开发）、D2（辅助开发）、T1（测试验收）
 > **预计工期**：Day 14-22（约 9 天，含 calibration 重设计 4 天 + 报告/分心/insights 5 天）
@@ -134,9 +134,11 @@
 
 ### 2.2 T206-T207：个性化建议引擎（v4.1 重塑）
 
+> **【v1.2 现状澄清】**现有 `reporter/insights.py`（392 行，v4.0 规则引擎 + `InsightsEngine` + `FocusPattern` 等）为 v4.0 时代的实现，**不删除**，作为 T206 的"规则引擎"基线。T207 在其上叠加 attribution findings 作为主输入，规则引擎降级为兜底。
+
 | 任务ID | 描述 | 负责人 | 估时 | 依赖 |
 |--------|------|--------|------|------|
-| T206 | `reporter/insights.py` — 规则引擎（兜底） | D2 | 1.5h | T203 |
+| T206 | `reporter/insights.py` — 在现有 `InsightsEngine` 上扩展规则引擎（兜底）| D2 | 1.5h | T203 |
 | T207 | `reporter/insights.py` — 集成 attribution findings 作为主输入 | D2 | 1.5h | T226 |
 
 ### 2.3 T208-T211：分心模式识别
@@ -168,6 +170,8 @@
 ### 2.6 T220-T231：Insights 离线数据分析（v4.1 新增）
 
 > **前置条件**：Phase 1.6 Spike（S11-S15）必须全部 PASS。任一失败需在 S-SUM 给出降级方案。
+>
+> ⚠️ **【v1.2 草稿值警告】T222-T226 中所有具体参数（penalty_c=3.0、silhouette_threshold=0.25、min_sessions=10、contamination=0.1、period=24、min_samples_per_group=30 等）均为**草稿默认值**，S11-S15 spike 未执行前未经实测验证**。S-SUM 报告（`docs/PHASE1_6_SPIKE_SUMMARY.md`）发布后必须**逐项覆盖**本文档 T222-T226 的参数表，否则 T222-T226 不应启动。
 
 #### T220 — 公共特征工程
 
@@ -491,6 +495,7 @@ T216-T218 (测试补充) ──┤
 
 | 版本 | 日期 | 变更内容 |
 |------|------|---------|
+| v1.2 | 2026-06-02 | v4.3 审计修订：(1) §2.6 T222-T226 前加 ⚠️ banner 声明所有具体参数为"草稿值，待 S-SUM 覆盖"（Issue #1 — Phase 1.6 门禁未通过）；(2) §2.2 T206 任务描述澄清现有 `reporter/insights.py` 392 行 v4.0 规则引擎作为基线，T207 叠加 attribution findings（Issue #4） |
 | v1.1 | 2026-06-02 | v4.2 同步：新增 §2.0 calibration 模块重设计任务（T-CAL-01 ~ T-CAL-14，20h），明确排在 Phase 2 最前（Day 14-17），原 Phase 2 任务后移至 Day 18-22；新增 R27-R30 风险；依赖图加 calibration 前置；工时汇总 51.5h → 71.5h；总工期 7d → 9d |
 | v1.0 | 2026-06-02 | 初始版本。基于 PROJECT_PLAN v4.1 拆分。含 T200-T219 原有任务 + T220-T231 v4.1 insights 新增任务。工时 51.5h，工期 Day 14-20 |
 
