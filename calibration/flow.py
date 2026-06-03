@@ -146,11 +146,16 @@ class CalibrationFlow:
         self._handle_action(action, digit)
 
     def _extract_metrics(self, frame):
-        """从帧中提取 EAR/yaw/pitch（沿用主项目模块）。"""
+        """从帧中提取 EAR/yaw/pitch（沿用主项目模块）。
+
+        BUG-4 修复：必须用 detect_from_frame(frame, timestamp_ms)，
+        实际方法名是 detect_from_frame (不是 detect)。
+        """
         if self._face_detector is None:
             return (None, None, None)
         try:
-            face_result = self._face_detector.detect(frame)
+            timestamp_ms = int(time.time() * 1000)
+            face_result = self._face_detector.detect_from_frame(frame, timestamp_ms)
         except Exception:
             return (None, None, None)
         if not face_result or not getattr(face_result, 'detected', False):
