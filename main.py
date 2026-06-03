@@ -57,6 +57,7 @@ from analyzer.user_calibration import (
     CalibrationState,
 )
 from storage.models import CalibrationResult
+import calibration as calibration_module  # v4.2: 新校准模块
 from gui.overlay import FocusOverlay, CalibrationProgress
 from storage.db import DatabaseManager, create_database_manager
 from storage.models import (
@@ -1125,6 +1126,74 @@ class EyeFocusApp:
     def session_id(self) -> Optional[str]:
         """当前会话 ID"""
         return self._session_id
+
+    # ============ v4.2 新校准模块入口 ============
+
+    def run_v4_2_calibration(self) -> Optional[CalibrationResult]:
+        """v4.2: 调用新独立 calibration 模块（接管摄像头 + 自有 UI + 自有音频）。
+
+        严格契约（spec 决策 X1）：成功 → 返回完整 CalibrationResult；取消/失败 → 返回 None。
+
+        Returns:
+            CalibrationResult: 校准成功且用户在总结页确认
+            None: 用户取消、阶段失败放弃、模块崩溃
+        """
+        logger.info("v4.2 校准模块启动 - 释放主程序摄像头")
+        # 释放主程序摄像头 → 新模块独占
+        if self._camera_manager is not None and self._camera_manager.is_running():
+            self._camera_manager.release()
+
+        try:
+            result = calibration_module.run(
+                session_id=self._session_id or "main_session",
+                config=None,  # 用默认配置
+                db=self._db,
+            )
+            if result is not None:
+                logger.info(
+                    "v4.2 校准成功: EAR=%.4f, 眨眼率=%.2f/min, CQS=%.2f",
+                    result.signal.ear_mean,
+                    result.baseline_blink_rate,
+                    result.cqs,
+                )
+                # 应用阈值到各 detector
+                self._apply_v4_2_calibration_result(result)
+            else:
+                logger.info("v4.2 校准被用户取消或失败，使用默认基线")
+            return result
+        except Exception as e:
+            logger.exception("v4.2 校准模块异常: %s", e)
+            return None
+        finally:
+            # 重新获取主程序摄像头
+            logger.info("v4.2 校准结束 - 重新启动主程序摄像头")
+            if self._camera_manager is not None and not self._camera_manager.is_running():
+                self._camera_manager.start()
+
+    def _apply_v4_2_calibration_result(self, result: CalibrationResult) -> None:
+        """应用 v4.2 校准结果到各 detector。"""
+        if hasattr(self, '_eye_detector') and self._eye_detector is not None:
+            self._eye_detector.set_baseline(result.signal.ear_mean)
+
+        if (result.baseline_blink_rate is not None
+                and hasattr(self, '_fatigue_analyzer')
+                and self._fatigue_analyzer is not None):
+            self._fatigue_analyzer.set_baseline_blink_rate(result.baseline_blink_rate)
+            logger.info("疲劳基线已应用: %.1f 次/分钟", result.baseline_blink_rate)
+
+        if self._db and self._session_id:
+            self._db.update_session(
+                self._session_id,
+                baseline_ear=result.signal.ear_mean,
+                baseline_blink_rate=result.baseline_blink_rate,
+                is_calibrated=True,
+            )
+
+        logger.info(
+            "v4.2 校准结果已应用: EAR=%.4f, 眨眼阈值=%.4f",
+            result.signal.ear_mean,
+            result.final_blink_threshold,
+        )
 
 
 def main() -> None:
