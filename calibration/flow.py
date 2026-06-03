@@ -83,7 +83,9 @@ class CalibrationFlow:
         if not self._cap.isOpened():
             raise RuntimeError("无法打开摄像头")
         cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_AUTOSIZE)
-        self._input = InputHandler(WINDOW_NAME)
+        # panel_y_offset = 视频区高度（480）。cv2 鼠标事件返回 composed 坐标，
+        # button.rect 是 panel 局部坐标。InputHandler 内部做转换（BUG-2 修复）。
+        self._input = InputHandler(WINDOW_NAME, panel_y_offset=480)
         # 初始化 face detector（沿用主项目模块，默认参数与 main.py 一致）
         from detector.face_mesh import create_face_mesh_detector
         self._face_detector = create_face_mesh_detector()

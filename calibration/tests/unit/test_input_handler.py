@@ -20,6 +20,7 @@ def _make_buttons():
 def test_mouse_click_hits_proceed_button():
     h = InputHandler.__new__(InputHandler)
     h._buttons = _make_buttons()
+    h._panel_y_offset = 0  # 测试场景默认 0
     h._click_buffer = (50, 30)  # 命中"开始"
     with patch("cv2.waitKey", return_value=255):  # 无键盘输入
         action, digit = h.poll(FlowState.WAITING_TO_START_PHASE)
@@ -30,6 +31,7 @@ def test_mouse_click_hits_proceed_button():
 def test_mouse_click_hits_digit_5():
     h = InputHandler.__new__(InputHandler)
     h._buttons = _make_buttons()
+    h._panel_y_offset = 0
     h._click_buffer = (220, 125)
     with patch("cv2.waitKey", return_value=255):
         action, digit = h.poll(FlowState.BLINK_INPUT_AWAITING)
@@ -40,6 +42,7 @@ def test_mouse_click_hits_digit_5():
 def test_mouse_click_misses_all_buttons():
     h = InputHandler.__new__(InputHandler)
     h._buttons = _make_buttons()
+    h._panel_y_offset = 0
     h._click_buffer = (999, 999)
     with patch("cv2.waitKey", return_value=255):
         action, digit = h.poll(FlowState.WAITING_TO_START_PHASE)
@@ -100,6 +103,7 @@ def test_mouse_takes_priority_over_keyboard():
     """鼠标点击 vs 键盘同时：鼠标优先（视觉操作更明确）。"""
     h = InputHandler.__new__(InputHandler)
     h._buttons = _make_buttons()
+    h._panel_y_offset = 0
     h._click_buffer = (50, 30)  # 点"开始"
     with patch("cv2.waitKey", return_value=27):  # ESC
         action, _ = h.poll(FlowState.WAITING_TO_START_PHASE)
@@ -109,6 +113,7 @@ def test_mouse_takes_priority_over_keyboard():
 def test_click_buffer_cleared_after_poll():
     h = InputHandler.__new__(InputHandler)
     h._buttons = _make_buttons()
+    h._panel_y_offset = 0
     h._click_buffer = (50, 30)
     with patch("cv2.waitKey", return_value=255):
         h.poll(FlowState.WAITING_TO_START_PHASE)

@@ -15,8 +15,18 @@ from calibration.ui.panel import Button, FlowState, UIAction
 class InputHandler:
     """每帧调 poll() 获取鼠标/键盘动作。"""
 
-    def __init__(self, window_name: str):
+    def __init__(self, window_name: str, panel_y_offset: int = 0):
+        """初始化。
+
+        Args:
+            window_name: cv2 窗口名
+            panel_y_offset: 视频区高度（像素）。cv2 鼠标事件返回 (x, y) 是 composed
+                图像坐标（视频在上，panel 在下），需减去此 offset 才能匹配 button.rect
+                的 panel 局部坐标。视频 480 + panel 240 = 720 composed。
+                BUG-2 修复点。
+        """
         self._window_name = window_name
+        self._panel_y_offset = panel_y_offset
         self._buttons: List[Button] = []
         self._click_buffer: Optional[Tuple[int, int]] = None
         try:
@@ -35,8 +45,10 @@ class InputHandler:
         if self._click_buffer is not None:
             x, y = self._click_buffer
             self._click_buffer = None
+            # 转换 composed 坐标 → panel 局部坐标（BUG-2 修复）
+            panel_y = y - self._panel_y_offset
             for btn in self._buttons:
-                if btn.contains(x, y):
+                if btn.contains(x, panel_y):
                     if btn.action == UIAction.DIGIT:
                         return (UIAction.DIGIT, btn.digit_value)
                     return (btn.action, None)
