@@ -41,7 +41,7 @@ class InputHandler:
 
     def poll(self, state: FlowState) -> Tuple[UIAction, Optional[str]]:
         """返回 (动作, 数字字符)。数字仅 DIGIT 动作时有效。"""
-        # 1. 鼠标点击优先
+        # 1. 先消费之前累积的 click（来自上一次 waitKey）
         if self._click_buffer is not None:
             x, y = self._click_buffer
             self._click_buffer = None
@@ -52,15 +52,27 @@ class InputHandler:
                     if btn.action == UIAction.DIGIT:
                         return (UIAction.DIGIT, btn.digit_value)
                     return (btn.action, None)
+            # click_buffer 消费完但没命中按钮 — 落到键盘检查（避免 1-tick 延迟）
 
-        # 2. 键盘（IME 激活时可能收不到，但有就用）
+        # 2. waitKey 排空 OS 事件队列 — 鼠标 click 在这里 set _click_buffer
         key = cv2.waitKey(1) & 0xFF
 
-        # ESC 任何状态都触发 CANCEL（兜底）
+        # 3. 再次检查 click_buffer（BUG-3 修复：waitKey 期间设置的 click 不能漏）
+        if self._click_buffer is not None:
+            x, y = self._click_buffer
+            self._click_buffer = None
+            panel_y = y - self._panel_y_offset
+            for btn in self._buttons:
+                if btn.contains(x, panel_y):
+                    if btn.action == UIAction.DIGIT:
+                        return (UIAction.DIGIT, btn.digit_value)
+                    return (btn.action, None)
+
+        # 4. ESC 任何状态都触发 CANCEL（兜底）
         if key == 27:
             return (UIAction.CANCEL, None)
 
-        # 仅 BLINK_INPUT_AWAITING 接受数字/退格/Enter
+        # 5. 仅 BLINK_INPUT_AWAITING 接受数字/退格/Enter
         if state == FlowState.BLINK_INPUT_AWAITING:
             if ord('0') <= key <= ord('9'):
                 return (UIAction.DIGIT, chr(key))
