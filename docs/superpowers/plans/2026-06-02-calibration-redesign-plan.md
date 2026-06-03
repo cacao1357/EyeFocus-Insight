@@ -3652,9 +3652,10 @@ class CalibrationFlow:
             raise RuntimeError("无法打开摄像头")
         cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_AUTOSIZE)
         self._input = InputHandler(WINDOW_NAME)
-        # 初始化 face detector（沿用主项目模块）
+        # 初始化 face detector（沿用主项目模块，默认参数与 main.py 一致；
+        # FaceMeshDetector 默认 running_mode="video"，无需传）
         from detector.face_mesh import create_face_mesh_detector
-        self._face_detector = create_face_mesh_detector(mode="video")
+        self._face_detector = create_face_mesh_detector()
 
     def _teardown(self) -> None:
         if self._cap is not None:
