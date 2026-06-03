@@ -125,7 +125,7 @@ def gen_focus_timeseries_with_drops(n_seconds: int = 3600,
 def gen_hourly_focus_with_daily_pattern(n_days: int = 14, seed: int = 42) -> pd.Series:
     """生成 N 天 × 24 小时聚合的 focus_score 序列，含已知日内规律。"""
     rng = np.random.default_rng(seed)
-    hours = pd.date_range("2026-05-01", periods=n_days * 24, freq="1H")
+    hours = pd.date_range("2026-05-01", periods=n_days * 24, freq="1h")
 
     def base_for_hour(h: int) -> float:
         if 9 <= h <= 11: return 85
