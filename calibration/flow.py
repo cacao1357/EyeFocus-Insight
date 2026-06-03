@@ -57,6 +57,8 @@ class CalibrationFlow:
         # 子系统（运行时注入；测试时 mock）
         self._cap = None
         self._face_detector = None
+        # BUG-6 修复: 需要 EyeAspectDetector 实例 (用于 compute() + get_current_ear())
+        self._eye_detector = None
         self._beep = Beep()
         self._tts = TTS(rate=config.tts_rate) if config.audio_enabled else _MutedTTS()
         self._panel = Panel(width=640, height=config.ui_panel_height_px)
@@ -89,6 +91,10 @@ class CalibrationFlow:
         # 初始化 face detector（沿用主项目模块，默认参数与 main.py 一致）
         from detector.face_mesh import create_face_mesh_detector
         self._face_detector = create_face_mesh_detector()
+        # BUG-6 修复：EAR 计算需要 EyeAspectDetector 实例
+        # (不能用编造的 compute_ear_from_landmarks — 函数不存在)
+        from detector.eye_aspect import create_eye_aspect_detector
+        self._eye_detector = create_eye_aspect_detector()
 
     def _teardown(self) -> None:
         if self._cap is not None:
@@ -149,9 +155,9 @@ class CalibrationFlow:
         """从帧中提取 EAR/yaw/pitch（沿用主项目模块）。
 
         BUG-4 修复：必须用 detect_from_frame(frame, timestamp_ms)，
-        实际方法名是 detect_from_frame (不是 detect)。
         BUG-5 修复：必须用 face_result.face_detected 属性，
-        实际属性名是 face_detected (不是 detected)。
+        BUG-6 修复：EAR 用 self._eye_detector.compute() + get_current_ear()，
+                    yaw/pitch 用 face_result.yaw/pitch 直接属性。
         """
         if self._face_detector is None:
             return (None, None, None)
@@ -162,17 +168,20 @@ class CalibrationFlow:
             return (None, None, None)
         if not face_result or not getattr(face_result, 'face_detected', False):
             return (None, None, None)
-        ear, yaw, pitch = None, None, None
-        try:
-            from detector.eye_aspect import compute_ear_from_landmarks
-            ear = compute_ear_from_landmarks(face_result.landmarks)
-        except Exception:
-            pass
-        try:
-            from detector.head_pose import compute_head_pose_from_matrix
-            yaw, pitch, _roll = compute_head_pose_from_matrix(face_result.transformation_matrix)
-        except Exception:
-            pass
+
+        # yaw/pitch: 直接从 face_result 属性取
+        yaw = getattr(face_result, 'yaw', None)
+        pitch = getattr(face_result, 'pitch', None)
+
+        # EAR: 通过 EyeAspectDetector 实例计算
+        ear = None
+        if self._eye_detector is not None and face_result.landmarks is not None:
+            try:
+                self._eye_detector.compute(face_result.landmarks)
+                ear = self._eye_detector.get_current_ear()
+            except Exception:
+                pass
+
         return (ear, yaw, pitch)
 
     def _handle_action(self, action: UIAction, digit: Optional[str]) -> None:

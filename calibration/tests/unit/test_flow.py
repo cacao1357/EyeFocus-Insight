@@ -273,7 +273,9 @@ def test_flow_extract_metrics_no_detector():
 def test_flow_extract_metrics_detector_returns_not_detected():
     f = _make_flow()
     f._face_detector = MagicMock()
-    f._face_detector.detect.return_value = MagicMock(detected=False)
+    f._face_detector.detect_from_frame.return_value = MagicMock(
+        face_detected=False, landmarks=None, yaw=None, pitch=None
+    )
     assert f._extract_metrics(None) == (None, None, None)
 
 
@@ -431,13 +433,35 @@ def test_flow_tick_once_camera_fail():
 def test_flow_extract_metrics_detector_exception():
     f = _make_flow()
     f._face_detector = MagicMock()
-    f._face_detector.detect.side_effect = Exception("boom")
+    f._face_detector.detect_from_frame.side_effect = Exception("boom")
     assert f._extract_metrics(None) == (None, None, None)
 
 
 def test_flow_extract_metrics_detected_no_ear():
+    """face_detected=True 但没 landmarks/eye_detector → 仍应返回 (None, None, None)。"""
     f = _make_flow()
     f._face_detector = MagicMock()
-    f._face_detector.detect.return_value = MagicMock(detected=True)
-    # 没有 detector.eye_aspect 等子模块 → catch all
+    f._face_detector.detect_from_frame.return_value = MagicMock(
+        face_detected=True, landmarks=None, yaw=None, pitch=None
+    )
+    f._eye_detector = None  # BUG-6 修复需要, 测试无 eye_detector 场景
     assert f._extract_metrics(None) == (None, None, None)
+
+
+def test_flow_extract_metrics_with_eye_detector():
+    """BUG-6 修复: 有 eye_detector + landmarks 时, ear 应非 None。"""
+    f = _make_flow()
+    f._face_detector = MagicMock()
+    f._face_detector.detect_from_frame.return_value = MagicMock(
+        face_detected=True,
+        landmarks=MagicMock(),
+        yaw=10.0,
+        pitch=5.0,
+    )
+    f._eye_detector = MagicMock()
+    f._eye_detector.compute.return_value = MagicMock()
+    f._eye_detector.get_current_ear.return_value = 0.3
+    ear, yaw, pitch = f._extract_metrics(None)
+    assert ear == 0.3
+    assert yaw == 10.0
+    assert pitch == 5.0
