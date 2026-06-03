@@ -150,6 +150,8 @@ class CalibrationFlow:
 
         BUG-4 修复：必须用 detect_from_frame(frame, timestamp_ms)，
         实际方法名是 detect_from_frame (不是 detect)。
+        BUG-5 修复：必须用 face_result.face_detected 属性，
+        实际属性名是 face_detected (不是 detected)。
         """
         if self._face_detector is None:
             return (None, None, None)
@@ -158,7 +160,7 @@ class CalibrationFlow:
             face_result = self._face_detector.detect_from_frame(frame, timestamp_ms)
         except Exception:
             return (None, None, None)
-        if not face_result or not getattr(face_result, 'detected', False):
+        if not face_result or not getattr(face_result, 'face_detected', False):
             return (None, None, None)
         ear, yaw, pitch = None, None, None
         try:
