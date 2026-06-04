@@ -53,3 +53,19 @@ class CalibrationResult:
     cqs: float                                 # 整体校准质量分（0.0-1.0）
     is_accepted: bool                          # 用户在总结页是否点了"继续 → 主监测"
     notes: str = ""                            # 可选：用户备注或失败诊断
+
+
+def signal_to_head_pose_std(signal: CalibrationSignal) -> Tuple[float, float]:
+    """P1: 将 CalibrationSignal 的 yaw_range/pitch_range 转为 (yaw_std, pitch_std)。
+
+    使用 3σ 约定: std = max(|左|, |右|) / 3, 表示用户的 99.7% 头动幅度。
+    用于传给 focus_analyzer.set_baseline(ear, yaw_std, pitch_std) 做 head_score 个性化。
+
+    Returns:
+        (yaw_std, pitch_std) 元组, 单位度
+    """
+    yaw_left, yaw_right = signal.yaw_range
+    pitch_up, pitch_down = signal.pitch_range
+    yaw_std = max(abs(yaw_left), abs(yaw_right)) / 3.0
+    pitch_std = max(abs(pitch_up), abs(pitch_down)) / 3.0
+    return yaw_std, pitch_std

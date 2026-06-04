@@ -107,8 +107,10 @@ class EyeAspectDetector:
         # 个人基线（用于动态阈值）
         self._baseline_ear: Optional[float] = baseline_ear
         self._has_baseline: bool = baseline_ear is not None
+        # P0: 校准 adjustment 因子（基于眨眼计数校准的检测误差补偿, 默认 1.0 无调整）
+        self._adjustment_factor: float = 1.0
         if self._has_baseline:
-            self.ear_threshold = baseline_ear * 0.75
+            self.ear_threshold = baseline_ear * 0.75 * self._adjustment_factor
 
         # 眨眼检测状态
         self._blink_frames: Deque[bool] = deque(maxlen=30)
@@ -140,7 +142,7 @@ class EyeAspectDetector:
     def set_baseline(self, ear: float) -> None:
         """设置个人基线 EAR，动态更新眨眼阈值
 
-        眨眼阈值 = baseline_ear × 0.75
+        眨眼阈值 = baseline_ear × 0.75 × adjustment_factor
         睁眼判定 = EAR > baseline_ear × 0.90
 
         Args:
@@ -148,9 +150,26 @@ class EyeAspectDetector:
         """
         self._baseline_ear = ear
         self._has_baseline = True
-        # 动态阈值：眨眼阈值 = 基线 × 0.75
-        self.ear_threshold = ear * 0.75
-        logger.info("EAR 动态阈值已更新: %.4f (基线=%.4f)", self.ear_threshold, ear)
+        # 动态阈值：眨眼阈值 = 基线 × 0.75 × adjustment_factor (P0)
+        self.ear_threshold = ear * 0.75 * self._adjustment_factor
+        logger.info("EAR 动态阈值已更新: %.4f (基线=%.4f, factor=%.3f)",
+                    self.ear_threshold, ear, self._adjustment_factor)
+
+    def set_adjustment_factor(self, factor: float) -> None:
+        """P0: 设置校准 adjustment 因子 (基于眨眼计数校准的检测误差补偿)。
+
+        实际眨眼阈值 = baseline_ear × 0.75 × factor
+        factor = 1.0 表示无调整; calibration/blink_count.py:122 clamp 到 [0.7, 1.3]
+        若 set_baseline 还没调, 此处仅保存 factor 待下次 set_baseline 时生效。
+
+        Args:
+            factor: 调整因子, 通常 0.7-1.3 范围
+        """
+        self._adjustment_factor = max(0.0, float(factor))
+        if self._has_baseline:
+            self.ear_threshold = self._baseline_ear * 0.75 * self._adjustment_factor
+            logger.info("EAR 阈值 adjustment 已应用: %.4f (factor=%.3f)",
+                        self.ear_threshold, self._adjustment_factor)
 
     def set_head_pose_weight(self, weight: float) -> None:
         """设置头部姿态置信度权重
@@ -481,6 +500,8 @@ class EyeAspectDetector:
         # 重置基线
         self._has_baseline = False
         self._baseline_ear = None
+        # P0: 重置 adjustment 因子
+        self._adjustment_factor = 1.0
         # 恢复默认阈值
         self.ear_threshold = DEFAULT_EAR_THRESHOLD
 
@@ -502,6 +523,7 @@ class EyeAspectDetector:
             "recent_ear_std": float(np.std(list(self._recent_ears))) if self._recent_ears else 0.0,
             "head_pose_weight": self._head_pose_weight,
             "face_stability_weight": self._face_stability_weight,
+            "adjustment_factor": self._adjustment_factor,  # P0: 新增
         }
 
 

@@ -10,6 +10,7 @@
 import os
 import sys
 import tempfile
+from dataclasses import replace
 from datetime import datetime
 from unittest.mock import patch, MagicMock
 
@@ -23,19 +24,23 @@ import calibration
 from calibration.result import CalibrationResult, CalibrationSignal
 
 
-def _make_mock_result():
+def _make_mock_result(
+    final_adjustment_factor: float = 1.0,
+    yaw_range: tuple = (-15.0, 15.0),
+    pitch_range: tuple = (-10.0, 10.0),
+):
     return CalibrationResult(
         session_id="test_session",
         timestamp=datetime(2026, 6, 3),
         signal=CalibrationSignal(
             ear_mean=0.30, ear_min=0.08, ear_mid=0.18,
-            yaw_mean=0.0, yaw_range=(-15.0, 15.0),
-            pitch_mean=0.0, pitch_range=(-10.0, 10.0),
+            yaw_mean=0.0, yaw_range=yaw_range,
+            pitch_mean=0.0, pitch_range=pitch_range,
             glasses_mode=False, timestamp=0.0,
         ),
         blink_rounds=[],
-        final_adjustment_factor=1.0,
-        final_blink_threshold=0.225,
+        final_adjustment_factor=final_adjustment_factor,
+        final_blink_threshold=0.225 * final_adjustment_factor,
         final_squint_threshold=0.225,
         baseline_blink_rate=15.0,
         cqs=1.0,
@@ -188,3 +193,48 @@ def test_apply_v4_2_calibration_result_applies_thresholds(tmp_path, monkeypatch)
     app._fatigue_analyzer.set_baseline_blink_rate.assert_called_once_with(15.0)
     # db.update_session 被调
     app._db.update_session.assert_called_once()
+
+
+def test_apply_v4_2_calibration_result_applies_adjustment_factor_P0(tmp_path, monkeypatch):
+    """P0: final_adjustment_factor 应被传给 eye_detector.set_adjustment_factor。"""
+    app = _make_app(tmp_path, monkeypatch)
+    app._eye_detector = MagicMock()
+    app._fatigue_analyzer = MagicMock()
+    app._db = MagicMock()
+    app._session_id = "s1"
+
+    # 模拟校准算出 90% 调整
+    result = _make_mock_result(final_adjustment_factor=0.9)
+    app._apply_v4_2_calibration_result(result)
+
+    # P0: set_adjustment_factor 被调且参数正确
+    app._eye_detector.set_adjustment_factor.assert_called_once_with(0.9)
+
+
+def test_apply_v4_2_calibration_result_applies_head_pose_std_P1(tmp_path, monkeypatch):
+    """P1: 头部姿态 yaw_range/pitch_range 应被转为 std 传给 focus_analyzer.set_baseline。"""
+    app = _make_app(tmp_path, monkeypatch)
+    app._eye_detector = MagicMock()
+    app._fatigue_analyzer = MagicMock()
+    app._focus_analyzer = MagicMock()  # P1
+    app._db = MagicMock()
+    app._session_id = "s1"
+
+    # 模拟真机数据: yaw_range=(52.4, -52.0), pitch_range=(-48.7, 16.0)
+    result = _make_mock_result(
+        yaw_range=(52.4, -52.0),
+        pitch_range=(-48.7, 16.0),
+    )
+    app._apply_v4_2_calibration_result(result)
+
+    # P1: set_baseline 被调, std 应为 max/3
+    # max(|52.4|, |52.0|) / 3 = 17.47
+    # max(|-48.7|, |16.0|) / 3 = 16.23
+    call_args = app._focus_analyzer.set_baseline.call_args
+    assert call_args is not None
+    ear_arg = call_args.args[0]
+    yaw_std_arg = call_args.args[1]
+    pitch_std_arg = call_args.args[2]
+    assert ear_arg == pytest.approx(0.30, abs=0.001)
+    assert yaw_std_arg == pytest.approx(17.47, abs=0.01)
+    assert pitch_std_arg == pytest.approx(16.23, abs=0.01)

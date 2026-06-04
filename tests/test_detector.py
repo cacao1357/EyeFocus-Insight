@@ -122,10 +122,61 @@ class TestEyeAspectDetector:
         detector = EyeAspectDetector()
         detector.set_baseline(0.35)
         stats = detector.get_stats()
-        # 眨眼阈值 = baseline * 0.75
+        # 眨眼阈值 = baseline * 0.75 * adjustment_factor (默认 1.0)
         assert stats["ear_threshold"] == pytest.approx(0.2625, abs=0.001)
         assert stats["has_baseline"] is True
         assert stats["baseline_ear"] == 0.35
+        assert stats["adjustment_factor"] == 1.0
+
+    def test_set_adjustment_factor_modifies_threshold_P0(self):
+        """P0: 校准 adjustment 因子应修改实际眨眼阈值。"""
+        detector = EyeAspectDetector()
+        detector.set_baseline(0.35)
+        # 默认 factor=1.0, threshold=0.35*0.75*1.0=0.2625
+        assert detector.ear_threshold == pytest.approx(0.2625, abs=0.001)
+
+        detector.set_adjustment_factor(0.9)
+        # threshold = 0.35 * 0.75 * 0.9 = 0.23625
+        assert detector.ear_threshold == pytest.approx(0.23625, abs=0.001)
+        assert detector.get_stats()["adjustment_factor"] == 0.9
+
+        detector.set_adjustment_factor(1.1)
+        # threshold = 0.35 * 0.75 * 1.1 = 0.28875
+        assert detector.ear_threshold == pytest.approx(0.28875, abs=0.001)
+
+    def test_set_baseline_with_prior_adjustment_P0(self):
+        """P0: set_baseline 之前已设的 adjustment_factor 应被应用。"""
+        detector = EyeAspectDetector()
+        detector.set_adjustment_factor(0.8)
+        detector.set_baseline(0.40)
+        # threshold = 0.40 * 0.75 * 0.8 = 0.24
+        assert detector.ear_threshold == pytest.approx(0.24, abs=0.001)
+
+    def test_reset_clears_adjustment_factor_P0(self):
+        """P0: reset() 应清零 adjustment_factor 回到 1.0。"""
+        detector = EyeAspectDetector()
+        detector.set_baseline(0.35)
+        detector.set_adjustment_factor(0.7)
+        assert detector.ear_threshold == pytest.approx(0.35 * 0.75 * 0.7, abs=0.001)
+
+        detector.reset()
+        # reset 后 has_baseline=False, _adjustment_factor=1.0
+        # 重新 set_baseline (模拟下一次校准)
+        detector.set_baseline(0.35)
+        assert detector.ear_threshold == pytest.approx(0.2625, abs=0.001)
+        assert detector.get_stats()["adjustment_factor"] == 1.0
+
+    def test_set_adjustment_factor_without_baseline_P0(self):
+        """P0: 没 set_baseline 就 set_adjustment_factor, factor 保存但不立即生效。"""
+        detector = EyeAspectDetector()
+        detector.set_adjustment_factor(0.5)
+        assert detector.get_stats()["adjustment_factor"] == 0.5
+        # 没 baseline, threshold 不变
+        assert detector.ear_threshold == 0.26  # 默认 DEFAULT_EAR_THRESHOLD
+
+        # 后续 set_baseline 应该用上 factor
+        detector.set_baseline(0.40)
+        assert detector.ear_threshold == pytest.approx(0.40 * 0.75 * 0.5, abs=0.001)
 
     def test_open_threshold_is_baseline_090(self):
         """T145: 测试睁眼阈值 = baseline * 0.90"""

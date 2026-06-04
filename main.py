@@ -1174,6 +1174,18 @@ class EyeFocusApp:
         """应用 v4.2 校准结果到各 detector。"""
         if hasattr(self, '_eye_detector') and self._eye_detector is not None:
             self._eye_detector.set_baseline(result.signal.ear_mean)
+            # P0: 接通 final_adjustment_factor (基于眨眼计数校准的检测误差补偿)
+            if hasattr(self._eye_detector, 'set_adjustment_factor'):
+                self._eye_detector.set_adjustment_factor(result.final_adjustment_factor)
+
+        # P1: 头部姿态参数接通 — 让 focus_analyzer 的 head_score 反映用户的真实头动范围
+        if (hasattr(self, '_focus_analyzer') and self._focus_analyzer is not None
+                and hasattr(self._focus_analyzer, 'set_baseline')):
+            from calibration.result import signal_to_head_pose_std
+            yaw_std, pitch_std = signal_to_head_pose_std(result.signal)
+            self._focus_analyzer.set_baseline(result.signal.ear_mean, yaw_std, pitch_std)
+            logger.info("专注度基线已应用: EAR=%.4f, yaw_std=%.2f, pitch_std=%.2f",
+                        result.signal.ear_mean, yaw_std, pitch_std)
 
         if (result.baseline_blink_rate is not None
                 and hasattr(self, '_fatigue_analyzer')
@@ -1190,9 +1202,10 @@ class EyeFocusApp:
             )
 
         logger.info(
-            "v4.2 校准结果已应用: EAR=%.4f, 眨眼阈值=%.4f",
+            "v4.2 校准结果已应用: EAR=%.4f, 眨眼阈值=%.4f, adjustment=%.3f",
             result.signal.ear_mean,
             result.final_blink_threshold,
+            result.final_adjustment_factor,
         )
 
 

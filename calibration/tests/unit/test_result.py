@@ -7,6 +7,7 @@ from calibration.result import (
     CalibrationResult,
     CalibrationSignal,
     BlinkCalibrationRound,
+    signal_to_head_pose_std,
 )
 
 
@@ -132,6 +133,61 @@ def test_calibration_result_with_notes():
         notes="用户跳过了眨眼计数",
     )
     assert res.notes == "用户跳过了眨眼计数"
+
+
+# ---------- signal_to_head_pose_std (P1) ----------
+
+def test_signal_to_head_pose_std_default_signal_P1():
+    """P1: 默认 _make_signal 的 (15°, 10°) 应转 (5°, 3.33°)。"""
+    sig = _make_signal()  # yaw_range=(-15, 15), pitch_range=(-10, 10)
+    yaw_std, pitch_std = signal_to_head_pose_std(sig)
+    # max(|-15|, |15|) / 3 = 5.0
+    assert yaw_std == pytest.approx(5.0, abs=0.001)
+    # max(|-10|, |10|) / 3 = 3.333
+    assert pitch_std == pytest.approx(3.333, abs=0.001)
+
+
+def test_signal_to_head_pose_std_real_user_P1():
+    """P1: 真机数据 T-CAL-33 (yaw_L=52.4°, pitch_up=48.7°) 的转换。"""
+    sig = CalibrationSignal(
+        ear_mean=0.30, ear_min=0.08, ear_mid=0.22,
+        yaw_mean=0.0, yaw_range=(52.4, -52.0),  # 左正, 右负
+        pitch_mean=0.0, pitch_range=(-48.7, 16.0),  # 仰负, 俯正
+        glasses_mode=False, timestamp=0.0,
+    )
+    yaw_std, pitch_std = signal_to_head_pose_std(sig)
+    # max(|52.4|, |52.0|) / 3 = 17.47
+    assert yaw_std == pytest.approx(17.47, abs=0.01)
+    # max(|-48.7|, |16.0|) / 3 = 16.23
+    assert pitch_std == pytest.approx(16.23, abs=0.01)
+
+
+def test_signal_to_head_pose_std_zero_P1():
+    """P1: 头动范围 0° 时 std = 0。"""
+    sig = CalibrationSignal(
+        ear_mean=0.30, ear_min=0.08, ear_mid=0.22,
+        yaw_mean=0.0, yaw_range=(0.0, 0.0),
+        pitch_mean=0.0, pitch_range=(0.0, 0.0),
+        glasses_mode=False, timestamp=0.0,
+    )
+    yaw_std, pitch_std = signal_to_head_pose_std(sig)
+    assert yaw_std == 0.0
+    assert pitch_std == 0.0
+
+
+def test_signal_to_head_pose_std_asymmetric_P1():
+    """P1: 不对称的左/右幅度应取较大值。"""
+    sig = CalibrationSignal(
+        ear_mean=0.30, ear_min=0.08, ear_mid=0.22,
+        yaw_mean=0.0, yaw_range=(30.0, -10.0),  # 左大右小
+        pitch_mean=0.0, pitch_range=(-5.0, 20.0),  # 仰小俯大
+        glasses_mode=False, timestamp=0.0,
+    )
+    yaw_std, pitch_std = signal_to_head_pose_std(sig)
+    # max(30, 10) / 3 = 10.0
+    assert yaw_std == pytest.approx(10.0, abs=0.001)
+    # max(5, 20) / 3 = 6.667
+    assert pitch_std == pytest.approx(6.667, abs=0.001)
 
 
 def test_calibration_result_empty_blink_rounds_allowed():
