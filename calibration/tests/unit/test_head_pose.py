@@ -45,29 +45,31 @@ def test_head_pose_advance_sub_phase():
 
 
 def test_head_pose_evaluate_success_all_directions():
-    """T-CAL-25: 4 子阶段各达到 ±12°, 应成功 (需先 advance_sub_phase)。"""
+    """T-CAL-25: 4 子阶段各达到 ±12°, 应成功 (需先 advance_sub_phase)。
+    T-CAL-31: 翻转 LEFT/RIGHT yaw 符号 (detector 标准约定: 左=正 yaw, 右=负 yaw)。
+    """
     p = _make_phase(min_degrees=12.0)
-    # sub 0: 抬头
+    # sub 0: 抬头 (pitch = -15, 抬头是负)
     for i in range(120):
         p.feed_frame(ear=0.30, yaw=0, pitch=-15, timestamp=i / 30.0)
     p.advance_sub_phase()
-    # sub 1: 低头
+    # sub 1: 低头 (pitch = +15)
     for i in range(120):
         p.feed_frame(ear=0.30, yaw=0, pitch=15, timestamp=i / 30.0)
     p.advance_sub_phase()
-    # sub 2: 左转
-    for i in range(120):
-        p.feed_frame(ear=0.30, yaw=-15, pitch=0, timestamp=i / 30.0)
-    p.advance_sub_phase()
-    # sub 3: 右转
+    # sub 2: 左转 (yaw = +15, T-CAL-31 翻转: 左=正 yaw)
     for i in range(120):
         p.feed_frame(ear=0.30, yaw=15, pitch=0, timestamp=i / 30.0)
+    p.advance_sub_phase()
+    # sub 3: 右转 (yaw = -15, T-CAL-31 翻转: 右=负 yaw)
+    for i in range(120):
+        p.feed_frame(ear=0.30, yaw=-15, pitch=0, timestamp=i / 30.0)
     r = p.evaluate()
     assert r.success is True
     assert r.summary["pitch_up_max"] == -15
     assert r.summary["pitch_down_max"] == 15
-    assert r.summary["yaw_left_max"] == -15
-    assert r.summary["yaw_right_max"] == 15
+    assert r.summary["yaw_left_max"] == 15     # T-CAL-31: 翻转
+    assert r.summary["yaw_right_max"] == -15   # T-CAL-31: 翻转
 
 
 def test_head_pose_evaluate_fail_one_direction_insufficient():
@@ -76,9 +78,11 @@ def test_head_pose_evaluate_fail_one_direction_insufficient():
     p.advance_sub_phase()
     for i in range(120): p.feed_frame(ear=0.30, yaw=0, pitch=15, timestamp=i / 30.0)
     p.advance_sub_phase()
-    for i in range(120): p.feed_frame(ear=0.30, yaw=-15, pitch=0, timestamp=i / 30.0)
-    p.advance_sub_phase()
+    # T-CAL-31: LEFT = 正 yaw
     for i in range(120): p.feed_frame(ear=0.30, yaw=15, pitch=0, timestamp=i / 30.0)
+    p.advance_sub_phase()
+    # T-CAL-31: RIGHT = 负 yaw
+    for i in range(120): p.feed_frame(ear=0.30, yaw=-15, pitch=0, timestamp=i / 30.0)
     r = p.evaluate()
     assert r.success is False
     assert r.failure_reason == "head_direction_insufficient"

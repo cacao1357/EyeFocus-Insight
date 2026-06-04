@@ -182,6 +182,80 @@ class TestSolveHeadPoseFromMatrix:
         assert pitch is not None
         # 纯 Z 旋转: yaw=0, pitch=0, roll=0
 
+    # ===== T-CAL-32: 数值断言测试 (修复前应失败) =====
+
+    def test_pure_y_rotation_maps_to_yaw_T_CAL_32(self):
+        """T-CAL-32: 纯 Y 轴旋转 30° → yaw 应为 30°，pitch/roll 应为 0°
+
+        Bug 验证: 修复前变量名错位，code's pitch 实际是 Y 轴旋转
+        → 此测试应失败（code 返回 pitch=30, yaw=0）
+        """
+        theta = np.radians(30.0)
+        # Ry(θ) = [[cos, 0, sin], [0, 1, 0], [-sin, 0, cos]]
+        matrix = np.eye(4)
+        matrix[0, 0] = np.cos(theta)
+        matrix[0, 2] = np.sin(theta)
+        matrix[2, 0] = -np.sin(theta)
+        matrix[2, 2] = np.cos(theta)
+
+        yaw, pitch, roll = solve_head_pose_from_matrix(matrix.flatten())
+
+        # 修复后: yaw=30°, pitch=0, roll=0
+        assert yaw is not None and abs(yaw - 30.0) < 0.5, \
+            f"T-CAL-32 失败: 期望 yaw=30.0 (Y轴旋转)，实际 yaw={yaw}"
+        assert pitch is not None and abs(pitch) < 0.5, \
+            f"T-CAL-32 失败: 期望 pitch=0，实际 pitch={pitch}"
+        assert roll is not None and abs(roll) < 0.5, \
+            f"T-CAL-32 失败: 期望 roll=0，实际 roll={roll}"
+
+    def test_pure_x_rotation_maps_to_pitch_T_CAL_32(self):
+        """T-CAL-32: 纯 X 轴旋转 30° → pitch 应为 30°，yaw/roll 应为 0°
+
+        Bug 验证: 修复前 code's roll 实际是 X 轴旋转
+        → 此测试应失败（code 返回 roll=30, pitch=0）
+        """
+        theta = np.radians(30.0)
+        # Rx(θ) = [[1, 0, 0], [0, cos, -sin], [0, sin, cos]]
+        matrix = np.eye(4)
+        matrix[1, 1] = np.cos(theta)
+        matrix[1, 2] = -np.sin(theta)
+        matrix[2, 1] = np.sin(theta)
+        matrix[2, 2] = np.cos(theta)
+
+        yaw, pitch, roll = solve_head_pose_from_matrix(matrix.flatten())
+
+        # 修复后: pitch=30°, yaw=0, roll=0
+        assert pitch is not None and abs(pitch - 30.0) < 0.5, \
+            f"T-CAL-32 失败: 期望 pitch=30.0 (X轴旋转)，实际 pitch={pitch}"
+        assert yaw is not None and abs(yaw) < 0.5, \
+            f"T-CAL-32 失败: 期望 yaw=0，实际 yaw={yaw}"
+        assert roll is not None and abs(roll) < 0.5, \
+            f"T-CAL-32 失败: 期望 roll=0，实际 roll={roll}"
+
+    def test_pure_z_rotation_maps_to_roll_T_CAL_32(self):
+        """T-CAL-32: 纯 Z 轴旋转 30° → roll 应为 30°，yaw/pitch 应为 0°
+
+        Bug 验证: 修复前 code's yaw 实际是 Z 轴旋转
+        → 此测试应失败（code 返回 yaw=30, roll=0）
+        """
+        theta = np.radians(30.0)
+        # Rz(θ) = [[cos, -sin, 0], [sin, cos, 0], [0, 0, 1]]
+        matrix = np.eye(4)
+        matrix[0, 0] = np.cos(theta)
+        matrix[0, 1] = -np.sin(theta)
+        matrix[1, 0] = np.sin(theta)
+        matrix[1, 1] = np.cos(theta)
+
+        yaw, pitch, roll = solve_head_pose_from_matrix(matrix.flatten())
+
+        # 修复后: roll=30°, yaw=0, pitch=0
+        assert roll is not None and abs(roll - 30.0) < 0.5, \
+            f"T-CAL-32 失败: 期望 roll=30.0 (Z轴旋转)，实际 roll={roll}"
+        assert yaw is not None and abs(yaw) < 0.5, \
+            f"T-CAL-32 失败: 期望 yaw=0，实际 yaw={yaw}"
+        assert pitch is not None and abs(pitch) < 0.5, \
+            f"T-CAL-32 失败: 期望 pitch=0，实际 pitch={pitch}"
+
 
 class TestNormalizeYaw:
     """normalize_yaw 单元测试 — 纯数学函数"""

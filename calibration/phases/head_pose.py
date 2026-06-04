@@ -48,11 +48,13 @@ class HeadPosePhase(Phase):
             HeadSubPhase(HeadDirection.LEFT,  "现在向左转",          "请向左转头 (保持 4 秒)"),
             HeadSubPhase(HeadDirection.RIGHT, "现在向右转",          "请向右转头 (保持 4 秒)"),
         ]
-        # max 记录极值（pitch 抬头是负，低头是正；yaw 左是负，右是正）
-        self._pitch_up_max: float = 0.0      # 越负越好
-        self._pitch_down_max: float = 0.0    # 越正越好
-        self._yaw_left_max: float = 0.0      # 越负越好
-        self._yaw_right_max: float = 0.0     # 越正越好
+        # max 记录极值 (T-CAL-31 修复：与 detector 标准约定对齐)
+        #   pitch: 抬头是负，低头是正 (X 轴旋转)
+        #   yaw:   左转是正，右转是负 (Y 轴旋转, 对齐 detector/head_pose.py docstring)
+        self._pitch_up_max: float = 0.0      # 越负越好 (UP = negative pitch)
+        self._pitch_down_max: float = 0.0    # 越正越好 (DOWN = positive pitch)
+        self._yaw_left_max: float = 0.0      # 越正越好 (LEFT = positive yaw)
+        self._yaw_right_max: float = 0.0     # 越负越好 (RIGHT = negative yaw)
         # T-CAL-16: 缓存最近 yaw/pitch, 供屏幕显示
         self._yaw_last: float = 0.0
         self._pitch_last: float = 0.0
@@ -112,9 +114,11 @@ class HeadPosePhase(Phase):
             self._pitch_up_max = pitch
         elif sub.direction == HeadDirection.DOWN and pitch > self._pitch_down_max:
             self._pitch_down_max = pitch
-        elif sub.direction == HeadDirection.LEFT and yaw < self._yaw_left_max:
+        elif sub.direction == HeadDirection.LEFT and yaw > self._yaw_left_max:
+            # T-CAL-31: LEFT = positive yaw (detector 标准约定)
             self._yaw_left_max = yaw
-        elif sub.direction == HeadDirection.RIGHT and yaw > self._yaw_right_max:
+        elif sub.direction == HeadDirection.RIGHT and yaw < self._yaw_right_max:
+            # T-CAL-31: RIGHT = negative yaw (detector 标准约定)
             self._yaw_right_max = yaw
 
         # T-CAL-29 调试日志: 每秒 (30 帧) 打印当前 sub_idx + max values

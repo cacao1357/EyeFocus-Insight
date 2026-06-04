@@ -15,7 +15,12 @@ def solve_head_pose_from_matrix(
 ) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     """从 MediaPipe 4x4 变换矩阵提取头部姿态欧拉角
 
-    使用 OpenCV 约定：pitch-x, yaw-y, roll-z
+    T-CAL-31: 修正变量名以匹配标准约定
+        yaw   = Y 轴旋转 = 水平转头 (atan2(-rmat[2,0], sy))
+        pitch = X 轴旋转 = 垂直点头 (atan2( rmat[2,1], rmat[2,2]))
+        roll  = Z 轴旋转 = 侧倾   (atan2( rmat[1,0], rmat[0,0]))
+    原版变量名错位 (yaw 实为 Z 轴, pitch 实为 Y 轴, roll 实为 X 轴)
+    已由真机数据 (T-CAL-30 日志) + 单元测试 (T-CAL-32) 验证。
 
     Args:
         transformation_matrix: 4x4 变换矩阵（扁平 16 元素或 4x4）
@@ -42,13 +47,16 @@ def solve_head_pose_from_matrix(
     singular = sy < 1e-6
 
     if singular:
-        pitch = np.arctan2(-rmat[2, 0], sy)
-        yaw = np.arctan2(-rmat[0, 1], rmat[1, 1]) if not singular else 0.0
+        # 奇异分支: 头接近 ±90° 点头 (sy < 1e-6)
+        # yaw 接管 atan2(-rmat[2,0], sy), pitch/roll 用 fallback (沿用旧 buggy 逻辑)
+        yaw = np.arctan2(-rmat[2, 0], sy)
+        pitch = np.arctan2(-rmat[0, 1], rmat[1, 1]) if not singular else 0.0
         roll = 0.0
     else:
-        pitch = np.arctan2(-rmat[2, 0], sy)
-        yaw = np.arctan2(rmat[1, 0], rmat[0, 0])
-        roll = np.arctan2(rmat[2, 1], rmat[2, 2])
+        # 非奇异分支: 标准 Z-Y-X 泰特布赖恩分解 (T-CAL-31 修正变量名)
+        yaw = np.arctan2(-rmat[2, 0], sy)              # Y 轴 = 水平转头
+        pitch = np.arctan2(rmat[2, 1], rmat[2, 2])     # X 轴 = 垂直点头
+        roll = np.arctan2(rmat[1, 0], rmat[0, 0])      # Z 轴 = 侧倾
 
     return (
         float(np.degrees(yaw)),

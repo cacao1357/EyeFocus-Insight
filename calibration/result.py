@@ -15,10 +15,10 @@ class CalibrationSignal:
     ear_mean: float            # 自然睁眼时 EAR 均值（基线）
     ear_min: float             # 闭眼时 EAR 最小值
     ear_mid: float             # 眯眼时 EAR 中间值
-    yaw_mean: float            # 头部偏航均值（自然正视）
-    yaw_range: Tuple[float, float]    # (左偏最大值, 右偏最大值)
-    pitch_mean: float          # 头部俯仰均值
-    pitch_range: Tuple[float, float]  # (仰角最大值, 俯角最大值)
+    yaw_mean: float            # 头部偏航均值 (自然正视, 单位度)
+    yaw_range: Tuple[float, float]    # (左偏最大值, 右偏最大值) — T-CAL-31: 左=正, 右=负
+    pitch_mean: float          # 头部俯仰均值 (单位度)
+    pitch_range: Tuple[float, float]  # (仰角最大值, 俯角最大值) — 仰=负, 俯=正
     glasses_mode: bool         # 是否检测为戴眼镜
     timestamp: float           # 采集完成时间戳（unix epoch 秒）
 

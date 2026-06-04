@@ -16,6 +16,23 @@ os.environ.setdefault("ABSL_CPP_MIN_LOG_LEVEL", "3")
 logging.basicConfig(level=logging.INFO,
                     format="[%(asctime)s %(levelname)s %(name)s] %(message)s")
 
+# T-CAL-30: 把 T-CAL-29 诊断日志落盘 (默认走 stderr 易丢)
+import datetime as _dt
+from pathlib import Path
+
+_log_dir = Path("data/logs")
+_log_dir.mkdir(parents=True, exist_ok=True)
+_log_file = _log_dir / f"calibration_{_dt.datetime.now():%Y%m%d_%H%M%S}.log"
+
+_file_handler = logging.FileHandler(_log_file, encoding="utf-8")
+_file_handler.setLevel(logging.INFO)
+_file_handler.setFormatter(logging.Formatter(
+    "[%(asctime)s %(levelname)s %(name)s] %(message)s"))
+logging.getLogger().addHandler(_file_handler)
+
+print(f"[T-CAL-30] 诊断日志将写入: {_log_file}")
+print(f"[T-CAL-30] 跑完校准后请把此文件发回")
+
 from calibration import run, CalibrationConfig
 
 
