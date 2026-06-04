@@ -20,9 +20,9 @@ class CalibrationConfig:
     blink_rounds_count: int = 2            # 2 轮（spec P2 精简，原 3 轮）
 
     # ---------- 判定阈值 ----------
-    closed_eyes_min_ratio: float = 0.5          # ear_min ≤ baseline × 此值算闭眼成功
+    closed_eyes_min_ratio: float = 0.6          # T-CAL-15: ear_min ≤ baseline × 此值算闭眼成功 (放宽 0.5→0.6 适配用户实测)
     squint_baseline_ratio: float = 0.75         # squint_threshold = baseline × 此值
-    head_direction_min_degrees: float = 10.0    # 每个方向 |偏转| ≥ 此度数算有效
+    head_direction_min_degrees: float = 20.0    # T-CAL-16: 每个方向 |偏转| ≥ 此度数算有效 (放宽 10°→20° 适配用户幅度)
     blink_count_min: int = 5                    # 用户输入眨眼数下限
     blink_count_max: int = 60                   # 上限
 

@@ -14,10 +14,10 @@ def test_default_config_fields_present():
     assert c.blink_round_seconds == 15.0
     assert c.blink_rounds_count == 2
 
-    # 阈值
-    assert c.closed_eyes_min_ratio == 0.5
+    # 阈值 (T-CAL-15: closed_eyes_min_ratio 0.5→0.6; T-CAL-16: head_direction_min_degrees 10→20)
+    assert c.closed_eyes_min_ratio == 0.6
     assert c.squint_baseline_ratio == 0.75
-    assert c.head_direction_min_degrees == 10.0
+    assert c.head_direction_min_degrees == 20.0
     assert c.blink_count_min == 5
     assert c.blink_count_max == 60
 

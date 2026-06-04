@@ -84,3 +84,64 @@ def test_closed_eyes_reset():
     r = p.evaluate()
     # 重置后无数据 → 评估应失败
     assert r.success is False
+
+
+# ============ T-CAL-15: 闭眼校准改进 (UX issue #1) ============
+
+def test_closed_eyes_live_feedback_includes_current_ear():
+    """T-CAL-15: 屏幕需显示当前 EAR 数值, 用户才能调整闭眼力度。
+
+    修复前: get_live_feedback 只返回 sample_count + quality_hint, 没 EAR 值
+    修复后: LiveFeedback 应含 current_ear 字段
+    """
+    from calibration.phases.base import LiveFeedback
+    p = ClosedEyesPhase(closed_duration_seconds=5.0, verify_duration_seconds=3.0,
+                       baseline_ear=0.30, min_ratio=0.5)
+    p.feed_frame(ear=0.15, yaw=0, pitch=0, timestamp=0.5)
+    fb = p.get_live_feedback(elapsed_sec=1.0)
+    assert hasattr(fb, 'current_ear'), "LiveFeedback 应有 current_ear 字段"
+    assert fb.current_ear == 0.15
+
+
+def test_closed_eyes_default_min_ratio_relaxed():
+    """T-CAL-15: min_ratio 默认 0.5 太严, 实测用户闭眼时 ear_min 多在 0.55-0.65 倍 baseline。
+
+    测试 CalibrationConfig 默认值: closed_eyes_min_ratio 应为 0.6 (而非 0.5)
+    """
+    from calibration.config import CalibrationConfig
+    c = CalibrationConfig()
+    assert c.closed_eyes_min_ratio == 0.6, (
+        f"T-CAL-15: min_ratio 默认值应为 0.6, 实际 {c.closed_eyes_min_ratio}"
+    )
+
+
+def test_closed_eyes_tts_includes_forceful_hint():
+    """T-CAL-15: TTS 需包含"用力闭眼"提示, 用户才会真正闭紧。
+
+    修复前: tts_intro = "请闭眼并保持 5 秒" (模糊)
+    修复后: tts_intro 应明确指示用力闭眼
+    """
+    p = ClosedEyesPhase(closed_duration_seconds=5.0, verify_duration_seconds=3.0,
+                       baseline_ear=0.30, min_ratio=0.5)
+    assert "用力" in p.tts_intro, (
+        f"T-CAL-15: tts_intro 应含'用力'提示, 实际 '{p.tts_intro}'"
+    )
+
+
+def test_closed_eyes_quality_hint_shows_threshold():
+    """T-CAL-15: 屏幕 quality_hint 需显示 EAR 阈值, 用户知道要闭到什么程度。
+
+    修复前: "闭眼中，请保持..." (无 EAR 数字)
+    修复后: "闭眼中 EAR=0.18 阈值<0.15" (实时数字反馈)
+    """
+    p = ClosedEyesPhase(closed_duration_seconds=5.0, verify_duration_seconds=3.0,
+                       baseline_ear=0.30, min_ratio=0.5)
+    p.feed_frame(ear=0.20, yaw=0, pitch=0, timestamp=1.0)
+    fb = p.get_live_feedback(elapsed_sec=2.0)
+    # 阈值 = 0.30 * 0.5 = 0.15, 当前 EAR=0.20
+    assert "0.20" in fb.quality_hint or "0.2" in fb.quality_hint, (
+        f"T-CAL-15: quality_hint 应含当前 EAR, 实际 '{fb.quality_hint}'"
+    )
+    assert "0.15" in fb.quality_hint, (
+        f"T-CAL-15: quality_hint 应含阈值, 实际 '{fb.quality_hint}'"
+    )

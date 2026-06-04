@@ -16,6 +16,11 @@ class LiveFeedback:
     remaining_sec: float
     sample_count: int
     quality_hint: str = ""        # 可选：实时引导文字
+    current_ear: Optional[float] = None  # T-CAL-15: 实时 EAR (供屏幕显示)
+    current_yaw: Optional[float] = None  # T-CAL-16: 实时 yaw (供屏幕显示)
+    current_pitch: Optional[float] = None  # T-CAL-16: 实时 pitch (供屏幕显示)
+    threshold_ear: Optional[float] = None  # T-CAL-15: EAR 阈值 (供屏幕显示)
+    threshold_yaw: Optional[float] = None  # T-CAL-16: yaw 阈值 (供屏幕显示)
 
 
 @dataclass(frozen=True)
