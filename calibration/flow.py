@@ -140,17 +140,22 @@ class CalibrationFlow:
         composed = compose(frame, panel_img)
         cv2.imshow(WINDOW_NAME, composed)
 
-        # T-CAL-18/19: 头部姿态子阶段 TTS 切换 (转头看不见屏幕, 必须靠 TTS 引导)
-        # T-CAL-19 关键修复: elapsed 在 PHASE_RUNNING 块外也可用 (之前 NameError 致程序崩溃)
+        # T-CAL-18/19/23: 头部姿态子阶段 TTS 切换
+        # T-CAL-23 修复: 写真机测试时无 TTS, 加 logger + 失败兜底 (beep + print)
         if (isinstance(self._current_phase, HeadPosePhase)
                 and self._state == FlowState.PHASE_RUNNING):
             sub_idx = int(elapsed // self._current_phase.direction_seconds)
             if sub_idx > getattr(self, '_last_head_sub_idx', -1) and sub_idx < len(self._current_phase.sub_phases):
                 sub = self._current_phase.sub_phases[sub_idx]
+                # T-CAL-23: 加 beep + log 兜底 (即使 TTS 故障, beep 也能给用户音频反馈)
+                try:
+                    self._beep.phase_start()  # 1 个 beep 提示
+                except Exception:
+                    pass
                 self._tts.say(sub.tts)
+                logger.info("[T-CAL-23] sub_idx=%d TTS='%s'", sub_idx, sub.tts)
                 self._last_head_sub_idx = sub_idx
         elif self._state != FlowState.PHASE_RUNNING:
-            # 重置 tracker (非运行状态不累计)
             self._last_head_sub_idx = -1
 
         # 注册按钮 + 收输入

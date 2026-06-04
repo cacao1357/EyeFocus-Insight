@@ -87,9 +87,10 @@ class HeadPosePhase(Phase):
         elif sub.direction == HeadDirection.RIGHT and yaw > self._yaw_right_max:
             self._yaw_right_max = yaw
 
-        # T-CAL-16: 检测头部是否在动 (与上次差异 < 2°)
-        if abs(self._yaw_last - getattr(self, '_prev_yaw', 0.0)) < 2.0 and \
-           abs(self._pitch_last - getattr(self, '_prev_pitch', 0.0)) < 2.0:
+        # T-CAL-16: 检测头部是否在动 (与上次差异 < 5°)
+        # T-CAL-22: 2°→5° (宽松, 避免用户慢慢转头时误判 stuck)
+        if abs(self._yaw_last - getattr(self, '_prev_yaw', 0.0)) < 5.0 and \
+           abs(self._pitch_last - getattr(self, '_prev_pitch', 0.0)) < 5.0:
             self._stuck_counter += 1
         else:
             self._stuck_counter = 0
@@ -97,7 +98,7 @@ class HeadPosePhase(Phase):
         self._prev_pitch = self._pitch_last
 
     def is_stuck(self) -> bool:
-        """T-CAL-16: 是否头部不动 (1.5 秒无变化 @ 30fps = 45 帧)"""
+        """T-CAL-16/22: 头部不动 1.5 秒才判 stuck (45 帧 @ 30fps)"""
         return self._stuck_counter > 45
 
     def get_live_feedback(self, elapsed_sec: float) -> LiveFeedback:
