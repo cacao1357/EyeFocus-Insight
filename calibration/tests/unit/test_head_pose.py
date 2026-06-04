@@ -89,3 +89,48 @@ def test_head_pose_reset():
     p.reset()
     r = p.evaluate()
     assert r.success is False  # 无数据
+
+
+# ============ T-CAL-16: 头部姿态改进 (UX issue #2 + #3) ============
+
+def test_head_pose_tts_intro_mentions_large_amplitude():
+    """T-CAL-16: tts_intro 应提示用户'尽量大幅度' (避免幅度不够)。"""
+    p = HeadPosePhase(direction_seconds=3.0, min_degrees=20.0)
+    assert "幅度" in p.tts_intro, (
+        f"T-CAL-16: tts_intro 应含'幅度'提示, 实际 '{p.tts_intro}'"
+    )
+
+
+def test_head_pose_live_feedback_includes_yaw_pitch():
+    """T-CAL-16: 屏幕需显示实时 yaw/pitch + 阈值, 用户能调整头部角度。"""
+    p = HeadPosePhase(direction_seconds=3.0, min_degrees=20.0)
+    p.feed_frame(ear=0.30, yaw=15.0, pitch=10.0, timestamp=1.0)
+    fb = p.get_live_feedback(elapsed_sec=1.0)
+    assert fb.current_yaw == 15.0
+    assert fb.current_pitch == 10.0
+    assert fb.threshold_yaw == 20.0
+    assert "15.0" in fb.quality_hint
+    assert "10.0" in fb.quality_hint
+    assert "20" in fb.quality_hint
+
+
+def test_head_pose_detects_stuck_head():
+    """T-CAL-16: 头部不动 1.5 秒, 应触发 'stuck' 警告。"""
+    p = HeadPosePhase(direction_seconds=3.0, min_degrees=20.0)
+    for i in range(50):
+        p.feed_frame(ear=0.30, yaw=5.0, pitch=5.0, timestamp=i / 30.0)
+    assert p.is_stuck() is True
+    fb = p.get_live_feedback(elapsed_sec=1.0)
+    assert "未动" in fb.quality_hint or "动" in fb.quality_hint
+
+
+def test_head_pose_resets_stuck_counter_on_movement():
+    """T-CAL-16: 头部一旦动, stuck 计数应清零。"""
+    p = HeadPosePhase(direction_seconds=3.0, min_degrees=20.0)
+    for i in range(30):
+        p.feed_frame(ear=0.30, yaw=5.0, pitch=5.0, timestamp=i / 30.0)
+    # 30 帧: frame 0 不计入 (prev 默认 0 → diff 5 not < 2), frame 1~29 = 29 帧 stuck
+    assert p._stuck_counter == 29
+    p.feed_frame(ear=0.30, yaw=20.0, pitch=15.0, timestamp=1.0)
+    assert p._stuck_counter == 0
+    assert p.is_stuck() is False
