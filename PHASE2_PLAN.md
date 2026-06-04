@@ -448,6 +448,36 @@ T-CAL-17 (0.5h): 加宽容错 (跨阶段)
 
 **7 次迭代修了 6 个真机 BUG**（全是 A1 agent 编造的 API 名），最终端到端跑通。
 
+### 2.8.1 v1.3 校准结果接线审计（commit 8cab08a 配套 issue 列表）
+
+> **记录日期**：2026-06-05
+> **触发**：T-CAL-30~33 头部姿态 bug 修复时连带做的全链路审计
+> **目的**：检查 `CalibrationResult` 13 个字段中各有多少被 main.py 实际应用
+> **结论**：13 字段中 4 字段被应用（P0/P1 修复后 + ear_mean + baseline_blink_rate），9 字段闲置
+> **本节已处理**：P0（adjustment_factor）+ P1（head_pose_std）已完成并 commit
+> **本节待处理**：P2/P3/P4 经审计无实际修复价值，原因如下表
+
+| # | 字段 | 校准采集 | 当前消费方 | 是否值得修 | 结论 |
+|---|------|---------|----------|-----------|------|
+| P0 | `final_adjustment_factor` | Phase 4 算 (0.7-1.3) | **无**（已修） | ✅ | **已完成** commit 8cab08a |
+| P1 | `signal.yaw_range` / `pitch_range` | Phase 3 收集 | **仅 DB**（已修） | ✅ | **已完成** commit 8cab08a |
+| P2 | `signal.ear_min` | Phase 1 闭眼校准 | `EyeAspectResult.left_open`/`.right_open` (无 reader) | ❌ | **不修** — 无人消费 flag，即使接线也无行为变化 |
+| P3 | `signal.glasses_mode` | 写死 `False` (flow.py:424) | **无** | ❌ | **不修** — main.py 运行时已调 `glasses_detector.detect()` 实时检测（`main.py:301-305`），静态校准值是子集且会冲突（用户中途摘眼镜） |
+| P4 | `signal.ear_mid` | Phase 2 眯眼校准 | **仅 DB** | ❌ | **不修** — 眯眼 vs 眨眼判定走时间 (`BLINK_MAX_DURATION_SEC = 0.4` in eye_aspect.py:31)，不走 EAR 值；如要改判定逻辑是更大重构 |
+| P4-alt | `config.HEAD_POSE.*` 死代码清理 | n/a | 仍被 OLD v3.x 路径使用 (detector/head_pose.py:47, detector/gaze.py:28) | ❌ | **不修** — v3.x 还在用，删了破坏旧路径 |
+
+#### 关联 commit
+
+- `8cab08a` fix(calib): P0/P1 校准结果接线 (adjustment_factor + head_pose_std)
+  - 6 files changed, 220 insertions, 12 deletions
+  - 488 tests passed (基线 478 + 10 新测试)
+
+#### 后续若需扩展 (TODO for future sprint)
+
+1. **让 `left_open`/`right_open` 真被使用** — 在 main.py 校验用户是否长时间单眼/双眼闭眼（眼健康监测），需要新功能需求驱动
+2. **重新设计 squint vs blink 判定** — 改走 EAR 值（如 ear_mid < ear < ear_min）而非时间，但需要验证假阳/假阴率
+3. **校准-运行时 glasses 一致性检查** — 如果用户校准时戴眼镜但运行时不戴，标记警告（基于历史数据，运行时仍以实时检测为准）
+
 ---
 
 ## 三、工时汇总
