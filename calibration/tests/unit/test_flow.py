@@ -1,4 +1,5 @@
 """测试 CalibrationFlow 状态机转换（mock cap/face_mesh/audio/input）。"""
+import time
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -103,6 +104,58 @@ def test_flow_blink_input_digit_accumulates_buffer():
     f._handle_action(UIAction.DIGIT, "1")
     f._handle_action(UIAction.DIGIT, "5")
     assert f._input_buffer == "15"
+
+
+# ============ T-CAL-18: 头部姿态子阶段 TTS 切换 ============
+
+def test_head_pose_sub_phase_tts_via_tick_once(monkeypatch):
+    """T-CAL-18: 头部姿态 4 个子阶段, 切换时必须 TTS 当前 sub_phase.tts。
+
+    真实通过 _tick_once 验证: 设 elapsed 时间累计, 模拟子阶段切换。
+    """
+    from calibration.phases.head_pose import HeadPosePhase
+
+    f = _make_flow()
+    f._current_phase_index = 3  # 阶段 3 = 头部姿态
+    f._current_phase = HeadPosePhase(direction_seconds=3.0, min_degrees=20.0)
+    f._state = FlowState.PHASE_RUNNING
+    f._tts = MagicMock()
+    tts_calls = []
+    f._tts.say.side_effect = lambda msg: tts_calls.append(msg)
+    # 注入 mock detector/input/cap (测试场景不依赖真摄像头)
+    f._face_detector = MagicMock()
+    f._eye_detector = MagicMock()
+    f._eye_detector.get_current_ear.return_value = 0.3
+    f._cap = MagicMock()
+    f._cap.read.return_value = (True, MagicMock(shape=(480, 640, 3)))
+    f._input = MagicMock()
+    f._input._click_buffer = None
+    f._input.poll.return_value = (UIAction.NONE, None)
+
+    with patch("calibration.flow.cv2.namedWindow"), \
+         patch("calibration.flow.cv2.imshow"), \
+         patch("calibration.flow.cv2.getWindowProperty", return_value=1.0), \
+         patch.object(f._face_detector, "detect_from_frame") as mock_detect, \
+         patch.object(f._eye_detector, "compute"), \
+         patch.object(f._panel, "render", return_value=MagicMock(shape=(240, 640, 3))), \
+         patch("calibration.flow.compose", return_value=MagicMock(shape=(720, 640, 3))):
+        mock_detect.return_value = MagicMock(
+            face_detected=True,
+            landmarks=MagicMock(shape=(468, 2)),
+            transformation_matrix=MagicMock(),
+            yaw=0.0, pitch=0.0,
+        )
+        # 模拟 elapsed 跨越 4 个子阶段 (每个 3 秒)
+        for sub_idx in range(4):
+            f._phase_start_time = time.time() - sub_idx * 3.0 - 0.5
+            f._tick_once()
+
+    # 验证 4 个子阶段 TTS 都念过
+    expected_phrases = ["现在抬头", "现在低头", "现在向左转", "现在向右转"]
+    for phrase in expected_phrases:
+        assert phrase in tts_calls, (
+            f"T-CAL-18: 子阶段 '{phrase}' TTS 没念, 实际 tts_calls: {tts_calls}"
+        )
 
 
 def test_flow_blink_input_backspace_removes_last():

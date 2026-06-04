@@ -136,6 +136,18 @@ class CalibrationFlow:
         composed = compose(frame, panel_img)
         cv2.imshow(WINDOW_NAME, composed)
 
+        # T-CAL-18: 头部姿态子阶段 TTS 切换 (转头看不见屏幕, 必须靠 TTS 引导)
+        if (isinstance(self._current_phase, HeadPosePhase)
+                and self._state == FlowState.PHASE_RUNNING):
+            sub_idx = int(elapsed // self._current_phase.direction_seconds)
+            if sub_idx > getattr(self, '_last_head_sub_idx', -1) and sub_idx < len(self._current_phase.sub_phases):
+                sub = self._current_phase.sub_phases[sub_idx]
+                self._tts.say(sub.tts)
+                self._last_head_sub_idx = sub_idx
+        elif self._state != FlowState.PHASE_RUNNING:
+            # 重置 tracker (非运行状态不累计)
+            self._last_head_sub_idx = -1
+
         # 注册按钮 + 收输入
         self._input.register_buttons(self._panel.get_buttons(info))
         action, digit = self._input.poll(self._state)
