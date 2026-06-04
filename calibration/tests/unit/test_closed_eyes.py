@@ -145,3 +145,25 @@ def test_closed_eyes_quality_hint_shows_threshold():
     assert "0.15" in fb.quality_hint, (
         f"T-CAL-15: quality_hint 应含阈值, 实际 '{fb.quality_hint}'"
     )
+
+
+# ============ T-CAL-17: 跨阶段容错 — 失败诊断含数据 ============
+
+def test_closed_eyes_failure_diagnosis_includes_ear_value():
+    """T-CAL-17: 阶段失败时诊断信息应含实际 ear_min, 用户能调姿。"""
+    p = ClosedEyesPhase(closed_duration_seconds=5.0, verify_duration_seconds=3.0,
+                       baseline_ear=0.30, min_ratio=0.5)
+    # 闭眼时 EAR 没降到阈值
+    for i in range(150):
+        p.feed_frame(ear=0.22, yaw=0, pitch=0, timestamp=i / 30.0)
+    for i in range(90):
+        p.feed_frame(ear=0.30, yaw=0, pitch=0, timestamp=5.0 + i / 30.0)
+    r = p.evaluate()
+    assert r.success is False
+    # 诊断应含 ear_min 实际值 0.22 和阈值 0.15
+    assert "0.22" in r.failure_diagnosis, (
+        f"T-CAL-17: 失败诊断应含 ear_min 实际值, 实际 '{r.failure_diagnosis}'"
+    )
+    assert "0.15" in r.failure_diagnosis, (
+        f"T-CAL-17: 失败诊断应含阈值, 实际 '{r.failure_diagnosis}'"
+    )
