@@ -29,20 +29,21 @@ class HeadSubPhase:
 
 class HeadPosePhase(Phase):
     name = "头部姿态校准"
-    # T-CAL-16: tts_intro 加"请尽量大幅度"
-    tts_intro = "接下来请按提示移动头部，4 个方向各 3 秒，请尽量大幅度"
+    # T-CAL-25: 4 个子阶段改为 click-to-advance, tts_intro 简短
+    tts_intro = "请按提示依次做 4 个头部动作，每完成 1 个点继续"
     tts_complete = "头部姿态采集完成"
 
     def __init__(self, direction_seconds: float, min_degrees: float):
         self.direction_seconds = direction_seconds
-        self.duration_seconds = direction_seconds * 4
+        # T-CAL-25: 实际跑 4 秒, 给用户充足转头时间
+        self.per_direction_seconds: float = 4.0
+        self.duration_seconds = self.per_direction_seconds * 4
         self.min_degrees = min_degrees
-        # T-CAL-16: hint 加"保持 3 秒"提示
         self.sub_phases: List[HeadSubPhase] = [
-            HeadSubPhase(HeadDirection.UP,    "现在抬头",            "请抬头 (保持 3 秒)"),
-            HeadSubPhase(HeadDirection.DOWN,  "现在低头",            "请低头 (保持 3 秒)"),
-            HeadSubPhase(HeadDirection.LEFT,  "现在向左转",          "请向左转头 (保持 3 秒)"),
-            HeadSubPhase(HeadDirection.RIGHT, "现在向右转",          "请向右转头 (保持 3 秒)"),
+            HeadSubPhase(HeadDirection.UP,    "现在抬头",            "请抬头 (保持 4 秒)"),
+            HeadSubPhase(HeadDirection.DOWN,  "现在低头",            "请低头 (保持 4 秒)"),
+            HeadSubPhase(HeadDirection.LEFT,  "现在向左转",          "请向左转头 (保持 4 秒)"),
+            HeadSubPhase(HeadDirection.RIGHT, "现在向右转",          "请向右转头 (保持 4 秒)"),
         ]
         # max 记录极值（pitch 抬头是负，低头是正；yaw 左是负，右是正）
         self._pitch_up_max: float = 0.0      # 越负越好
@@ -52,9 +53,11 @@ class HeadPosePhase(Phase):
         # T-CAL-16: 缓存最近 yaw/pitch, 供屏幕显示
         self._yaw_last: float = 0.0
         self._pitch_last: float = 0.0
-        # T-CAL-16: 跟踪上一 sub_phase index, 3 秒静默自动提示
+        # T-CAL-22: 跟踪上一 sub_phase index, 3 秒静默自动提示
         self._last_sub_idx: int = -1
         self._stuck_counter: int = 0  # 帧计数, 头部不动时累加
+        # T-CAL-25: 跟踪当前 sub_phase, click-to-advance 模式
+        self._current_sub_idx: int = 0
 
     def reset(self) -> None:
         self._pitch_up_max = 0.0
@@ -65,10 +68,34 @@ class HeadPosePhase(Phase):
         self._pitch_last = 0.0
         self._last_sub_idx = -1
         self._stuck_counter = 0
+        self._current_sub_idx = 0
 
     def current_sub_phase(self, elapsed_sec: float) -> HeadSubPhase:
-        idx = min(int(elapsed_sec // self.direction_seconds), 3)
+        # T-CAL-25: click-to-advance, 按 _current_sub_idx 而不是 elapsed
+        idx = min(self._current_sub_idx, 3)
         return self.sub_phases[idx]
+
+    def is_current_sub_done(self) -> bool:
+        """T-CAL-25: click-to-advance, 始终返回 False (永远不停, 等用户点继续)。"""
+        return False
+
+    def advance_sub_phase(self) -> bool:
+        """T-CAL-25: 用户点继续后调用, 推进到下一 sub-phase。
+
+        Returns: True 如果还有下一 sub-phase, False 如果全部完成。
+        """
+        self._current_sub_idx += 1
+        if self._current_sub_idx >= 4:
+            return False
+        # 重置检测状态
+        self._yaw_last = 0.0
+        self._pitch_last = 0.0
+        self._stuck_counter = 0
+        return True
+
+    def is_complete(self, elapsed_sec: float) -> bool:
+        """T-CAL-25: 全部 4 sub-phase 完成后才结束 (而非 timer)。"""
+        return self._current_sub_idx >= 4
 
     def feed_frame(self, ear, yaw, pitch, timestamp) -> None:
         if yaw is None or pitch is None:
@@ -116,9 +143,6 @@ class HeadPosePhase(Phase):
             current_pitch=self._pitch_last,
             threshold_yaw=self.min_degrees,
         )
-
-    def is_complete(self, elapsed_sec: float) -> bool:
-        return elapsed_sec >= self.duration_seconds
 
     def evaluate(self) -> PhaseResult:
         thr = self.min_degrees

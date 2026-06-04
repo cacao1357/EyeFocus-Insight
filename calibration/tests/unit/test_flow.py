@@ -109,46 +109,53 @@ def test_flow_blink_input_digit_accumulates_buffer():
 # ============ T-CAL-18: 头部姿态子阶段 TTS 切换 ============
 
 def test_head_pose_sub_phase_tts_via_tick_once(monkeypatch):
-    """T-CAL-18: 头部姿态 4 个子阶段, 切换时必须 TTS 当前 sub_phase.tts。
+    """T-CAL-25: 头部姿态 4 个 sub-phase, click-to-advance 模式下, 用户点"继续"才 TTS 下一子阶段。
 
-    真实通过 _tick_once 验证: 设 elapsed 时间累计, 模拟子阶段切换。
+    真实通过 _handle_action(PROCEED) 验证: advance_sub_phase → 调 TTS 念新方向。
     """
     from calibration.phases.head_pose import HeadPosePhase
 
     f = _make_flow()
     f._current_phase_index = 3  # 阶段 3 = 头部姿态
-    f._current_phase = HeadPosePhase(direction_seconds=3.0, min_degrees=20.0)
+    f._current_phase = HeadPosePhase(direction_seconds=3.0, min_degrees=12.0)
+    # T-CAL-25: 模拟 _start_phase 已调 (进入 RUNNING, 已念过 tts_intro + idx=0 TTS)
     f._state = FlowState.PHASE_RUNNING
     f._tts = MagicMock()
     tts_calls = []
     f._tts.say.side_effect = lambda msg: tts_calls.append(msg)
-    # 注入 mock detector/input/cap (测试场景不依赖真摄像头)
-    f._face_detector = MagicMock()
-    f._eye_detector = MagicMock()
-    f._eye_detector.get_current_ear.return_value = 0.3
-    f._cap = MagicMock()
-    f._cap.read.return_value = (True, MagicMock(shape=(480, 640, 3)))
-    f._input = MagicMock()
-    f._input._click_buffer = None
-    f._input.poll.return_value = (UIAction.NONE, None)
+    f._start_phase()  # 调 _start_phase 触发 tts_intro + idx=0 TTS
 
-    with patch("calibration.flow.cv2.namedWindow"), \
-         patch("calibration.flow.cv2.imshow"), \
-         patch("calibration.flow.cv2.getWindowProperty", return_value=1.0), \
-         patch.object(f._face_detector, "detect_from_frame") as mock_detect, \
-         patch.object(f._eye_detector, "compute"), \
-         patch.object(f._panel, "render", return_value=MagicMock(shape=(240, 640, 3))), \
-         patch("calibration.flow.compose", return_value=MagicMock(shape=(720, 640, 3))):
-        mock_detect.return_value = MagicMock(
-            face_detected=True,
-            landmarks=MagicMock(shape=(468, 2)),
-            transformation_matrix=MagicMock(),
-            yaw=0.0, pitch=0.0,
+    # 第一次点继续: 应触发 idx=1 TTS '现在低头'
+    f._state = FlowState.PHASE_SUMMARY_SUCCESS
+    f._handle_action(UIAction.PROCEED, None)
+    assert f._current_phase._current_sub_idx == 1
+    assert any("现在低头" in c for c in tts_calls), (
+        f"T-CAL-25: 第一次 PROCEED 应 TTS '现在低头', 实际 {tts_calls}"
+    )
+
+    # 第二次
+    f._state = FlowState.PHASE_SUMMARY_SUCCESS
+    f._handle_action(UIAction.PROCEED, None)
+    assert f._current_phase._current_sub_idx == 2
+    assert any("现在向左转" in c for c in tts_calls)
+
+    # 第三次
+    f._state = FlowState.PHASE_SUMMARY_SUCCESS
+    f._handle_action(UIAction.PROCEED, None)
+    assert f._current_phase._current_sub_idx == 3
+    assert any("现在向右转" in c for c in tts_calls)
+
+    # 第四次: 4 sub 全 advance, idx=4, evaluate 整体
+    f._state = FlowState.PHASE_SUMMARY_SUCCESS
+    f._handle_action(UIAction.PROCEED, None)
+    assert f._current_phase._current_sub_idx == 4
+
+    # 验证 4 个方向 TTS 都念过 (包括 idx=0 启动时)
+    expected_phrases = ["现在抬头", "现在低头", "现在向左转", "现在向右转"]
+    for phrase in expected_phrases:
+        assert phrase in tts_calls, (
+            f"T-CAL-25: 子阶段 '{phrase}' TTS 没念, 实际 tts_calls: {tts_calls}"
         )
-        # 模拟 elapsed 跨越 4 个子阶段 (每个 3 秒)
-        for sub_idx in range(4):
-            f._phase_start_time = time.time() - sub_idx * 3.0 - 0.5
-            f._tick_once()
 
     # 验证 4 个子阶段 TTS 都念过
     expected_phrases = ["现在抬头", "现在低头", "现在向左转", "现在向右转"]

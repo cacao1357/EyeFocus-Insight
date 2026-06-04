@@ -130,6 +130,12 @@ class CalibrationFlow:
                     self._current_phase.on_round_time_up()
                     self._state = FlowState.BLINK_INPUT_AWAITING
                     self._tts.say("请输入你眨眼的次数")
+            elif isinstance(self._current_phase, HeadPosePhase):
+                # T-CAL-25: 头部姿态 4 sub-phase 拆开, 每 4s 自动转 PHASE_SUMMARY_SUCCESS 等用户点继续
+                if elapsed >= self._current_phase.per_direction_seconds:
+                    # 单方向采集完, 转 summary 等用户确认
+                    self._state = FlowState.PHASE_SUMMARY_SUCCESS
+                    self._beep.phase_success()
             else:
                 if self._current_phase.is_complete(elapsed):
                     self._on_phase_time_up()
@@ -219,7 +225,27 @@ class CalibrationFlow:
                 self._start_phase()
         elif self._state == FlowState.PHASE_SUMMARY_SUCCESS:
             if action == UIAction.PROCEED:
-                self._advance_to_next_phase()
+                # T-CAL-25: 头部姿态阶段, 推进 sub-phase 而非整个 phase
+                if isinstance(self._current_phase, HeadPosePhase):
+                    if self._current_phase._current_sub_idx < 4:
+                        has_next = self._current_phase.advance_sub_phase()
+                        if has_next:
+                            # 重置 phase_start_time, 进下一 sub-phase
+                            self._phase_start_time = time.time()
+                            self._state = FlowState.PHASE_RUNNING
+                            # TTS 新的 sub-phase
+                            next_sub = self._current_phase.current_sub_phase(0)
+                            self._tts.say(next_sub.tts)
+                            logger.info("[T-CAL-25] sub_idx=%d TTS='%s'",
+                                        self._current_phase._current_sub_idx, next_sub.tts)
+                        else:
+                            # 4 sub-phase 全完成, evaluate 整体
+                            self._on_phase_time_up()
+                    else:
+                        # 已经是 SUMMARY 状态 (evaluate 完), 真正进入下一 phase
+                        self._advance_to_next_phase()
+                else:
+                    self._advance_to_next_phase()
             elif action == UIAction.RETRY_PHASE:
                 if self._current_phase is not None:
                     self._current_phase.reset()
@@ -279,6 +305,11 @@ class CalibrationFlow:
         self._beep.phase_start()
         if self._current_phase is not None and self._current_phase.tts_intro:
             self._tts.say(self._current_phase.tts_intro)
+        # T-CAL-25: 头部姿态阶段, 启动时立即 TTS 第 1 个 sub-phase (用户知道先做什么)
+        if isinstance(self._current_phase, HeadPosePhase):
+            self._tts.say(self._current_phase.sub_phases[0].tts)
+            logger.info("[T-CAL-25] 阶段启动 TTS='%s'",
+                        self._current_phase.sub_phases[0].tts)
 
     def _on_phase_time_up(self) -> None:
         if self._current_phase is None:

@@ -8,7 +8,7 @@ def test_default_config_fields_present():
     # 阶段时长
     assert c.auto_baseline_seconds == 7.0
     assert c.closed_eyes_seconds == 5.0
-    assert c.open_eyes_verify_seconds == 2.0
+    assert c.open_eyes_verify_seconds == 0.0  # T-CAL-27: 跳过
     assert c.squint_seconds == 5.0
     assert c.head_direction_seconds == 3.0
     assert c.blink_round_seconds == 15.0
@@ -17,7 +17,7 @@ def test_default_config_fields_present():
     # 阈值 (T-CAL-15: closed_eyes_min_ratio 0.5→0.6; T-CAL-16: head_direction_min_degrees 10→20)
     assert c.closed_eyes_min_ratio == 0.6
     assert c.squint_baseline_ratio == 0.75
-    assert c.head_direction_min_degrees == 20.0
+    assert c.head_direction_min_degrees == 12.0  # T-CAL-26: 20→12
     assert c.blink_count_min == 5
     assert c.blink_count_max == 60
 
