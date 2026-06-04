@@ -6,11 +6,14 @@
 设计依据：spec §2.2（头部姿态拆 4 子阶段）+ §4.3。
 """
 import math
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional
 
 from calibration.phases.base import LiveFeedback, Phase, PhaseResult
+
+logger = logging.getLogger("eyefocus.calibration.phases")
 
 
 class HeadDirection(Enum):
@@ -113,6 +116,21 @@ class HeadPosePhase(Phase):
             self._yaw_left_max = yaw
         elif sub.direction == HeadDirection.RIGHT and yaw > self._yaw_right_max:
             self._yaw_right_max = yaw
+
+        # T-CAL-29 调试日志: 每秒 (30 帧) 打印当前 sub_idx + max values
+        if not hasattr(self, '_log_counter'):
+            self._log_counter = 0
+        self._log_counter += 1
+        if self._log_counter % 30 == 0:
+            import logging
+            logger = logging.getLogger("eyefocus.calibration.phases")
+            logger.info(
+                "[T-CAL-29] sub_idx=%d yaw=%.1f pitch=%.1f | max: pitch_up=%.1f pitch_down=%.1f yaw_L=%.1f yaw_R=%.1f | thr=%.1f",
+                self._current_sub_idx, yaw, pitch,
+                self._pitch_up_max, self._pitch_down_max,
+                self._yaw_left_max, self._yaw_right_max,
+                self.min_degrees,
+            )
 
         # T-CAL-16: 检测头部是否在动 (与上次差异 < 5°)
         # T-CAL-22: 2°→5° (宽松, 避免用户慢慢转头时误判 stuck)
