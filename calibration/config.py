@@ -13,8 +13,8 @@ class CalibrationConfig:
     # ---------- 阶段时长（秒）----------
     auto_baseline_seconds: float = 7.0
     closed_eyes_seconds: float = 5.0
-    open_eyes_verify_seconds: float = 3.0
-    squint_seconds: float = 8.0
+    open_eyes_verify_seconds: float = 2.0  # T-CAL-20: 3→2 (用户反映睁眼验证太久)
+    squint_seconds: float = 5.0            # T-CAL-20: 8→5 (眯眼时间太久, 肌肉累)
     head_direction_seconds: float = 3.0   # 每个方向单独 3 秒（4 方向共 12s）
     blink_round_seconds: float = 15.0      # 每轮 15s
     blink_rounds_count: int = 2            # 2 轮（spec P2 精简，原 3 轮）

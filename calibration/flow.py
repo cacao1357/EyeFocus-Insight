@@ -114,9 +114,13 @@ class CalibrationFlow:
         # 检测
         ear, yaw, pitch = self._extract_metrics(frame)
 
+        # T-CAL-19: 计算 elapsed 移到外面 (PHASE_RUNNING 块外也能用, 避免 NameError)
+        elapsed = 0.0
+        if self._phase_start_time > 0:
+            elapsed = time.time() - self._phase_start_time
+
         # 喂当前阶段
         if self._state == FlowState.PHASE_RUNNING and self._current_phase is not None:
-            elapsed = time.time() - self._phase_start_time
             self._current_phase.feed_frame(ear, yaw, pitch, elapsed)
 
             # 特殊：BlinkCount 阶段处理用户输入触发
@@ -136,7 +140,8 @@ class CalibrationFlow:
         composed = compose(frame, panel_img)
         cv2.imshow(WINDOW_NAME, composed)
 
-        # T-CAL-18: 头部姿态子阶段 TTS 切换 (转头看不见屏幕, 必须靠 TTS 引导)
+        # T-CAL-18/19: 头部姿态子阶段 TTS 切换 (转头看不见屏幕, 必须靠 TTS 引导)
+        # T-CAL-19 关键修复: elapsed 在 PHASE_RUNNING 块外也可用 (之前 NameError 致程序崩溃)
         if (isinstance(self._current_phase, HeadPosePhase)
                 and self._state == FlowState.PHASE_RUNNING):
             sub_idx = int(elapsed // self._current_phase.direction_seconds)

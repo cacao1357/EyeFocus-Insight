@@ -8,8 +8,8 @@ def test_default_config_fields_present():
     # 阶段时长
     assert c.auto_baseline_seconds == 7.0
     assert c.closed_eyes_seconds == 5.0
-    assert c.open_eyes_verify_seconds == 3.0
-    assert c.squint_seconds == 8.0
+    assert c.open_eyes_verify_seconds == 2.0
+    assert c.squint_seconds == 5.0
     assert c.head_direction_seconds == 3.0
     assert c.blink_round_seconds == 15.0
     assert c.blink_rounds_count == 2
@@ -41,7 +41,7 @@ def test_config_total_estimated_seconds():
         + c.head_direction_seconds * 4
         + c.blink_round_seconds * c.blink_rounds_count
     )
-    assert total < 90, f"5 阶段裸时长 {total}s 超过 90 秒上限"
+    assert total < 80, f"5 阶段裸时长 {total}s 超过 80 秒上限"
 
 
 def test_config_customizable():
