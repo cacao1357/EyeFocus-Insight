@@ -952,7 +952,8 @@ class TestEndToEndScenarios:
         result = detector.analyze_frame(dark_frame)
 
         assert result.condition == LightCondition.DARK
-        assert result.is_adequate is True  # DARK is still adequate for detection
+        # M-06: is_adequate 仅 NORMAL=True, DARK/BRIGHT=False
+        assert result.is_adequate is False
 
         # 模拟正常光照 (50 < brightness <= 100)
         normal_frame = make_mock_frame(brightness=75)
@@ -966,7 +967,7 @@ class TestEndToEndScenarios:
         result = detector.analyze_frame(bright_frame)
 
         assert result.condition == LightCondition.BRIGHT
-        assert result.is_adequate is True
+        assert result.is_adequate is False
 
     def test_fatigue_detection_scenario(self):
         """场景：疲劳检测"""
