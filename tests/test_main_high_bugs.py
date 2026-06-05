@@ -211,7 +211,7 @@ class TestH01SignalHandlerSafety:
         app.shutdown = MagicMock()
 
         with patch("main.logger"):
-            app._signal_handler(signal=2, frame=None)
+            app._signal_handler(2, None)
 
         # 验证: shutdown() 不被直接调用
         app.shutdown.assert_not_called(), "signal handler 不应直接调 shutdown()"
@@ -235,7 +235,7 @@ class TestH01SignalHandlerSafety:
         app.shutdown = MagicMock()
 
         with patch("main.logger"):
-            app._signal_handler(signal=15, frame=None)
+            app._signal_handler(15, None)
 
         # 双重保险: 既设 _running=False, 也 set _shutdown_event
         assert app._running is False
