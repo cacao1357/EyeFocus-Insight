@@ -77,7 +77,8 @@ class TestLightDetector:
 
         assert result.condition == LightCondition.BRIGHT
         assert result.brightness > 100
-        assert result.is_adequate is True
+        # M-06: is_adequate 仅 NORMAL 时为 True
+        assert result.is_adequate is False
 
     def test_analyze_dark_frame(self):
         """分析偏暗场景（亮度 ≤ 50）"""
@@ -87,7 +88,8 @@ class TestLightDetector:
 
         assert result.condition == LightCondition.DARK
         assert result.brightness <= 50
-        assert result.is_adequate is True
+        # M-06: is_adequate 仅 NORMAL 时为 True
+        assert result.is_adequate is False
 
     def test_analyze_normal_frame(self):
         """分析正常光照场景（亮度 50-100）"""
@@ -195,6 +197,29 @@ class TestLightDetector:
         detector = LightDetector(brightness_thresh_dark=50.0, brightness_thresh_bright=100.0)
         assert detector._classify_brightness(100.0) == LightCondition.NORMAL
         assert detector._classify_brightness(100.1) == LightCondition.BRIGHT
+
+    # ===== M-06: is_adequate 仅 NORMAL 时为 True =====
+
+    def test_is_adequate_only_normal_M06(self):
+        """M-06: is_adequate 只在 LightCondition.NORMAL 时为 True
+        原代码 (line 106):
+            is_adequate = (NORMAL or DARK or BRIGHT)  # 恒真
+        修复后: 只 NORMAL → True
+        """
+        detector = LightDetector()
+
+        # Mock _classify_brightness 直接返回各 condition
+        for condition, expected in [
+            (LightCondition.NORMAL, True),
+            (LightCondition.DARK, False),
+            (LightCondition.BRIGHT, False),
+        ]:
+            detector._classify_brightness = lambda b, _c=condition: _c
+            # 提供一张任意 frame (analyze_frame 内会先 cv2.cvtColor)
+            frame = make_frame(75)
+            result = detector.analyze_frame(frame)
+            assert result.is_adequate is expected, \
+                f"M-06 失败: condition={condition.value}, 期望 is_adequate={expected}, 实际={result.is_adequate}"
 
 
 # ---------------------------------------------------------------------------

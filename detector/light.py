@@ -103,11 +103,8 @@ class LightDetector:
         self._condition_history.append(condition)
 
         # 判断光照是否充足（检测算法可正常工作）
-        is_adequate = (
-            condition == LightCondition.NORMAL
-            or condition == LightCondition.DARK
-            or condition == LightCondition.BRIGHT
-        )
+        # M-06: 原代码 (NORMAL or DARK or BRIGHT) 恒真 → 改为只 NORMAL
+        is_adequate = condition == LightCondition.NORMAL
 
         return LightResult(
             condition=condition,
