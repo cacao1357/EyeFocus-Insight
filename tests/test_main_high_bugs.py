@@ -139,13 +139,15 @@ class TestH12RunV42CalibrationFinally:
     def test_finally_start_exception_does_not_replace_original(self):
         """H-12: calibration_module.run 抛异常 + camera_manager.start() 也抛异常时,
         两个异常都应被记录, start() 返回值被检查"""
-        from main import EyeFocusApp
+        from main import EyeFocusApp, AppConfig
         import main as main_module
         import calibration as calibration_module_real
 
         app = EyeFocusApp.__new__(EyeFocusApp)
         app._session_id = "test_session"
         app._db = MagicMock()
+        # M-21: 构造 Config 供 run_v4_2_calibration 访问 camera_index
+        app.config = AppConfig()
         # 模拟 _camera_manager: is_running() False (需要重启), start() 抛异常
         app._camera_manager = MagicMock()
         app._camera_manager.is_running.return_value = False
@@ -171,12 +173,14 @@ class TestH12RunV42CalibrationFinally:
 
     def test_finally_start_failure_logged_not_re_raised(self):
         """H-12: finally 块内 start() 异常应被 try/except 捕获, 不应逃逸"""
-        from main import EyeFocusApp
+        from main import EyeFocusApp, AppConfig
         import main as main_module
 
         app = EyeFocusApp.__new__(EyeFocusApp)
         app._session_id = "test_session"
         app._db = MagicMock()
+        # M-21: 构造 Config 供 run_v4_2_calibration 访问 camera_index
+        app.config = AppConfig()
         app._camera_manager = MagicMock()
         app._camera_manager.is_running.return_value = False
         app._camera_manager.start.side_effect = RuntimeError("start failed in finally")
@@ -200,12 +204,11 @@ class TestH01SignalHandlerSafety:
     """H-01: signal handler 只设 flag, 不直接调 shutdown()"""
 
     def test_signal_handler_only_sets_flags_not_shutdown(self):
-        """H-01: _signal_handler 不调 self.shutdown(), 只设 _running=False + _shutdown_event.set()"""
+        """H-01: _signal_handler 不调 self.shutdown(), 只设 _running=False (M-22 移除 _shutdown_event)"""
         from main import EyeFocusApp
 
         app = EyeFocusApp.__new__(EyeFocusApp)
         app._running = True
-        app._shutdown_event = threading.Event()
 
         # Mock shutdown 验证它不被调用
         app.shutdown = MagicMock()
@@ -219,27 +222,21 @@ class TestH01SignalHandlerSafety:
         # 验证: _running 被设 False
         assert app._running is False, "_running 应被设 False"
 
-        # 验证: _shutdown_event 被 set
-        assert app._shutdown_event.is_set(), "_shutdown_event 应被 set"
-
     def test_main_loop_responds_to_shutdown_event(self):
-        """H-01: _main_loop 的 _running 循环可被 _shutdown_event 截断
-        (后续通过 _main_loop 内部实现验证)"""
+        """H-01: _main_loop 的 _running 循环可被 _running=False 截断 (M-22 移除 _shutdown_event)"""
         # 这条测试由 H-01 的 fix 实现保证 — main_loop 应在 _running=False 时退出
         # 由于 _main_loop 调用摄像头/数据库等较重, 这里仅验证 flag 行为
         from main import EyeFocusApp
 
         app = EyeFocusApp.__new__(EyeFocusApp)
         app._running = True
-        app._shutdown_event = threading.Event()
         app.shutdown = MagicMock()
 
         with patch("main.logger"):
             app._signal_handler(15, None)
 
-        # 双重保险: 既设 _running=False, 也 set _shutdown_event
+        # 验证: _running 被设 False (M-22 移除 _shutdown_event 后, 仅靠此 flag)
         assert app._running is False
-        assert app._shutdown_event.is_set()
 
 
 # ============ H-02: CameraManager.start() 残留线程 join ============

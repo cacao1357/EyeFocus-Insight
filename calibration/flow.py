@@ -81,7 +81,8 @@ class CalibrationFlow:
             self._teardown()
 
     def _setup(self) -> None:
-        self._cap = cv2.VideoCapture(0)
+        # M-21: 使用 config.camera_index 而非硬编码 0
+        self._cap = cv2.VideoCapture(self.config.camera_index)
         if not self._cap.isOpened():
             raise RuntimeError("无法打开摄像头")
         cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_AUTOSIZE)

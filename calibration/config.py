@@ -10,6 +10,11 @@ from dataclasses import dataclass
 class CalibrationConfig:
     """校准模块配置 — 所有可调参数。"""
 
+    # ---------- 摄像头参数 (M-21: 由主程序 AppConfig 传入) ----------
+    camera_index: int = 0
+    frame_width: int = 640
+    frame_height: int = 480
+
     # ---------- 阶段时长（秒）----------
     auto_baseline_seconds: float = 7.0
     closed_eyes_seconds: float = 5.0

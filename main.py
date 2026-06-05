@@ -81,6 +81,9 @@ class AppConfig:
     enable_calibration: bool = True
     calibration_duration: float = 7.0
     data_dir: str = "data"
+    # M-21: 摄像头帧尺寸 (校准模块需要)
+    frame_width: int = 640
+    frame_height: int = 480
 
 
 class CameraManager:
@@ -1171,6 +1174,9 @@ class EyeFocusApp:
 
         严格契约（spec 决策 X1）：成功 → 返回完整 CalibrationResult；取消/失败 → 返回 None。
 
+        M-21: 显式传入 AppConfig.camera_index / frame 尺寸, 避免校准用默认 0 摄像头
+        与主程序用户配置的外接摄像头不一致.
+
         Returns:
             CalibrationResult: 校准成功且用户在总结页确认
             None: 用户取消、阶段失败放弃、模块崩溃
@@ -1180,10 +1186,18 @@ class EyeFocusApp:
         if self._camera_manager is not None and self._camera_manager.is_running():
             self._camera_manager.release()
 
+        # M-21: 构造 calibration Config, 显式传入主程序摄像头参数
+        from calibration.config import CalibrationConfig
+        calib_config = CalibrationConfig(
+            camera_index=self.config.camera_index,
+            frame_width=self.config.frame_width,
+            frame_height=self.config.frame_height,
+        )
+
         try:
             result = calibration_module.run(
                 session_id=self._session_id or "main_session",
-                config=None,  # 用默认配置
+                config=calib_config,
                 db=self._db,
             )
             if result is not None:
