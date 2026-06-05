@@ -975,7 +975,15 @@ class EyeFocusApp:
             else:
                 glasses_str = "OFF"
 
-        # 使用 FocusOverlay 渲染
+        # v4.3: 设置顶层 MODE (CALIBRATING / MONITORING / PAUSED)
+        if self.is_calibration_flow_active():
+            self._overlay.set_mode("CALIBRATING")
+        elif self._paused:
+            self._overlay.set_mode("PAUSED")
+        else:
+            self._overlay.set_mode("MONITORING")
+
+        # 使用 FocusOverlay 渲染 (v4.3: glasses + fps 传入, 不再外部 putText)
         display = self._overlay.draw(
             frame,
             focus_score=focus_score_val,
@@ -987,32 +995,11 @@ class EyeFocusApp:
             eye_score=eye_score,
             head_score=head_score,
             gaze_score=gaze_score_val,
+            glasses_str=glasses_str,
+            fps=self._fps,
         )
 
-        # 在右上角显示眼镜状态
-        if glasses_str:
-            cv2.putText(
-                display,
-                f"Glasses: {glasses_str}",
-                (self._overlay.config.width - 120, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (255, 255, 255),
-                1,
-            )
-
-        # 添加 FPS 显示（叠加层不包含 FPS）
-        cv2.putText(
-            display,
-            f"FPS: {self._fps:.1f}",
-            (10, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (0, 255, 0),
-            2,
-        )
-
-        # 当人脸未检测到时，显示明确提示
+        # 当人脸未检测到时，显示明确提示 (校准期间)
         if not face_detected and self.is_calibration_flow_active():
             cv2.putText(
                 display,

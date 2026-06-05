@@ -119,7 +119,14 @@ class FocusDisplayMode(Enum):
 
 @dataclass
 class OverlayConfig:
-    """GUI 叠加配置"""
+    """GUI 叠加配置
+
+    v4.3 重设计:
+      - show_score_breakdown (默认 False): 控制左下角 3 行 Eye/Head/Gaze 细分显示
+        关闭后只剩 1 行 Eye 分数 (主分数 = 综合 focus)
+      - show_fps (默认 True): 右下角 FPS 显示
+      - status_bar_height: 60 (原 40, 容纳 4 段信息)
+    """
     window_name: str = "EyeFocus Insight"
     width: int = 640
     height: int = 480
@@ -131,6 +138,10 @@ class OverlayConfig:
     alert_warning_color: Tuple[int, int, int] = (0, 165, 255)
     alert_error_color: Tuple[int, int, int] = (0, 0, 255)
     background_color: Tuple[int, int, int] = (40, 40, 40)
+    # v4.3 新增配置
+    show_score_breakdown: bool = False  # 默认关, 减少信息过载
+    show_fps: bool = True
+    status_bar_height: int = 60  # 容纳 MODE + face/eye + focus + fatigue + glasses
 
 
 # ========== 校准 UI 相关 ==========
@@ -179,6 +190,8 @@ class FocusOverlay:
         self._calib_phase: Optional[CalibrationPhaseInfo] = None
         self._calib_display: Optional[CalibrationDisplayData] = None
         self._last_update: float = time.time()
+        # v4.3: 顶层 MODE 状态 (MONITORING / CALIBRATING / PAUSED)
+        self._current_mode: str = "INITIALIZING"
 
     def draw(
         self,
@@ -192,8 +205,14 @@ class FocusOverlay:
         eye_score: Optional[float] = None,
         head_score: Optional[float] = None,
         gaze_score: Optional[float] = None,
+        glasses_str: Optional[str] = None,
+        fps: Optional[float] = None,
     ) -> np.ndarray:
         """在帧上绘制 GUI 叠加
+
+        v4.3 重设计: 顶部单行 4 段状态栏 (MODE + face/eye + FOCUS + FATIGUE + GLASSES),
+        移除左下 3 行细分分数 (默认关, 需 config.show_score_breakdown=True),
+        FPS 移右下角避免与状态栏重叠, glasses 合并入状态栏。
 
         Args:
             frame: 原始摄像头帧
@@ -206,6 +225,8 @@ class FocusOverlay:
             eye_score: 眼部专注度分量 (0-100)
             head_score: 头部姿态分量 (0-100)
             gaze_score: 视线方向分量 (0-100)
+            glasses_str: 眼镜状态字符串 (e.g. "ON" / "OFF")
+            fps: 帧率, 显式传入而非 main.py 单独 putText
 
         Returns:
             叠加后的帧
@@ -216,21 +237,22 @@ class FocusOverlay:
         # 创建叠加层
         overlay = frame.copy()
 
-        # 绘制状态栏
+        # 绘制状态栏 (含 glasses)
         overlay = self._draw_status_bar(
             overlay,
             focus_score=focus_score,
             fatigue_level=fatigue_level,
             eye_detected=eye_detected,
             face_detected=face_detected,
+            glasses_str=glasses_str,
         )
 
-        # 绘制专注度/疲劳显示
+        # 绘制专注度/疲劳显示 (右下大圆)
         if focus_score is not None:
             overlay = self._draw_focus_display(overlay, focus_score, fatigue_level)
 
-        # 绘制细分分数
-        if any(s is not None for s in [eye_score, head_score, gaze_score]):
+        # 绘制细分分数 (v4.3 默认关, 需 config.show_score_breakdown=True)
+        if self.config.show_score_breakdown and any(s is not None for s in [eye_score, head_score, gaze_score]):
             overlay = self._draw_score_breakdown(overlay, eye_score, head_score, gaze_score)
 
         # 绘制告警信息
@@ -244,7 +266,7 @@ class FocusOverlay:
         if light_condition is not None:
             overlay = self._draw_light_indicator(overlay, light_condition)
 
-        # 绘制校准 UI（绘制在 overlay 上，在 blend 之前，这样获得与状态栏相同的透明度）
+        # 绘制校准 UI（v3.x 路径，v4.2 走自己的 CalibrationFlow 面板）
         if hasattr(self, '_calib_display') and self._calib_display and self._calib_display.is_calibrating:
             if self._calib_phase and self._calib_phase.result:
                 overlay = self._draw_calibration_result(overlay)
@@ -252,7 +274,29 @@ class FocusOverlay:
                 overlay = self._draw_calibration_full(overlay)
 
         # 混合原始帧和叠加层
-        return cv2.addWeighted(overlay, self.config.alpha, frame, 1 - self.config.alpha, 0)
+        result = cv2.addWeighted(overlay, self.config.alpha, frame, 1 - self.config.alpha, 0)
+
+        # v4.3: FPS 移右下角 (避免与状态栏重叠), 由 main.py 显式传入 fps
+        if self.config.show_fps and fps is not None:
+            h, w = result.shape[:2]
+            fps_text = f"FPS {fps:.0f}"
+            (tw, th), _ = cv2.getTextSize(fps_text, self.config.font, 0.45, 1)
+            cv2.putText(result, fps_text, (w - tw - 12, h - 12),
+                        self.config.font, 0.45, COLOR_TEXT_MUTED, 1)
+
+        return result
+
+    def set_mode(self, mode: str) -> None:
+        """设置顶层 MODE 状态, 用于状态栏指示器
+
+        Args:
+            mode: "MONITORING" / "CALIBRATING" / "PAUSED" / "INITIALIZING" / "ERROR"
+        """
+        valid = ("MONITORING", "CALIBRATING", "PAUSED", "INITIALIZING", "ERROR")
+        if mode not in valid:
+            logger.warning("set_mode: 未知 mode '%s', 用 'INITIALIZING' 兜底", mode)
+            mode = "INITIALIZING"
+        self._current_mode = mode
 
     def _draw_status_bar(
         self,
@@ -261,47 +305,111 @@ class FocusOverlay:
         fatigue_level: Optional[str],
         eye_detected: bool,
         face_detected: bool,
+        glasses_str: Optional[str] = None,
     ) -> np.ndarray:
-        """绘制顶部状态栏"""
+        """v4.3 重设计: 顶部单行 4 段状态栏 (避免重叠)
+
+        4 段布局 (640 宽窗口):
+          [左 0-220]   MODE 指示器 + Face + Eye
+          [中左 220-380] FOCUS 分数
+          [中右 380-540] FATIGUE 等级
+          [右 540-640]  Glasses 状态
+        """
         h, w = frame.shape[:2]
-        bar_height = 40
+        bar_height = self.config.status_bar_height  # 60
 
         # 半透明背景
         overlay = frame.copy()
-        cv2.rectangle(overlay, (0, 0), (w, bar_height), (40, 40, 40), -1)
-        frame = cv2.addWeighted(overlay, 0.7, frame, 0.3, 0)
+        cv2.rectangle(overlay, (0, 0), (w, bar_height), self.config.background_color, -1)
+        frame = cv2.addWeighted(overlay, 0.75, frame, 0.25, 0)
+        # 底部细线分隔
+        cv2.line(frame, (0, bar_height), (w, bar_height), (80, 80, 80), 1)
 
-        # 状态图标
-        status_x = 15
-        y = 25
+        y_main = 28        # 主文字基线
+        y_indicator = 48   # MODE 指示器副文字 (颜色提示)
+        font_main = 0.55
+        thickness = 1
+        text_color = self.config.text_color
+        muted_color = COLOR_TEXT_MUTED
 
-        # 人脸检测状态
-        face_icon = "[✓]" if face_detected else "[✗]"
-        face_color = (0, 255, 0) if face_detected else (0, 0, 255)
-        cv2.putText(frame, f"Face: {face_icon}", (status_x, y),
-                    self.config.font, 0.5, face_color, 1)
-        status_x += 100
+        # === Zone 1: 左 0-220 (MODE + Face + Eye) ===
+        x = 12
+        # MODE 指示器 (圆点 + 文字)
+        mode_color = self._mode_color()
+        cv2.circle(frame, (x + 6, y_main - 5), 5, mode_color, -1)
+        cv2.putText(frame, self._current_mode, (x + 18, y_main),
+                    self.config.font, font_main, mode_color, thickness + 1)
+        x += 18 + len(self._current_mode) * 9 + 18
 
-        # 眼睛检测状态
-        eye_icon = "[✓]" if eye_detected else "[✗]"
-        eye_color = (0, 255, 0) if eye_detected else (0, 0, 255)
-        cv2.putText(frame, f"Eye: {eye_icon}", (status_x, y),
-                    self.config.font, 0.5, eye_color, 1)
-        status_x += 80
+        # Face / Eye 图标 (小)
+        face_icon = "Face" + ("✓" if face_detected else "✗")
+        face_color = (0, 200, 0) if face_detected else (0, 0, 220)
+        cv2.putText(frame, face_icon, (x, y_main),
+                    self.config.font, 0.45, face_color, 1)
+        x += len(face_icon) * 8 + 10
 
-        # 专注度分数
+        eye_icon = "Eye" + ("✓" if eye_detected else "✗")
+        eye_color = (0, 200, 0) if eye_detected else (0, 0, 220)
+        cv2.putText(frame, eye_icon, (x, y_main),
+                    self.config.font, 0.45, eye_color, 1)
+
+        # === Zone 2: 中左 FOCUS ===
         if focus_score is not None:
-            cv2.putText(frame, f"FOCUS: {focus_score:.0f}", (status_x, y),
-                        self.config.font, 0.5, self.config.focus_color, 1)
-            status_x += 120
+            focus_text = f"FOCUS  {focus_score:.0f}"
+            focus_color = self._focus_color(focus_score)
+            x_focus = 240
+            cv2.putText(frame, focus_text, (x_focus, y_main),
+                        self.config.font, 0.6, focus_color, 2)
 
-        # 疲劳等级
+        # === Zone 3: 中右 FATIGUE ===
         if fatigue_level is not None:
-            level_color = self._fatigue_color(fatigue_level)
-            cv2.putText(frame, f"FATIGUE: {fatigue_level}", (status_x, y),
-                        self.config.font, 0.5, level_color, 1)
+            fatigue_text = f"FATIGUE  {fatigue_level}"
+            fatigue_color = self._fatigue_color(fatigue_level)
+            x_fatigue = 380
+            cv2.putText(frame, fatigue_text, (x_fatigue, y_main),
+                        self.config.font, 0.55, fatigue_color, 2)
+
+        # === Zone 4: 右 Glasses ===
+        if glasses_str:
+            glasses_text = f"👓 {glasses_str}"
+            # 用 putText 不能直接画 emoji, 用 ASCII 替代
+            glasses_text = f"GLASSES  {glasses_str}"
+            glasses_color = muted_color
+            # 右对齐: 距右边 12px
+            (tw, th), _ = cv2.getTextSize(glasses_text, self.config.font, 0.45, 1)
+            x_glasses = w - tw - 12
+            cv2.putText(frame, glasses_text, (x_glasses, y_main),
+                        self.config.font, 0.45, glasses_color, 1)
 
         return frame
+
+    def _mode_color(self) -> Tuple[int, int, int]:
+        """MODE 状态对应颜色 (BGR)"""
+        return {
+            "MONITORING": (0, 200, 100),    # 绿
+            "CALIBRATING": (0, 165, 255),   # 橙
+            "PAUSED": (180, 180, 180),       # 灰
+            "INITIALIZING": (255, 255, 0),   # 黄
+            "ERROR": (0, 0, 220),            # 红
+        }.get(self._current_mode, (200, 200, 200))
+
+    def _focus_color(self, score: float) -> Tuple[int, int, int]:
+        """FOCUS 分数对应颜色 (绿 > 70, 黄 50-70, 红 < 50)"""
+        if score >= 70:
+            return (0, 220, 0)     # 绿 (专注)
+        if score >= 50:
+            return (0, 220, 220)   # 黄 (中等)
+        return (0, 0, 220)         # 红 (走神)
+
+    def _fatigue_color(self, level) -> Tuple[int, int, int]:
+        """FATIGUE 等级对应颜色 (BGR)"""
+        if level is None:
+            return self.config.text_color
+        return {
+            "LOW": (0, 200, 100),
+            "MEDIUM": (0, 200, 220),
+            "HIGH": (0, 0, 220),
+        }.get(level, (200, 200, 200))
 
     def _draw_score_breakdown(
         self,
@@ -468,19 +576,6 @@ class FocusOverlay:
         """
         self._alerts.append(AlertMessage(level=level, text=text, timestamp=time.time()))
         logger.debug("添加告警: [%s] %s", level.value, text)
-
-    def _fatigue_color(self, fatigue_level: Optional[str]) -> Tuple[int, int, int]:
-        """获取疲劳等级对应颜色"""
-        if fatigue_level is None:
-            return self.config.text_color
-        level = fatigue_level.upper()
-        if level == "LOW":
-            return (0, 255, 0)      # 绿色
-        elif level == "MEDIUM":
-            return (0, 255, 255)   # 黄色
-        elif level == "HIGH":
-            return (0, 0, 255)     # 红色
-        return self.config.text_color
 
     def _alert_color(self, level: AlertLevel) -> Tuple[int, int, int]:
         """获取告警级别对应颜色"""

@@ -154,13 +154,17 @@ class TestFocusOverlay:
         assert len(overlay._alerts) <= 3  # 最多保留3条
 
     def test_fatigue_color_method(self):
-        """测试疲劳颜色映射"""
+        """测试疲劳颜色映射 (v4.3 重设计后: 调暗让绿不刺眼)"""
         overlay = FocusOverlay()
 
-        assert overlay._fatigue_color("LOW") == (0, 255, 0)
-        assert overlay._fatigue_color("MEDIUM") == (0, 255, 255)
-        assert overlay._fatigue_color("HIGH") == (0, 0, 255)
+        # v4.3 新调色板: (0, 200, 100) / (0, 200, 220) / (0, 0, 220)
+        assert overlay._fatigue_color("LOW") == (0, 200, 100)
+        assert overlay._fatigue_color("MEDIUM") == (0, 200, 220)
+        assert overlay._fatigue_color("HIGH") == (0, 0, 220)
+        # None → 默认 text_color
         assert overlay._fatigue_color(None) == overlay.config.text_color
+        # 未知等级 → 灰色
+        assert overlay._fatigue_color("UNKNOWN") == (200, 200, 200)
 
     def test_alert_color_method(self):
         """测试告警颜色映射"""
