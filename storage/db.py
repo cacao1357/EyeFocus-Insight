@@ -298,6 +298,7 @@ class DatabaseManager:
         Note:
             使用 uuid4 而非时间戳以避免同微秒 UNIQUE 冲突。
             v4.0 修复：原 datetime 微秒方案 100 次同微秒调用有 97% 失败率。
+            v4.3 M-15 修复：重试同时覆盖 OperationalError ('database is locked' 也重试)。
         """
         # 最多 5 次重试（理论上 uuid4 不会冲突，但保留兜底）
         for _ in range(5):
@@ -313,8 +314,11 @@ class DatabaseManager:
                     )
                 logger.info("创建会话: %s", session_id)
                 return session_id
-            except sqlite3.IntegrityError:
-                # 极低概率的 uuid 碰撞，重试
+            except (sqlite3.IntegrityError, sqlite3.OperationalError) as e:
+                # IntegrityError: 极低概率的 uuid 碰撞
+                # OperationalError: 'database is locked' 等并发情况, 短暂等待后重试
+                logger.warning("create_session 重试 (原因: %s): %s", type(e).__name__, e)
+                time.sleep(0.05)
                 continue
         # 5 次仍失败，向上抛
         raise RuntimeError("create_session 重试 5 次后仍冲突（极不可能，请检查 sessions 表 UNIQUE 约束）")

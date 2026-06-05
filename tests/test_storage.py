@@ -530,3 +530,64 @@ class TestDatabaseManager:
                     f"close() 后 .db-wal 应被截断 (size=0), "
                     f"实际 size={wal_size_after} (close 前 {wal_size_before})"
                 )
+
+    def test_create_session_retries_on_operational_error_M15(self):
+        """M-15: create_session 5 次重试必须同时覆盖 OperationalError
+        修复前只 catch IntegrityError, 'database is locked' 等 OperationalError 立即失败
+        修复后 IntegrityError + OperationalError 都触发重试
+        """
+        import sqlite3
+        import inspect
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "retry.db")
+            from storage.db import DBConfig
+            db = DatabaseManager(config=DBConfig(db_path=db_path))
+            db.initialize()
+            try:
+                # 1) 源码层验证: create_session 的 except 必须含 OperationalError
+                src = inspect.getsource(db.create_session)
+                assert "OperationalError" in src, (
+                    f"create_session 重试 except 必须含 sqlite3.OperationalError. "
+                    f"实际源码:\n{src}"
+                )
+
+                # 2) 行为层验证: 通过 _conn proxy 让前 2 次 INSERT 抛 OperationalError, 第 3 次成功
+                real_conn = db._conn
+                call_count = {"n": 0}
+
+                class FlakyCursor:
+                    def __init__(self, real):
+                        self._real = real
+                    def execute(self, sql, params=()):
+                        if "INSERT INTO sessions" in sql:
+                            call_count["n"] += 1
+                            if call_count["n"] <= 2:
+                                raise sqlite3.OperationalError("database is locked")
+                        return self._real.execute(sql, params)
+                    def __getattr__(self, name):
+                        return getattr(self._real, name)
+                    def close(self):
+                        return self._real.close()
+
+                class ConnProxy:
+                    def __init__(self, real):
+                        self._real = real
+                    def cursor(self):
+                        return FlakyCursor(self._real.cursor())
+                    def __getattr__(self, name):
+                        return getattr(self._real, name)
+
+                db._conn = ConnProxy(real_conn)
+                try:
+                    session_id = db.create_session()
+                finally:
+                    db._conn = real_conn
+
+                assert session_id, "create_session 应在重试后成功"
+                assert call_count["n"] == 3, (
+                    f"前 2 次 OperationalError 应触发重试, 第 3 次成功. "
+                    f"实际调用 {call_count['n']} 次"
+                )
+            finally:
+                db.close()
