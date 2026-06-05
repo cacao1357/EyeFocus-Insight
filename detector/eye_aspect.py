@@ -165,7 +165,8 @@ class EyeAspectDetector:
         Args:
             factor: 调整因子, 通常 0.7-1.3 范围
         """
-        self._adjustment_factor = max(0.0, float(factor))
+        # M-11: 缺上界修复, 改为 clamp [0.7, 1.3] (匹配 docstring 声明)
+        self._adjustment_factor = max(0.7, min(1.3, float(factor)))
         if self._has_baseline:
             self.ear_threshold = self._baseline_ear * 0.75 * self._adjustment_factor
             logger.info("EAR 阈值 adjustment 已应用: %.4f (factor=%.3f)",

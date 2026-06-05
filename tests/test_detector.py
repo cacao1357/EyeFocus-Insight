@@ -169,14 +169,37 @@ class TestEyeAspectDetector:
     def test_set_adjustment_factor_without_baseline_P0(self):
         """P0: 没 set_baseline 就 set_adjustment_factor, factor 保存但不立即生效。"""
         detector = EyeAspectDetector()
-        detector.set_adjustment_factor(0.5)
-        assert detector.get_stats()["adjustment_factor"] == 0.5
+        # M-11: factor 范围 [0.7, 1.3], 改用 0.8
+        detector.set_adjustment_factor(0.8)
+        assert detector.get_stats()["adjustment_factor"] == 0.8
         # 没 baseline, threshold 不变
         assert detector.ear_threshold == 0.26  # 默认 DEFAULT_EAR_THRESHOLD
 
         # 后续 set_baseline 应该用上 factor
         detector.set_baseline(0.40)
-        assert detector.ear_threshold == pytest.approx(0.40 * 0.75 * 0.5, abs=0.001)
+        assert detector.ear_threshold == pytest.approx(0.40 * 0.75 * 0.8, abs=0.001)
+
+    # ===== M-11: set_adjustment_factor clamp [0.7, 1.3] =====
+
+    def test_set_adjustment_factor_clamp_upper_bound_M11(self):
+        """M-11: factor=2.0 应被 clamp 到 1.3 (上界)
+        原代码只有 max(0.0, factor) 下界, 缺上界, factor=2.0 → 阈值翻倍
+        """
+        detector = EyeAspectDetector()
+        detector.set_baseline(0.35)
+        detector.set_adjustment_factor(2.0)
+        assert detector._adjustment_factor <= 1.3, \
+            f"M-11 失败: 期望 _adjustment_factor <= 1.3, 实际 {detector._adjustment_factor}"
+
+    def test_set_adjustment_factor_clamp_lower_bound_M11(self):
+        """M-11: factor=-1.0 应被 clamp 到 0.7 (下界)
+        原代码 max(0.0, -1.0) = 0.0, 应为 0.7
+        """
+        detector = EyeAspectDetector()
+        detector.set_baseline(0.35)
+        detector.set_adjustment_factor(-1.0)
+        assert detector._adjustment_factor >= 0.7, \
+            f"M-11 失败: 期望 _adjustment_factor >= 0.7, 实际 {detector._adjustment_factor}"
 
     def test_open_threshold_is_baseline_090(self):
         """T145: 测试睁眼阈值 = baseline * 0.90"""
