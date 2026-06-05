@@ -547,6 +547,53 @@ class TestHTMLReportGenerator:
         # 至少 2 个 chart-error 标记
         assert html.count("chart-error") >= 2
 
+    # ===== M-17: session_id HTML XSS escape =====
+
+    def test_m17_session_id_escaped_in_html(
+        self,
+        sample_focus_records,
+        sample_fatigue_records,
+        sample_blink_records,
+    ):
+        """M-17: session.session_id 嵌入 HTML 头部/详情表时必须 html.escape()
+
+        Bug: session_id 含 HTML 元字符 (<, >, &, ", ') 时，原 f-string 直接
+        拼入，未 escape，导致可注入 <script>alert(1)</script> 等。
+        """
+        from reporter.report_html import HTMLReportGenerator
+
+        malicious_id = '"><script>alert("xss")</script>'
+        session = Session(
+            session_id=malicious_id,
+            start_time=datetime.now() - timedelta(minutes=30),
+            end_time=datetime.now(),
+            baseline_ear=0.25,
+            baseline_yaw_std=3.0,
+            baseline_pitch_std=3.0,
+            cqs_score=85.0,
+            glasses_mode=GlassesMode.WITHOUT_GLASSES,
+            is_calibrated=True,
+            is_active=False,
+        )
+
+        html_gen = HTMLReportGenerator(db_manager=None)
+        html = html_gen.generate_report_from_data(
+            session=session,
+            focus_records=sample_focus_records,
+            fatigue_records=sample_fatigue_records,
+            blink_records=sample_blink_records,
+        )
+
+        # 1) 原始 XSS payload 不应作为可执行 HTML 出现
+        assert "<script>alert" not in html, \
+            f"session_id 未转义, 可执行 <script> 注入: {html[:500]}"
+        assert "</script>" not in html.replace("</body>", "").replace("</html>", ""), \
+            "session_id 注入导致 </script> 提前闭合"
+
+        # 2) 转义后的字符应出现 (&lt; &gt; &quot;)
+        assert "&lt;script&gt;" in html, \
+            "session_id 应被 html.escape 转为 &lt;script&gt;"
+
     def test_h10_normal_charts_have_no_error_marker(
         self,
         sample_session,

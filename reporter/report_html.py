@@ -16,6 +16,7 @@ import base64
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from html import escape as html_escape
 from io import BytesIO
 from typing import List, Optional
 
@@ -404,6 +405,9 @@ class HTMLReportGenerator:
         end_time = session.end_time.strftime("%Y-%m-%d %H:%M:%S") if session.end_time else "进行中"
         duration_str = self._format_duration(data.total_duration)
 
+        # M-17: session_id 来自外部，需 html_escape 防止 XSS
+        safe_session_id = html_escape(session.session_id)
+
         # 专注度等级
         focus_class = self._get_stat_class(data.avg_focus, 70, 50)
         blink_class = self._get_blink_stat_class(data.avg_blink_rate)
@@ -428,7 +432,7 @@ class HTMLReportGenerator:
         <div class="header">
             <h1>EyeFocus Insight 专注度分析报告</h1>
             <div class="subtitle">
-                会话 ID: {session.session_id} | 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+                会话 ID: {safe_session_id} | 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             </div>
         </div>
 
@@ -488,7 +492,7 @@ class HTMLReportGenerator:
             <table style="width: 100%; border-collapse: collapse;">
                 <tr style="border-bottom: 1px solid #eee;">
                     <td style="padding: 8px; color: #666;">会话 ID</td>
-                    <td style="padding: 8px;">{session.session_id}</td>
+                    <td style="padding: 8px;">{safe_session_id}</td>
                 </tr>
                 <tr style="border-bottom: 1px solid #eee;">
                     <td style="padding: 8px; color: #666;">开始时间</td>
