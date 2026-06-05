@@ -346,6 +346,36 @@ class TestFatigueAnalyzer:
 class TestFocusAnalyzerBaselineZero:
     """H-05: _compute_eye_score baseline_ear=0 必须不除零"""
 
+    def test_focus_analyzer_no_dead_ear_thresholds_M04(self):
+        """M-04: _ear_low_thresh / _ear_high_thresh 死代码, 必须删除
+
+        复盘: __init__ / set_baseline 中赋值但全类无引用, 是 v4 早期 EAR 阈值
+        标记方案的残留, 现 _compute_eye_score 改用相对偏差计算, 不再需要绝对阈值。
+        """
+        import inspect
+        from analyzer.focus import FocusAnalyzer
+
+        # 1) 实例化不抛异常
+        analyzer = FocusAnalyzer()
+        assert not hasattr(analyzer, "_ear_low_thresh"), (
+            "M-04 死代码 _ear_low_thresh 仍存在, 应删除"
+        )
+        assert not hasattr(analyzer, "_ear_high_thresh"), (
+            "M-04 死代码 _ear_high_thresh 仍存在, 应删除"
+        )
+
+        # 2) 源码中无任何引用
+        source = inspect.getsource(FocusAnalyzer)
+        assert "_ear_low_thresh" not in source, (
+            "M-04 源码中仍出现 _ear_low_thresh, 应删除"
+        )
+        assert "_ear_high_thresh" not in source, (
+            "M-04 源码中仍出现 _ear_high_thresh, 应删除"
+        )
+
+        # 3) set_baseline 不抛异常
+        analyzer.set_baseline(ear=0.30, yaw_std=3.0, pitch_std=3.0)
+
     def test_focus_analyzer_baseline_ear_zero_no_crash_H05(self):
         """H-05: set_baseline(0.0) 后 _compute_eye_score 必须不除零崩溃
         修法: _compute_eye_score 入口加 if self.baseline_ear <= 0: return 50.0

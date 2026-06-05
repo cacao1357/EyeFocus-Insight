@@ -149,10 +149,6 @@ class FocusAnalyzer:
         self._face_lost_start_time: Optional[float] = None  # 人脸丢失起始时间
         self._last_valid_focus_score: float = 0.0  # 上次有效的专注度分数
 
-        # EAR 阈值（基于基线）
-        self._ear_low_thresh = baseline_ear * 0.7
-        self._ear_high_thresh = baseline_ear * 1.3
-
     def set_blink_detector(self, blink_detector) -> None:
         """设置眨眼检测器引用
 
@@ -179,10 +175,6 @@ class FocusAnalyzer:
             self.baseline_yaw_std = yaw_std
         if pitch_std is not None:
             self.baseline_pitch_std = pitch_std
-
-        # 重新计算阈值
-        self._ear_low_thresh = ear * 0.7
-        self._ear_high_thresh = ear * 1.3
 
         # 重置卡尔曼滤波器
         if self._kalman:
