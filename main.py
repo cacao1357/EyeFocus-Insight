@@ -698,6 +698,9 @@ class EyeFocusApp:
 
         # 状态标志
         self._running: bool = False
+        # v4.3 修复: 重新引入 _paused (M-22 误删了字段但 _render_frame 还在引用)
+        # P 键切换, 不与窗口拖动混淆 (cv2.waitKey 拖窗口时返回 255 不触发)
+        self._paused: bool = False
 
         # 子组件（保持与测试兼容的属性名）
         self._camera_manager: Optional[CameraManager] = None
@@ -924,6 +927,18 @@ class EyeFocusApp:
         if key == ord('c') or key == ord('C'):
             if self._calib_coordinator and not self._calib_coordinator.is_active():
                 self.start_calibration_flow()
+            return
+
+        # P 键或空格：切换暂停 (v4.3 修复, 不与窗口拖动混淆)
+        if key == ord('p') or key == ord('P') or key == 32:  # 32 = space
+            self._paused = not self._paused
+            logger.info("用户切换暂停: %s", "PAUSED" if self._paused else "RESUMED")
+            return
+
+    def toggle_pause(self) -> None:
+        """对外 API: 切换暂停 (供 GUI 按钮或测试用)"""
+        self._paused = not self._paused
+        logger.info("暂停状态: %s", "PAUSED" if self._paused else "RESUMED")
 
     def _render_frame(self, frame: np.ndarray) -> None:
         """渲染帧到窗口

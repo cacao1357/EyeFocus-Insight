@@ -186,14 +186,27 @@ class TestM22DeadCodeFields:
         assert not hasattr(app, "_shutdown_event"), \
             "_shutdown_event 是死代码字段, 应已删除"
 
-    def test_no_paused_attribute(self):
-        """M-22 选项 A: 实例化后不应再有 _paused 属性"""
+    def test_paused_attribute_exists_and_default_false(self):
+        """v4.3 修复: _paused 是合法字段, 默认 False, P 键切换
+        (M-22 误删字段但 _render_frame 还在引用导致 AttributeError 崩溃)
+        """
         from main import EyeFocusApp
 
         app = EyeFocusApp()
-        # _paused 从未读也从未写 (除 init 外), 死代码, 应已删除
-        assert not hasattr(app, "_paused"), \
-            "_paused 是死代码字段, 应已删除"
+        assert hasattr(app, "_paused"), \
+            "_paused 应被保留 (v4.3 修复), 它是 _render_frame line 981 引用的合法字段"
+        assert app._paused is False, f"_paused 默认应为 False, 实际 {app._paused}"
+
+    def test_toggle_pause_api(self):
+        """v4.3 修复: toggle_pause() API 可切换 _paused"""
+        from main import EyeFocusApp
+
+        app = EyeFocusApp()
+        assert app._paused is False
+        app.toggle_pause()
+        assert app._paused is True, "调用 toggle_pause() 后应进入 PAUSED"
+        app.toggle_pause()
+        assert app._paused is False, "再调用 toggle_pause() 应恢复 RESUMED"
 
     def test_signal_handler_does_not_set_shutdown_event(self):
         """M-22 选项 A: _signal_handler 不再 set _shutdown_event (字段已删除)"""
