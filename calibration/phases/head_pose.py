@@ -74,15 +74,14 @@ class HeadPosePhase(Phase):
         self._last_sub_idx = -1
         self._stuck_counter = 0
         self._current_sub_idx = 0
+        # v4.3 CAL-PHASE-02 修复: _log_counter 在 reset() 时清零, 避免
+        # 用户"重做"头部姿态后, 第一次诊断日志时机错位 (max ±30 帧)
+        self._log_counter = 0
 
     def current_sub_phase(self, elapsed_sec: float) -> HeadSubPhase:
         # T-CAL-25: click-to-advance, 按 _current_sub_idx 而不是 elapsed
         idx = min(self._current_sub_idx, 3)
         return self.sub_phases[idx]
-
-    def is_current_sub_done(self) -> bool:
-        """T-CAL-25: click-to-advance, 始终返回 False (永远不停, 等用户点继续)。"""
-        return False
 
     def advance_sub_phase(self) -> bool:
         """T-CAL-25: 用户点继续后调用, 推进到下一 sub-phase。

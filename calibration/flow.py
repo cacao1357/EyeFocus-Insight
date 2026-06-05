@@ -150,10 +150,7 @@ class CalibrationFlow:
         # T-CAL-25: 头部姿态 TTS 切换 (click-to-advance 模式)
         # 旧 T-CAL-18/23 代码已删除 (用 elapsed 计算 sub_idx 在 click-to-advance 模式下错)
         # TTS 现在只在 _start_phase (阶段启动) + _handle_action (用户点继续) 触发
-        if (isinstance(self._current_phase, HeadPosePhase)
-                and self._state != FlowState.PHASE_RUNNING):
-            # 重置 tracker (非运行状态)
-            self._last_head_sub_idx = -1
+        # v4.3 CAL-FLOW-01 修复: 删 _last_head_sub_idx 死代码 (writes only, 0 读取)
 
         # 注册按钮 + 收输入
         self._input.register_buttons(self._panel.get_buttons(info))

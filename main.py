@@ -172,10 +172,12 @@ class CameraManager:
         """停止摄像头（保留 start() 重启能力，等价于 release 但不删 self._camera_index）
 
         v4.0.2 配合 B3 修复: 验证摄像头后立即停止，main_loop 会再次 start。
+
+        v4.3 fix: 移除 dead code (return True 在 logger.info 前, 日志永远不打印)
         """
         self.release()
-        return True
         logger.info("摄像头已释放")
+        return True
 
     @property
     def is_running(self) -> bool:
