@@ -166,6 +166,36 @@ class TestFocusOverlay:
         # 未知等级 → 灰色
         assert overlay._fatigue_color("UNKNOWN") == (200, 200, 200)
 
+    def test_mode_dot_radius_is_12_v4_4(self):
+        """v4.4: MODE 状态栏圆点半径 5 → 12, 字体 0.55 → 0.75, 厚度 1 → 2, 前缀 ●"""
+        overlay = FocusOverlay()
+        overlay.set_mode("MONITORING")
+        import inspect
+        src = inspect.getsource(overlay._draw_status_bar)
+        # 圆点 12 (原 5) — 直接查找 ", 12," 模式 (cv2.circle 第 3 参数)
+        assert ", 12," in src, \
+            f"_draw_status_bar 应含 ', 12,' (cv2.circle 圆点半径), 实际源码不含"
+        # 字体 0.75
+        assert "0.75" in src, f"_draw_status_bar 应使用字体 0.75, 实际不含"
+        # 厚度 2
+        assert ", 2)" in src, f"应使用 thickness=2, 实际不含"
+        # 前缀 ●
+        assert "●" in src, f"应使用 ● 前缀, 实际不含"
+
+    def test_mode_color_mapping_v4_4(self):
+        """v4.4: _mode_color 返回 5 种状态对应颜色"""
+        overlay = FocusOverlay()
+        for mode, expected in [
+            ("MONITORING", (0, 200, 100)),   # 绿
+            ("CALIBRATING", (0, 165, 255)),  # 橙
+            ("PAUSED", (180, 180, 180)),     # 灰
+            ("INITIALIZING", (255, 255, 0)),  # 黄
+            ("ERROR", (0, 0, 220)),          # 红
+        ]:
+            overlay.set_mode(mode)
+            color = overlay._mode_color()
+            assert color == expected, f"mode={mode} 应 {expected}, 实际 {color}"
+
     def test_alert_color_method(self):
         """测试告警颜色映射"""
         overlay = FocusOverlay()

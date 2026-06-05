@@ -327,19 +327,20 @@ class FocusOverlay:
 
         y_main = 28        # 主文字基线
         y_indicator = 48   # MODE 指示器副文字 (颜色提示)
-        font_main = 0.55
-        thickness = 1
+        # v4.4: 字体 0.55 → 0.75, 厚度 1 → 2, 让 MODE 一眼看清
+        font_main = 0.75
+        thickness = 2
         text_color = self.config.text_color
         muted_color = COLOR_TEXT_MUTED
 
         # === Zone 1: 左 0-220 (MODE + Face + Eye) ===
         x = 12
-        # MODE 指示器 (圆点 + 文字)
+        # MODE 指示器 (圆点 + 文字) — v4.4: 圆点 5 → 12, 字体 0.75 粗体, ● 前缀
         mode_color = self._mode_color()
-        cv2.circle(frame, (x + 6, y_main - 5), 5, mode_color, -1)
-        cv2.putText(frame, self._current_mode, (x + 18, y_main),
-                    self.config.font, font_main, mode_color, thickness + 1)
-        x += 18 + len(self._current_mode) * 9 + 18
+        cv2.circle(frame, (x + 6, y_main - 5), 12, mode_color, -1)
+        cv2.putText(frame, f"●{self._current_mode}", (x + 25, y_main),
+                    self.config.font, font_main, mode_color, thickness)
+        x += 25 + len(f"●{self._current_mode}") * 11 + 15
 
         # Face / Eye 图标 (小)
         face_icon = "Face" + ("✓" if face_detected else "✗")
