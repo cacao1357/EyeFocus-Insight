@@ -210,6 +210,37 @@ class TestChartGenerator:
         )
         assert isinstance(result, bytes)
 
+    def test_m19_figure_closed_on_savefig_exception(self, chart_generator):
+        """M-19: fig.savefig 抛异常时, plt.close(fig) 仍须被调 (Figure 不残留)
+
+        Bug: 原 _fig_to_bytes 中 fig.savefig 与 plt.close(fig) 之间无
+        try/finally, 若 savefig 抛异常 (e.g. 磁盘满 / matplotlib 后端故障),
+        plt.close 不会执行, Figure 持续驻留内存, 长时间运行导致 OOM。
+        """
+        import matplotlib.pyplot as plt
+        from reporter.charts import ChartGenerator
+
+        # 创建真实 Figure 走通 _fig_to_bytes, 模拟 savefig 异常
+        fig, ax = plt.subplots()
+        gen = ChartGenerator()
+
+        with patch.object(fig, "savefig", side_effect=RuntimeError("savefig 失败: 模拟")):
+            with patch("reporter.charts.plt.close") as mock_close:
+                # 调用 _fig_to_bytes 应当传播 savefig 异常
+                with pytest.raises(RuntimeError, match="savefig 失败"):
+                    gen._fig_to_bytes(fig)
+                # 关键: plt.close(fig) 仍必须被调用一次, 防止 Figure 残留
+                assert mock_close.called, \
+                    "fig.savefig 异常时 plt.close(fig) 未调用, Figure 泄漏!"
+                # 验证传入的是同一个 fig 对象
+                called_args = mock_close.call_args
+                assert called_args[0][0] is fig or called_args[1].get("fig") is fig or \
+                    (len(called_args[0]) >= 1 and called_args[0][0] is fig), \
+                    f"plt.close 应传入被泄漏的 fig, 实参: {called_args}"
+
+        # 兜底清理 (万一 plt.close mock 漏掉)
+        plt.close(fig)
+
 
 # ============ InsightsEngine Tests ============
 

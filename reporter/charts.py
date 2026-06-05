@@ -345,10 +345,15 @@ class ChartGenerator:
         return self._fig_to_bytes(fig)
 
     def _fig_to_bytes(self, fig) -> bytes:
-        """将 matplotlib 图表转换为 PNG 字节数据"""
+        """将 matplotlib 图表转换为 PNG 字节数据
+
+        M-19: savefig 异常时 plt.close(fig) 仍须执行, 防止 Figure 内存泄漏。
+        """
         buf = io.BytesIO()
-        fig.savefig(buf, format='png', dpi=self.dpi, bbox_inches='tight')
-        plt.close(fig)
+        try:
+            fig.savefig(buf, format='png', dpi=self.dpi, bbox_inches='tight')
+        finally:
+            plt.close(fig)
         buf.seek(0)
         return buf.getvalue()
 
