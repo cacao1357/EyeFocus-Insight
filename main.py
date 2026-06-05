@@ -105,6 +105,14 @@ class CameraManager:
         Returns:
             True 如果启动成功
         """
+        # H-02: 入口先 join 残留 read 线程, 避免旧线程在新 cap 替换后并发 read
+        if self._read_thread is not None and self._read_thread.is_alive():
+            self._read_thread.join(timeout=3.0)
+            if self._read_thread.is_alive():
+                logger.warning(
+                    "CameraManager.start(): 残留 read 线程未在 3s 内退出, 继续启动"
+                )
+
         self._cap = cv2.VideoCapture(self._camera_index)
 
         if not self._cap.isOpened():
