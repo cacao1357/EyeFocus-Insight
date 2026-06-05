@@ -510,5 +510,5 @@ def create_fatigue_analyzer(baseline_blink_rate: float = 15.0) -> FatigueAnalyze
     return FatigueAnalyzer(
         baseline_blink_rate=baseline_blink_rate,
         perclos_window=get_yaml_value("fatigue", "perclos_window", default=30.0),
-        perclos_threshold_mild=get_yaml_value("fatigue", "perclos_threshold_mild", default=0.15),
+        perclos_threshold_mild=get_yaml_value("fatigue", "perclos_threshold_mild", default=5.0),
     )
