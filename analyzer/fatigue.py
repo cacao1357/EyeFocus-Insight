@@ -128,6 +128,11 @@ class FatigueAnalyzer:
         self._perclos_history.clear()
         self._medium_onset_time = None
         self._high_onset_time = None
+        # M-01: 清空 EAR/head 滑动窗口 + 上次眨眼率, 避免跨 session 复用实例时
+        # 上 session 残留数据污染新 session 开头几秒的 avg_ear_nadir/avg_head_stability
+        self._recent_ear_nadirs.clear()
+        self._recent_head_stabilities.clear()
+        self._last_blink_rate = 0.0
         logger.info("疲劳分析开始追踪")
 
     def set_baseline_blink_rate(self, baseline_blink_rate: float) -> None:

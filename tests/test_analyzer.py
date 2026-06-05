@@ -248,6 +248,38 @@ class TestFatigueAnalyzer:
             f"perclos_threshold_mild 应为 5.0 (5%), 实际 {analyzer.perclos_threshold_mild}"
         )
 
+    def test_start_clears_recent_ear_head_blink_rate_M01(self):
+        """M-01: start() 必须清空 _recent_ear_nadirs / _recent_head_stabilities / _last_blink_rate
+
+        复盘: 跨 session 复用 FatigueAnalyzer 实例时, 上 session 残留数据会让 session
+        开头几秒的 avg_ear_nadir / avg_head_stability 混入历史, 产生错误的疲劳分数。
+        """
+        from analyzer.fatigue import create_fatigue_analyzer
+        analyzer = create_fatigue_analyzer()
+
+        # 第 1 轮: 模拟上 session 残留数据
+        analyzer.start()
+        for _ in range(3):
+            analyzer.analyze(blink_rate=20.0, ear_nadir=0.10, head_stability=80.0)
+
+        # 断言上 session 残留确实存在
+        assert len(analyzer._recent_ear_nadirs) > 0
+        assert len(analyzer._recent_head_stabilities) > 0
+        assert analyzer._last_blink_rate != 0.0
+
+        # 第 2 轮: 调 start() 期望清空所有历史
+        analyzer.start()
+
+        assert len(analyzer._recent_ear_nadirs) == 0, (
+            f"start() 未清空 _recent_ear_nadirs, 残留 {len(analyzer._recent_ear_nadirs)} 条"
+        )
+        assert len(analyzer._recent_head_stabilities) == 0, (
+            f"start() 未清空 _recent_head_stabilities, 残留 {len(analyzer._recent_head_stabilities)} 条"
+        )
+        assert analyzer._last_blink_rate == 0.0, (
+            f"start() 未重置 _last_blink_rate, 残留 {analyzer._last_blink_rate}"
+        )
+
     def test_get_record_does_not_pollute_sustained_state_H04(self):
         """H-04: get_record() 语义上是只读, 不应修改 _medium_onset_time / _high_onset_time
         原实现 get_record 调 _update_sustained_tracking(), 该函数会修改 self._medium_onset_time,
