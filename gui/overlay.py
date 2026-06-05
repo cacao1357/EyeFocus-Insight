@@ -23,6 +23,24 @@ from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger("eyefocus.gui")
 
+# L-15: cv2 颜色常量 (BGR) 集中到模块顶部, 避免散落魔法数
+COLOR_WHITE: Tuple[int, int, int] = (255, 255, 255)  # 纯白
+COLOR_BLACK: Tuple[int, int, int] = (0, 0, 0)        # 纯黑
+COLOR_GREEN: Tuple[int, int, int] = (0, 255, 0)      # 绿 (正常/检测成功)
+COLOR_RED: Tuple[int, int, int] = (0, 0, 255)        # 红 (警告/未检测)
+COLOR_YELLOW: Tuple[int, int, int] = (0, 255, 255)   # 黄 (MEDIUM 疲劳)
+COLOR_CYAN: Tuple[int, int, int] = (255, 255, 0)     # 青 (细分: Head)
+COLOR_ORANGE: Tuple[int, int, int] = (0, 165, 255)   # 橙 (WARNING 告警)
+COLOR_DARK_BG: Tuple[int, int, int] = (40, 40, 40)   # 半透明状态栏背景
+COLOR_PANEL_BG: Tuple[int, int, int] = (15, 15, 15)  # 校准面板背景
+COLOR_BORDER_GREEN: Tuple[int, int, int] = (0, 200, 100)  # 边框绿
+COLOR_PROGRESS_GREEN: Tuple[int, int, int] = (0, 200, 0)  # 进度条绿
+COLOR_TEXT_LIGHT: Tuple[int, int, int] = (220, 220, 220)  # 次要文字
+COLOR_TEXT_MUTED: Tuple[int, int, int] = (180, 180, 180)  # 提示文字
+COLOR_TEXT_DIM: Tuple[int, int, int] = (100, 100, 100)    # 弱化文字
+COLOR_AMBER: Tuple[int, int, int] = (255, 200, 0)         # 琥珀 (输入提示)
+COLOR_RESULT_TEXT: Tuple[int, int, int] = (150, 150, 150) # 结果页脚
+
 # 默认中文字体路径（Windows 系统字体）
 DEFAULT_FONT_PATH = "C:/Windows/Fonts/simhei.ttf"
 # 尝试加载中文字体
@@ -38,7 +56,7 @@ except Exception:
 
 
 def put_chinese_text(img: np.ndarray, text: str, position: Tuple[int, int],
-                     font: ImageFont.FreeTypeFont = None, color: Tuple[int, int, int] = (255, 255, 255)) -> np.ndarray:
+                     font: ImageFont.FreeTypeFont = None, color: Tuple[int, int, int] = COLOR_WHITE) -> np.ndarray:
     """在图像上绘制中文文本（使用 PIL）
 
     Args:
@@ -107,7 +125,7 @@ class OverlayConfig:
     height: int = 480
     alpha: float = 0.85          # 叠加层透明度
     font: int = cv2.FONT_HERSHEY_SIMPLEX
-    text_color: Tuple[int, int, int] = (255, 255, 255)
+    text_color: Tuple[int, int, int] = COLOR_WHITE
     focus_color: Tuple[int, int, int] = (0, 255, 0)
     fatigue_color: Tuple[int, int, int] = (0, 255, 255)
     alert_warning_color: Tuple[int, int, int] = (0, 165, 255)
@@ -389,7 +407,7 @@ class FocusOverlay:
         # 边框
         cv2.rectangle(frame, (bar_x, bar_y),
                       (bar_x + bar_width, bar_y + bar_height),
-                      (255, 255, 255), 2)
+                      COLOR_WHITE, 2)
 
         # 文字
         status = "校准完成!" if calibration.is_complete else f"校准中... {calibration.current}/{calibration.total}"
@@ -467,7 +485,7 @@ class FocusOverlay:
     def _alert_color(self, level: AlertLevel) -> Tuple[int, int, int]:
         """获取告警级别对应颜色"""
         if level == AlertLevel.INFO:
-            return (255, 255, 255)
+            return COLOR_WHITE
         elif level == AlertLevel.WARNING:
             return self.config.alert_warning_color
         elif level == AlertLevel.ERROR:
@@ -641,7 +659,7 @@ class FocusOverlay:
         x_pos = bar_x + 15
         for param in params:
             frame = put_chinese_text(frame, param,
-                                    (x_pos, bar_y + 65), _chinese_font, (255, 255, 255))
+                                    (x_pos, bar_y + 65), _chinese_font, COLOR_WHITE)
             x_pos += 160
 
         # 继续提示
