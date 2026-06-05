@@ -1,6 +1,5 @@
 """spike/insights/_gen_summary.py - Generate S-SUM report from spike results."""
 import json
-import os
 import datetime
 
 files = ['s11_clustering', 's12_changepoint', 's13_anomaly',
