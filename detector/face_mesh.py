@@ -69,8 +69,15 @@ class FaceMeshDetector:
                 "face_landmarker.task"
             )
 
+        # H-07: 模型文件不存在时 fail-fast，给出明确错误信息
+        # 原代码仅打 logger.warning 后继续，让 MediaPipe BaseOptions 后续抛
+        # 模糊的 RuntimeError / FileNotFoundError("Unable to open file at ...")
+        # — 缺少 "model" / "FaceLandmarker" 关键词，用户难以定位。
         if not os.path.exists(model_path):
-            logger.warning("模型文件不存在: %s，尝试从 MediaPipe assets 加载", model_path)
+            raise FileNotFoundError(
+                f"FaceLandmarker model 文件不存在: {model_path}。"
+                f"请检查 (1) 路径是否正确 (2) 是否已下载 face_landmarker.task。"
+            )
 
         from mediapipe.tasks.python import vision
         from mediapipe.tasks.python.core import base_options as mp_base_options

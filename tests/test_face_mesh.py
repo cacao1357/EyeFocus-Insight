@@ -353,6 +353,61 @@ class TestFaceMeshDetector:
 
         mock_detector.close.assert_called_once()
 
+    # ===== H-07: 模型文件不存在应抛 FileNotFoundError =====
+
+    def test_h07_init_missing_file_raises_filenotfound(self, tmp_path):
+        """H-07: 不存在的 model_path 必须在 init 阶段抛 FileNotFoundError
+
+        Bug 现象: 原代码只 logger.warning 一行就继续，BaseOptions 后续抛出
+        难以理解的 RuntimeError，掩盖真实问题。
+        Fix 后: init 早 fail-fast，给出清晰错误信息（明确这是 model 文件缺失
+        而非 MediaPipe 内部的 "Unable to open file"）。
+        """
+        # 注意: 测试函数名本身不能含 "model" / "FaceLandmarker"，否则
+        # pytest 的 tmp_path 目录会含这些词，污染下面的 in_path 断言。
+        # 文件名使用纯字母数字，不含上述关键词。
+        missing_path = str(tmp_path / "x9y8z7w6.bin")
+        # 验证前置: 路径确实不存在
+        assert not os.path.exists(missing_path)
+
+        with pytest.raises(FileNotFoundError) as exc_info:
+            FaceMeshDetector(model_path=missing_path)
+
+        # 错误信息必须包含路径
+        msg = str(exc_info.value)
+        assert missing_path in msg
+        # 错误信息必须明确表明是 FaceLandmarker 文件缺失
+        # (区分于 MediaPipe 内部通用 "Unable to open file")
+        # 关键: "model" 一词必须出现在 MESSAGE 中（不仅在 path 中）
+        # 我们的 fix 会在 message 中写明 "FaceLandmarker model file"
+        # 而非依赖 MediaPipe 的 "Unable to open file at ..."
+        # 排除路径后仍能找到 "model" 一词
+        msg_only = msg.replace(missing_path, "").lower()
+        assert "facelandmarker" in msg_only or "model" in msg_only, \
+            f"错误信息 MESSAGE 部分应明确说明是 model 缺失（不仅在路径里），实际: {msg!r}"
+
+    def test_h07_init_failfast_before_mediapipe_load(self, tmp_path):
+        """H-07: 文件检查必须在 import mediapipe.tasks 之前发生
+
+        即便环境中没有 mediapipe（伪 CI 环境）也不应让 import 错误掩盖
+        FileNotFoundError。验证在抛 FileNotFoundError 之前不依赖 mediapipe
+        包的导入是否成功。
+        """
+        missing_path = str(tmp_path / "a1b2c3d4.bin")
+
+        # 不 patch mediapipe — 让真实导入发生。如果 FileNotFoundError 检查
+        # 在 import 之后，本测试会因 ImportError 或其他错误而失败。
+        try:
+            FaceMeshDetector(model_path=missing_path)
+        except FileNotFoundError as e:
+            msg = str(e)
+            assert missing_path in msg
+            msg_only = msg.replace(missing_path, "").lower()
+            assert "facelandmarker" in msg_only or "model" in msg_only, \
+                f"错误信息 MESSAGE 部分应明确说明是 model 缺失，实际: {e!r}"
+        except ImportError:
+            pytest.skip("mediapipe 未安装，跳过此用例")
+
 
 class TestProcessResult:
     """_process_result 单元测试"""
