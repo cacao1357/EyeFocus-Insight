@@ -202,6 +202,27 @@ class TestLightDetector:
 
     # ===== M-07: face_region_brightness 空切片 NaN =====
 
+    # ===== M-08: analyze_frame 空帧保护 =====
+
+    def test_analyze_frame_none_returns_default_M08(self):
+        """M-08: 传 None frame → 返回默认 LightResult，不抛 cv2.error"""
+        detector = LightDetector()
+        result = detector.analyze_frame(None)
+        assert result is not None
+        assert result.condition == LightCondition.NORMAL
+        assert result.is_adequate is True
+        assert result.brightness == 0.0
+
+    def test_analyze_frame_empty_array_returns_default_M08(self):
+        """M-08: 传 size=0 frame → 返回默认 LightResult，不抛 cv2.error"""
+        detector = LightDetector()
+        frame = np.array([], dtype=np.uint8)
+        result = detector.analyze_frame(frame)
+        assert result is not None
+        assert result.condition == LightCondition.NORMAL
+        assert result.is_adequate is True
+        assert result.brightness == 0.0
+
     def test_face_region_brightness_no_nan_when_zero_ratio_M07(self):
         """M-07: face_region_ratio=0 → face_h=0/face_w=0 → 切片空数组 np.mean 返回 NaN
         修复后: 入口检查 face_h/face_w 为 0 → 返回 0.0

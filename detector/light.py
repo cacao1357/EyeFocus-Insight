@@ -86,6 +86,16 @@ class LightDetector:
         Returns:
             LightResult 对象
         """
+        # M-08: 入口校验 None/空帧 → 返回默认 LightResult
+        if frame is None or frame.size == 0:
+            return LightResult(
+                condition=LightCondition.NORMAL,
+                brightness=0.0,
+                brightness_std=0.0,
+                face_region_brightness=0.0,
+                is_adequate=True,
+            )
+
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         # 计算整体亮度统计
