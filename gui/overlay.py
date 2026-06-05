@@ -440,6 +440,41 @@ class FocusOverlay:
                         self.config.font, 1.2, (0, 0, 255), 3)
         return frame
 
+    def _draw_no_face_banner(
+        self,
+        frame: np.ndarray,
+        face_detected: bool,
+        last_face_time: Optional[float],
+    ) -> np.ndarray:
+        """v4.4: 无脸检测红底白字横条 (5s+ 倒计时 + 闪烁)
+
+        Args:
+            frame: 当前帧
+            face_detected: 本帧是否检测到人脸
+            last_face_time: 最后一次检测到人脸的时间戳 (None 表示从未检测到)
+        """
+        if face_detected or last_face_time is None:
+            return frame
+        # 5s 阈值, 避免启动时一过性闪烁
+        if time.time() - last_face_time < 5.0:
+            return frame
+
+        lost_sec = int(time.time() - last_face_time)
+        h, w = frame.shape[:2]
+        # 用 ASCII 替代中文 (cv2.putText 默认字体不支持中文; 真机用 simhei.ttf)
+        text = f"Face not detected ({lost_sec}s)"
+        (tw, th), _ = cv2.getTextSize(text, self.config.font, 1.2, 3)
+        bar_w = tw + 40
+        bar_h = th + 30
+        bar_x = (w - bar_w) // 2
+        bar_y = h // 2 - bar_h // 2
+        # 0.5s 周期闪烁
+        if int(time.time() * 2) % 2 == 0:
+            cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (0, 0, 200), -1)
+        cv2.putText(frame, text, (bar_x + 20, bar_y + th + 15),
+                    self.config.font, 1.2, COLOR_WHITE, 3)
+        return frame
+
     def _draw_score_breakdown(
         self,
         frame: np.ndarray,

@@ -701,6 +701,8 @@ class EyeFocusApp:
         # v4.3 修复: 重新引入 _paused (M-22 误删了字段但 _render_frame 还在引用)
         # P 键切换, 不与窗口拖动混淆 (cv2.waitKey 拖窗口时返回 255 不触发)
         self._paused: bool = False
+        # v4.4: 追踪最后检测到人脸的时间, 用于无脸检测红底白字横条
+        self._last_face_time: Optional[float] = None
 
         # 子组件（保持与测试兼容的属性名）
         self._camera_manager: Optional[CameraManager] = None
@@ -859,6 +861,9 @@ class EyeFocusApp:
 
                 if ret and frame is not None:
                     self._frame_processor.process_frame(frame)
+                    # v4.4: 追踪最后检测到人脸的时间 (用于无脸检测红底白字横条)
+                    if self._frame_processor.latest_face_detected:
+                        self._last_face_time = time.time()
                     # FrameProcessor 是帧处理的单一数据源（v4.0 重构）。
                     # _render_frame 直接通过公开属性访问最新结果，无需镜像。
                     self._render_frame(frame)
@@ -1012,6 +1017,7 @@ class EyeFocusApp:
             gaze_score=gaze_score_val,
             glasses_str=glasses_str,
             fps=self._fps,
+            last_face_time=self._last_face_time,  # v4.4: 无脸横幅
         )
 
         # 当人脸未检测到时，显示明确提示 (校准期间)

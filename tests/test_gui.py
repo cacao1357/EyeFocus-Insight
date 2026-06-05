@@ -244,6 +244,29 @@ class TestFocusOverlay:
         assert "int(time.time()" in src, "HIGH 应含 0.5s 周期闪烁逻辑"
         assert "疲劳警告" in src, "HIGH 时源码应含 '疲劳警告' 字符串"
 
+    def test_no_face_banner_exists_v4_4(self):
+        """v4.4: _draw_no_face_banner 方法存在, 5s 阈值 + 红底白字横条
+
+        注: 实际用 ASCII "Face not detected" (cv2.putText 默认字体不支持中文;
+        真机用 simhei.ttf 可渲染中文 "请将面部对准摄像头")。
+        """
+        overlay = FocusOverlay()
+        # 方法存在
+        assert hasattr(overlay, "_draw_no_face_banner"), "_draw_no_face_banner 方法应存在 (v4.4 新增)"
+        import inspect
+        sig = inspect.signature(overlay._draw_no_face_banner)
+        assert "frame" in sig.parameters
+        assert "face_detected" in sig.parameters
+        assert "last_face_time" in sig.parameters
+        # 源码含关键字符串
+        src = inspect.getsource(overlay._draw_no_face_banner)
+        assert "Face not detected" in src, "无脸提示文案 (ASCII fallback)"
+        assert "(0, 0, 200)" in src, "红底 (0,0,200)"
+        assert "5.0" in src, "5s 阈值防一过性闪烁"
+        assert "int(time.time()" in src, "0.5s 周期闪烁"
+        # face_detected=True 或 last_face_time=None 早返回
+        assert "face_detected or last_face_time is None" in src, "应早返回"
+
     def test_alert_color_method(self):
         """测试告警颜色映射"""
         overlay = FocusOverlay()
