@@ -265,3 +265,124 @@ class TestDatabaseManager:
             db = DatabaseManager(config=config)
             db.initialize()
             db.close()  # 不应该抛出异常
+
+    # ========== v4.3 漏洞修复回归测试 ==========
+
+    def test_get_cursor_holds_lock_for_thread_safety_CRIT01(self):
+        """CRIT-01: _get_cursor 必须持锁, 否则共享连接事务可被其他线程 rollback 撤销
+        docstring 承诺线程安全, 但 _get_cursor 实现没 acquire self._lock
+        """
+        import threading
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "thread.db")
+            from storage.db import DBConfig
+            db = DatabaseManager(config=DBConfig(db_path=db_path))
+            db.initialize()
+            try:
+                session_id = db.create_session()
+
+                # 验证 _get_cursor 函数体内有 with self._lock:
+                import inspect
+                src = inspect.getsource(db._get_cursor)
+                assert "self._lock" in src, (
+                    f"_get_cursor 必须使用 self._lock 以兑现 docstring 的线程安全承诺. 实际源码:\n{src}"
+                )
+
+                # 进一步: 并发调用 write_frame 验证互斥 (不要求快, 要求成功)
+                errors = []
+
+                def writer(idx):
+                    try:
+                        for i in range(10):
+                            frame = FrameRecord(
+                                session_id=session_id,
+                                timestamp=float(idx * 100 + i),
+                                ear_left=0.25, ear_right=0.26, ear_avg=0.255,
+                                yaw=0.5, pitch=-1.0, roll=0.2,
+                                gaze_score=85.0, brightness=128.0,
+                                face_detected=True,
+                            )
+                            db.write_frame(session_id, frame)
+                    except Exception as e:
+                        errors.append(e)
+
+                threads = [threading.Thread(target=writer, args=(i,)) for i in range(5)]
+                for t in threads: t.start()
+                for t in threads: t.join()
+
+                assert not errors, f"并发写入应成功, 实际错误: {errors}"
+                records = db.get_frame_records(session_id)
+                assert len(records) == 50, f"应写入 50 条 (5 线程 × 10 帧), 实际 {len(records)}"
+            finally:
+                db.close()
+
+    def test_get_frame_records_preserves_7_new_fields_H08(self):
+        """H-08: get_frame_records 回读必须保留 7 个 v4.x 新增字段
+        当前实现只填 12 个旧字段, 7 个新字段 (blink_flag/perclos/gaze_status/
+        fatigue_label/focus_score/focus_breakdown/light_level) 全部丢失, 被 dataclass 默认值覆盖
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "fields.db")
+            from storage.db import DBConfig
+            db = DatabaseManager(config=DBConfig(db_path=db_path))
+            db.initialize()
+            try:
+                session_id = db.create_session()
+
+                # 写入一条带 7 个非默认新字段的 frame
+                original = FrameRecord(
+                    session_id=session_id,
+                    timestamp=1.0,
+                    ear_left=0.25, ear_right=0.26, ear_avg=0.255,
+                    yaw=0.5, pitch=-1.0, roll=0.2,
+                    gaze_score=85.0, brightness=128.0,
+                    face_detected=True,
+                    blink_flag=True,
+                    perclos=12.5,
+                    gaze_status="away",
+                    fatigue_label="mild",
+                    focus_score=72.3,
+                    focus_breakdown='{"eye":80,"head":65,"gaze":70}',
+                    light_level="normal",
+                )
+                db.write_frame(session_id, original)
+
+                # 回读
+                records = db.get_frame_records(session_id)
+                assert len(records) == 1
+                got = records[0]
+
+                # 7 个新字段必须从 DB 读出, 不能是默认值
+                assert got.blink_flag is True, f"blink_flag 丢失 (got {got.blink_flag})"
+                assert got.perclos == 12.5, f"perclos 丢失 (got {got.perclos})"
+                assert got.gaze_status == "away", f"gaze_status 丢失 (got {got.gaze_status})"
+                assert got.fatigue_label == "mild", f"fatigue_label 丢失 (got {got.fatigue_label})"
+                assert got.focus_score == 72.3, f"focus_score 丢失 (got {got.focus_score})"
+                assert got.focus_breakdown == '{"eye":80,"head":65,"gaze":70}', (
+                    f"focus_breakdown 丢失 (got {got.focus_breakdown})"
+                )
+                assert got.light_level == "normal", f"light_level 丢失 (got {got.light_level})"
+            finally:
+                db.close()
+
+    def test_export_json_nonexistent_session_returns_early_H09(self):
+        """H-09: export_json 收到不存在的 session_id 必须早返回, 不能 AttributeError 崩溃
+        get_session 返回 None 时, line 798 直接访问 session.session_id 抛 AttributeError
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "nonesess.db")
+            from storage.db import DBConfig
+            db = DatabaseManager(config=DBConfig(db_path=db_path))
+            db.initialize()
+            try:
+                output_path = os.path.join(tmpdir, "should_not_be_created.json")
+
+                # 调用不存在的 session_id, 不应抛异常, 也不应创建文件
+                db.export_json("definitely_not_a_real_session_xyz", output_path)
+
+                # 验证函数早返回 (不写文件)
+                assert not os.path.exists(output_path), (
+                    f"session 不存在时不应创建输出文件, 但 {output_path} 存在"
+                )
+            finally:
+                db.close()
