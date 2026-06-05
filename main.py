@@ -1103,26 +1103,36 @@ class EyeFocusApp:
         logger.info("已安全退出")
 
     def _cleanup(self) -> None:
-        """清理资源"""
+        """清理资源
+
+        M-23: db.close() 也用 try/except + logger.exception 包裹 (与 face_detector.close() 一致).
+        所有 close 异常累加到 _cleanup_errors 计数.
+        """
+        # 初始化错误计数 (供 M-23 累加)
+        if not hasattr(self, '_cleanup_errors'):
+            self._cleanup_errors = 0
+
         # 恢复信号处理器
         if self._original_sigint:
             signal.signal(signal.SIGINT, self._original_sigint)
         if self._original_sigterm:
             signal.signal(signal.SIGTERM, self._original_sigterm)
 
-        # 关闭检测器（带超时）— H-13: 异常用 logger.exception 记录完整 traceback
+        # 关闭检测器 — H-13: 异常用 logger.exception 记录完整 traceback
         if self._face_detector:
             try:
                 self._face_detector.close()
             except Exception as e:
-                if not hasattr(self, '_cleanup_errors'):
-                    self._cleanup_errors = 0
                 self._cleanup_errors += 1
                 logger.exception("FaceDetector.close() 异常: %s", e)
 
-        # 关闭数据库
+        # 关闭数据库 — M-23: 与 face_detector.close() 异常处理一致
         if self._db:
-            self._db.close()
+            try:
+                self._db.close()
+            except Exception as e:
+                self._cleanup_errors += 1
+                logger.exception("DatabaseManager.close() 异常: %s", e)
 
     @property
     def is_running(self) -> bool:
