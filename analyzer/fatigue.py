@@ -373,13 +373,69 @@ class FatigueAnalyzer:
 
         return (closed_time / self.perclos_window) * 100.0
 
+    @staticmethod
+    def _compute_sustained(
+        medium_onset: Optional[float],
+        high_onset: Optional[float],
+        current_time: float,
+        multiplier: float,
+        perclos: float,
+        blink_multiplier_low: float,
+        blink_multiplier_high: float,
+        perclos_threshold_mild: float,
+        perclos_threshold_severe: float,
+    ) -> tuple[Optional[float], Optional[float], float, float]:
+        """纯函数: 计算持续时间追踪 (无副作用, 不修改输入)
+
+        Args:
+            medium_onset: 当前 _medium_onset_time 状态
+            high_onset: 当前 _high_onset_time 状态
+            current_time: 当前时间戳
+            multiplier: 眨眼频率相对基线的倍数
+            perclos: 当前 PERCLOS 值 (%)
+            blink_multiplier_low: 中度疲劳眨眼倍数阈值
+            blink_multiplier_high: 重度疲劳眨眼倍数阈值
+            perclos_threshold_mild: 中度疲劳 PERCLOS 阈值 (%)
+            perclos_threshold_severe: 重度疲劳 PERCLOS 阈值 (%)
+
+        Returns:
+            (new_medium_onset, new_high_onset, sustained_medium_seconds, sustained_high_seconds)
+        """
+        # 中度疲劳条件：眨眼率 ≥ 基线×1.3 OR PERCLOS ≥ 5%
+        medium_condition = (multiplier >= blink_multiplier_low) or (
+            perclos >= perclos_threshold_mild
+        )
+
+        # 重度疲劳条件：眨眼率 ≥ 基线×1.8 OR PERCLOS ≥ 10%
+        high_condition = (multiplier >= blink_multiplier_high) or (
+            perclos >= perclos_threshold_severe
+        )
+
+        # 计算中度疲劳持续时间 (新 onset, 不写入 self)
+        if medium_condition:
+            new_medium_onset = medium_onset if medium_onset is not None else current_time
+            sustained_medium = current_time - new_medium_onset
+        else:
+            new_medium_onset = None
+            sustained_medium = 0.0
+
+        # 计算重度疲劳持续时间 (新 onset, 不写入 self)
+        if high_condition:
+            new_high_onset = high_onset if high_onset is not None else current_time
+            sustained_high = current_time - new_high_onset
+        else:
+            new_high_onset = None
+            sustained_high = 0.0
+
+        return new_medium_onset, new_high_onset, sustained_medium, sustained_high
+
     def _update_sustained_tracking(
         self,
         current_time: float,
         multiplier: float,
         perclos: float,
     ) -> tuple[float, float]:
-        """更新持续时间追踪
+        """更新持续时间追踪 (in-place wrapper, 委托给纯函数 _compute_sustained)
 
         Args:
             current_time: 当前时间戳
@@ -389,34 +445,19 @@ class FatigueAnalyzer:
         Returns:
             (sustained_medium_seconds, sustained_high_seconds)
         """
-        # 中度疲劳条件：眨眼率 ≥ 基线×1.3 OR PERCLOS ≥ 5%
-        medium_condition = (multiplier >= self.blink_multiplier_low) or (
-            perclos >= self.perclos_threshold_mild
+        new_m, new_h, sustained_medium, sustained_high = self._compute_sustained(
+            self._medium_onset_time,
+            self._high_onset_time,
+            current_time,
+            multiplier,
+            perclos,
+            self.blink_multiplier_low,
+            self.blink_multiplier_high,
+            self.perclos_threshold_mild,
+            self.perclos_threshold_severe,
         )
-
-        # 重度疲劳条件：眨眼率 ≥ 基线×1.8 OR PERCLOS ≥ 10%
-        high_condition = (multiplier >= self.blink_multiplier_high) or (
-            perclos >= self.perclos_threshold_severe
-        )
-
-        # 更新中度疲劳持续时间
-        if medium_condition:
-            if self._medium_onset_time is None:
-                self._medium_onset_time = current_time
-            sustained_medium = current_time - self._medium_onset_time
-        else:
-            self._medium_onset_time = None
-            sustained_medium = 0.0
-
-        # 更新重度疲劳持续时间
-        if high_condition:
-            if self._high_onset_time is None:
-                self._high_onset_time = current_time
-            sustained_high = current_time - self._high_onset_time
-        else:
-            self._high_onset_time = None
-            sustained_high = 0.0
-
+        self._medium_onset_time = new_m
+        self._high_onset_time = new_h
         return sustained_medium, sustained_high
 
     def get_record(self, session_id: str, timestamp: float) -> Optional[FatigueRecord]:
@@ -435,14 +476,20 @@ class FatigueAnalyzer:
         current_time = timestamp
         perclos = self._compute_perclos(current_time) if self._perclos_history else 0.0
 
-        # 计算持续时间
+        # 计算持续时间 (H-04: 调纯函数 _compute_sustained, 不修改 self 状态)
         sustained_medium = 0.0
         sustained_high = 0.0
         if self._last_analysis_time is not None:
-            sustained_medium, sustained_high = self._update_sustained_tracking(
-                current_time=current_time,
-                multiplier=self._last_blink_rate / self.baseline_blink_rate if self.baseline_blink_rate > 0 else 0.0,
-                perclos=perclos,
+            _, _, sustained_medium, sustained_high = self._compute_sustained(
+                self._medium_onset_time,
+                self._high_onset_time,
+                current_time,
+                self._last_blink_rate / self.baseline_blink_rate if self.baseline_blink_rate > 0 else 0.0,
+                perclos,
+                self.blink_multiplier_low,
+                self.blink_multiplier_high,
+                self.perclos_threshold_mild,
+                self.perclos_threshold_severe,
             )
 
         return FatigueRecord(

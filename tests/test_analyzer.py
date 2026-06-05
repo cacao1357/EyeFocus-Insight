@@ -248,6 +248,43 @@ class TestFatigueAnalyzer:
             f"perclos_threshold_mild 应为 5.0 (5%), 实际 {analyzer.perclos_threshold_mild}"
         )
 
+    def test_get_record_does_not_pollute_sustained_state_H04(self):
+        """H-04: get_record() 语义上是只读, 不应修改 _medium_onset_time / _high_onset_time
+        原实现 get_record 调 _update_sustained_tracking(), 该函数会修改 self._medium_onset_time,
+        污染状态, 影响后续 analyze() 的持续时间基准。
+        """
+        from analyzer.fatigue import create_fatigue_analyzer
+        analyzer = create_fatigue_analyzer()
+        analyzer.start()
+
+        # 1) 跑高眨眼率数据, 让 _fatigue_history 非空 (get_record 才能往下走),
+        #    并触发 medium/high onset
+        for _ in range(3):
+            analyzer.analyze(blink_rate=30.0, ear_nadir=0.08, head_stability=50.0)
+
+        # 2) 跑低眨眼率数据, 让 conditions 变 False, reset _medium_onset_time / _high_onset_time 到 None
+        for _ in range(3):
+            analyzer.analyze(blink_rate=10.0, ear_nadir=0.20, head_stability=90.0)
+
+        # 3) 手动设置 sentinel: 模拟外部状态
+        #    用 sentinel 而不是 None 是为了精确捕获 mutation (None -> 非 None 不会触发, 但 reset 会)
+        SENTINEL = 99999.0
+        analyzer._medium_onset_time = SENTINEL
+        analyzer._high_onset_time = SENTINEL
+
+        # 4) 多次调 get_record — buggy 代码会调 _update_sustained_tracking,
+        #    因 conditions=False, 把 sentinel reset 回 None
+        for i in range(5):
+            analyzer.get_record("test_session", timestamp=time.time() + i * 0.5)
+
+        # 5) 验证 sentinel 未被修改 (buggy 代码会把它重置为 None)
+        assert analyzer._medium_onset_time == SENTINEL, (
+            f"get_record 修改了 _medium_onset_time: {SENTINEL} -> {analyzer._medium_onset_time}"
+        )
+        assert analyzer._high_onset_time == SENTINEL, (
+            f"get_record 修改了 _high_onset_time: {SENTINEL} -> {analyzer._high_onset_time}"
+        )
+
 
 class TestFocusAnalyzerBaselineZero:
     """H-05: _compute_eye_score baseline_ear=0 必须不除零"""
