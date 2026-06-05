@@ -591,3 +591,35 @@ class TestDatabaseManager:
                 )
             finally:
                 db.close()
+
+    def test_save_calibration_raises_on_missing_id_M16(self):
+        """M-16: save_calibration UPDATE 后必须检查 rowcount, 不存在的 calibration_id 不能静默成功
+        修复前 UPDATE 无 WHERE 匹配也算"成功", 上层完全感知不到丢数据
+        修复后 cursor.rowcount == 0 抛 ValueError
+        """
+        from storage.models import CalibrationSignal
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "calib.db")
+            from storage.db import DBConfig
+            db = DatabaseManager(config=DBConfig(db_path=db_path))
+            db.initialize()
+            try:
+                session_id = db.create_session()
+
+                # 正常路径: 创建 calibration → save 应成功
+                cid = db.create_calibration(session_id)
+                signal = CalibrationSignal(
+                    ear_mean=0.28, ear_min=0.10, ear_mid=0.20,
+                    yaw_mean=0.5, yaw_range=(-15.0, 15.0),
+                    pitch_mean=-1.0, pitch_range=(10.0, -10.0),
+                    glasses_mode=False,
+                    timestamp=1.0,
+                )
+                db.save_calibration(cid, session_id, signal)  # 应成功, 不抛
+
+                # 异常路径: 不存在的 calibration_id 必须抛 ValueError
+                bogus_id = 999999
+                with pytest.raises(ValueError, match=str(bogus_id)):
+                    db.save_calibration(bogus_id, session_id, signal)
+            finally:
+                db.close()

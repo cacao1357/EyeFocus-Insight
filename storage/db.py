@@ -688,7 +688,11 @@ class DatabaseManager:
                           signal: 'CalibrationSignal',
                           is_accepted: bool = True,
                           notes: str = "") -> None:
-        """保存校准信号数据"""
+        """保存校准信号数据
+
+        Raises:
+            ValueError: calibration_id 不存在 (v4.3 M-16 修复: 不再静默成功)
+        """
         yaw_left, yaw_right = signal.yaw_range if signal.yaw_range else (0.0, 0.0)
         pitch_up, pitch_down = signal.pitch_range if signal.pitch_range else (0.0, 0.0)
 
@@ -728,6 +732,12 @@ class DatabaseManager:
                     calibration_id,
                 ),
             )
+            # v4.3 M-16 修复: rowcount==0 表示 calibration_id 不存在, 不能静默"成功"
+            if cursor.rowcount == 0:
+                raise ValueError(
+                    f"save_calibration: calibration_id {calibration_id} not found "
+                    f"(session_id={session_id})"
+                )
 
 
     def save_blink_calibration_round(self, calibration_id: int,
