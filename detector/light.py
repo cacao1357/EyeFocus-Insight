@@ -132,6 +132,10 @@ class LightDetector:
         face_h = int(h * self.face_region_ratio)
         face_w = int(w * self.face_region_ratio)
 
+        # M-07: face_h/face_w=0 时切片空数组 np.mean 返回 NaN
+        if face_h == 0 or face_w == 0:
+            return 0.0
+
         top = (h - face_h) // 2
         left = (w - face_w) // 2
 

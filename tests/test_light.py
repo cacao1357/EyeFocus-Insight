@@ -200,6 +200,22 @@ class TestLightDetector:
 
     # ===== M-06: is_adequate 仅 NORMAL 时为 True =====
 
+    # ===== M-07: face_region_brightness 空切片 NaN =====
+
+    def test_face_region_brightness_no_nan_when_zero_ratio_M07(self):
+        """M-07: face_region_ratio=0 → face_h=0/face_w=0 → 切片空数组 np.mean 返回 NaN
+        修复后: 入口检查 face_h/face_w 为 0 → 返回 0.0
+        """
+        # face_region_ratio=0 → face_h = int(h*0) = 0
+        detector = LightDetector(face_region_ratio=0.0)
+        gray = np.zeros((480, 640), dtype=np.uint8)
+        result = detector._compute_face_region_brightness(gray)
+        assert not np.isnan(result), \
+            f"M-07 失败: face_region_brightness 不应返回 NaN，实际={result}"
+        assert result == 0.0
+
+    # ===== M-08: analyze_frame 空帧保护 =====
+
     def test_is_adequate_only_normal_M06(self):
         """M-06: is_adequate 只在 LightCondition.NORMAL 时为 True
         原代码 (line 106):
