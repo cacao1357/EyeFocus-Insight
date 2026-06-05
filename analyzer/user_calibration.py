@@ -546,6 +546,16 @@ class UserCalibrationManager:
         if user_count > 0:
             error_rate = (user_count - program_count) / user_count
             adjustment = 1.0 + error_rate
+        elif program_count > 0:
+            # M-03: 用户说没眨但程序检测到眨 → 检测器过于敏感, 调低阈值
+            # 用 error_rate = -1.0 作哨兵标记异常, adjustment 调降 0.85
+            error_rate = -1.0
+            adjustment = 0.85
+            logger.info(
+                "眨眼校准第 %d 轮: user=0 program=%d → 检测器过敏感, "
+                "adjustment 调降至 %.2f",
+                self._current_blink_round, program_count, adjustment,
+            )
         else:
             error_rate = 0.0
             adjustment = 1.0

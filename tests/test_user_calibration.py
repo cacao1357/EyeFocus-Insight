@@ -202,6 +202,37 @@ class TestUserCalibrationManager:
         assert dur == pytest.approx(0.1), f"head_pose=0.4 应/4=0.1, 实际 {dur}"
 
 
+    def test_record_blink_round_user_zero_program_nonzero_M03(self):
+        """M-03: user_count=0 && program_count>0 时, adjustment_factor 必须 < 1.0
+
+        复盘: 原始实现 user_count=0 时静默使用 adjustment=1.0, 等于未做调整,
+        实际是用户没眨眼但程序检测到眨眼 → 检测器过于敏感, 应调低阈值
+        (adjustment < 1.0), 现 0.85 调降后被 max(0.7, ...) 下界兜底。
+        """
+        callbacks = MockCallbacks()
+        mgr = UserCalibrationManager(callbacks=callbacks, blink_rounds=1, blink_duration=1)
+        mgr._state = CalibrationState.BLINK_INPUT
+        mgr._current_blink_round = 1
+        mgr._blink_collector.detected_blinks = 3  # 程序检测到 3 次
+
+        mgr.on_user_input(user_blink_count=0)  # 用户说 0 次
+
+        # 验证: adjustment_factor < 1.0 (隐含信号: 检测器过于敏感, 应调降)
+        assert len(mgr._blink_rounds_data) == 1
+        round_data = mgr._blink_rounds_data[0]
+        assert round_data.user_blink_count == 0
+        assert round_data.program_blink_count == 3
+        assert round_data.adjustment_factor < 1.0, (
+            f"user_count=0 + program_count=3 时, adjustment_factor 应 < 1.0, "
+            f"实际 {round_data.adjustment_factor}"
+        )
+        assert round_data.adjustment_factor == pytest.approx(0.85, abs=0.001)
+        # error_rate 用哨兵值标记异常情况
+        assert round_data.error_rate < 0.0, (
+            f"user_count=0 时 error_rate 应为负值哨兵, 实际 {round_data.error_rate}"
+        )
+
+
 class TestPhaseInfoDynamic:
     """v4.0.2 回归: 校准文案动态渲染 (B5)"""
 
