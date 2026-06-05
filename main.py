@@ -1065,9 +1065,14 @@ class EyeFocusApp:
         self._original_sigterm = signal.signal(signal.SIGTERM, self._signal_handler)
 
     def _signal_handler(self, signum, frame) -> None:
-        """信号处理"""
+        """信号处理
+
+        H-01: 不在 signal handler 内调 self.shutdown() (内含 0.5s 阻塞 + 写盘 + 资源清理,
+        异步不安全). 改为仅设 flag, 由 main_loop finally 块统一调 shutdown().
+        """
         logger.info("收到信号 %d，准备退出...", signum)
-        self.shutdown()
+        self._running = False
+        self._shutdown_event.set()
 
     def shutdown(self) -> None:
         """安全关闭应用"""
