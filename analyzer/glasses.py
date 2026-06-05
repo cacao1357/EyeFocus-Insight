@@ -221,8 +221,10 @@ class GlassesDetector:
 
             return (is_glasses, confidence, squint_ratio)
 
-        except Exception as e:
-            logger.warning("blendshapes 检测失败: %s", e)
+        except (KeyError, TypeError, IndexError, ValueError) as e:
+            # M-05: 收窄异常为数据访问/类型错误, 避免吞 RuntimeError 等真 bug
+            # 数据缺失 / 形状不对是上游数据问题, 用 debug 级别而非 warning
+            logger.debug("blendshapes 检测失败 (数据异常): %s", e)
             return None
 
     def _compute_pupil_distance(self, landmarks: np.ndarray) -> Optional[float]:
@@ -245,7 +247,9 @@ class GlassesDetector:
             right_pupil_y = (right_eye[0][1] + right_eye[3][1]) / 2
 
             return math.sqrt((right_pupil_x - left_pupil_x) ** 2 + (right_pupil_y - left_pupil_y) ** 2)
-        except Exception:
+        except (KeyError, TypeError, IndexError, ValueError) as e:
+            # M-05: 收窄异常为数据访问/类型错误
+            logger.debug("瞳孔距离计算失败 (数据异常): %s", e)
             return None
 
     def _detect_by_distance(
@@ -286,8 +290,10 @@ class GlassesDetector:
 
             return (is_glasses, confidence, distance, ratio)
 
-        except Exception as e:
-            logger.warning("眼角距离检测失败: %s", e)
+        except (KeyError, TypeError, IndexError, ValueError) as e:
+            # M-05: 收窄异常为数据访问/类型错误, 避免吞 RuntimeError 等真 bug
+            # 数据缺失 / 形状不对是上游数据问题, 用 debug 级别而非 warning
+            logger.debug("眼角距离检测失败 (数据异常): %s", e)
             return None
 
     def set_manual_mode(self, mode: GlassesMode) -> None:

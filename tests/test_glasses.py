@@ -453,3 +453,89 @@ class TestFactoryFunction:
         assert isinstance(detector, GlassesDetector)
         assert detector.squint_ratio_thresh == DEFAULT_SQUINT_RATIO_THRESHOLD
         assert detector.inner_canthus_ratio_thresh == DEFAULT_INNER_CANTHUS_RATIO_THRESHOLD
+
+
+class TestGlassesDetectorExceptionNarrowing:
+    """M-05: 异常处理应收窄为 (KeyError, TypeError, IndexError, ValueError), logger.debug"""
+
+    def test_squint_method_keyerror_logs_debug_not_warning_M05(self):
+        """M-05: blendshapes 缺键 KeyError 必须 log debug 而非 warning, 不静默吞真 bug
+
+        复盘: 原 except Exception 过于宽泛, KeyError/TypeError 等真 bug 被吞
+        并 log warning, 给排查增加噪声。修法: 收窄为数据异常的子集 + log.debug。
+        """
+        from unittest.mock import patch
+        from analyzer import glasses as glasses_mod
+
+        detector = GlassesDetector()
+
+        # 构造触发 TypeError 的 blendshapes: 缺 key 的 dict, 取值时 arith TypeError
+        # 用 value 传字符串, 走到 "abc" + 0.5 → TypeError
+        bad_blendshapes = {
+            "eyeSquintLeft": "not_a_number",
+            "eyeSquintRight": 0.5,
+            "eyeWideLeft": 0.1,
+            "eyeWideRight": 0.1,
+        }
+
+        with patch.object(glasses_mod.logger, "warning") as mock_warn, \
+             patch.object(glasses_mod.logger, "debug") as mock_debug:
+            result = detector._detect_by_squint(blendshapes=bad_blendshapes)
+            assert result is None
+            # 不应 log warning
+            assert mock_warn.call_count == 0, (
+                f"M-05 TypeError 异常不应用 warning 级别, "
+                f"实际 warning 调 {mock_warn.call_count} 次"
+            )
+            # 应 log debug
+            assert mock_debug.call_count >= 1, (
+                f"M-05 TypeError 异常应用 debug 级别记录, 实际未调 debug"
+            )
+
+    def test_squint_method_uncaught_exception_bubbles_up_M05(self):
+        """M-05: 未在 (KeyError,TypeError,IndexError,ValueError) 列表中的异常应 bubble up
+
+        例: RuntimeError 是真 bug, 不应被静默, 应让上层看到并处理。
+        """
+        from analyzer import glasses as glasses_mod
+
+        detector = GlassesDetector()
+
+        class BoomBlendshapes(dict):
+            """继承 dict, 提供所有 key 但 __getitem__ 抛 RuntimeError 测试非数据异常不被吞"""
+            def __getitem__(self, key):
+                if key in ("eyeSquintLeft", "eyeSquintRight", "eyeWideLeft", "eyeWideRight"):
+                    raise RuntimeError(f"boom on {key}")
+                return super().__getitem__(key)
+
+        # 预填 4 个 key 让 issubset 检查通过, __getitem__ 抛 RuntimeError
+        for k in ("eyeSquintLeft", "eyeSquintRight", "eyeWideLeft", "eyeWideRight"):
+            BoomBlendshapes.__setitem__  # noop, just for class level
+        boom = BoomBlendshapes()
+        for k in ("eyeSquintLeft", "eyeSquintRight", "eyeWideLeft", "eyeWideRight"):
+            boom[k] = 0.0  # 实际取值会抛 RuntimeError 覆盖
+
+        # 不应用 except 吞掉, 应向外抛 RuntimeError
+        with pytest.raises(RuntimeError):
+            detector._detect_by_squint(blendshapes=boom)
+
+    def test_distance_method_keyerror_logs_debug_M05(self):
+        """M-05: distance 检测 KeyError 必须 log debug, 不警告"""
+        import logging
+        from unittest.mock import patch
+        from analyzer import glasses as glasses_mod
+
+        detector = GlassesDetector()
+
+        # landmarks 长度不够 (IndexError) → 必须 log debug
+        short_landmarks = np.zeros((10, 3), dtype=np.float64)
+        with patch.object(glasses_mod.logger, "warning") as mock_warn, \
+             patch.object(glasses_mod.logger, "debug") as mock_debug:
+            result = detector._detect_by_distance(landmarks=short_landmarks)
+            assert result is None
+            assert mock_warn.call_count == 0, (
+                f"M-05 IndexError 不应用 warning, 实际 {mock_warn.call_count} 次"
+            )
+            assert mock_debug.call_count >= 1, (
+                "M-05 IndexError 应用 debug 记录, 实际未调"
+            )
