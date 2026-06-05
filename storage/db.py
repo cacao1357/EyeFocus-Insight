@@ -258,19 +258,25 @@ class DatabaseManager:
 
     @contextmanager
     def _get_cursor(self):
-        """获取数据库游标的上下文管理器"""
-        if not self._initialized:
-            self.initialize()
+        """获取数据库游标的上下文管理器
 
-        cursor = self._conn.cursor()
-        try:
-            yield cursor
-            self._conn.commit()
-        except Exception:
-            self._conn.rollback()
-            raise
-        finally:
-            cursor.close()
+        v4.3 CRIT-01 修复: 持 self._lock 以兑现 docstring 承诺的线程安全。
+        共享连接上 commit/rollback 是按连接而非 cursor 维护事务的，
+        多线程并发不持锁会让 B 线程的 rollback 撤销 A 线程未提交的写入。
+        """
+        with self._lock:
+            if not self._initialized:
+                self.initialize()
+
+            cursor = self._conn.cursor()
+            try:
+                yield cursor
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+            finally:
+                cursor.close()
 
     # ========== Session 操作 ==========
 
@@ -496,6 +502,14 @@ class DatabaseManager:
                 brightness=row["brightness"],
                 face_detected=bool(row["face_detected"]),
                 blendshapes=blendshapes,
+                # v4.3 H-08 修复: 补 7 个 v4.x 新增字段, 否则 FrameRecord dataclass 默认值覆盖 DB 真实值
+                blink_flag=bool(row["blink_flag"]),
+                perclos=row["perclos"],
+                gaze_status=row["gaze_status"],
+                fatigue_label=row["fatigue_label"],
+                focus_score=row["focus_score"],
+                focus_breakdown=row["focus_breakdown"],
+                light_level=row["light_level"],
             ))
 
         return records
@@ -788,6 +802,12 @@ class DatabaseManager:
     def export_json(self, session_id: str, output_path: str) -> None:
         """导出会话数据为 JSON"""
         session = self.get_session(session_id)
+
+        # v4.3 H-09 修复: 早返回守卫, 否则 line 798 session.session_id 抛 AttributeError
+        if session is None:
+            logger.warning("export_json: 会话 %s 不存在, 跳过导出", session_id)
+            return
+
         frames = self.get_frame_records(session_id)
         focus_records = self.get_focus_records(session_id)
         fatigue_records = self.get_fatigue_records(session_id)
