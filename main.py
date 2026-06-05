@@ -1177,7 +1177,19 @@ class EyeFocusApp:
             # 重新获取主程序摄像头
             logger.info("v4.2 校准结束 - 重新启动主程序摄像头")
             if self._camera_manager is not None and not self._camera_manager.is_running():
-                self._camera_manager.start()
+                # H-12: 包 try/except 防止 finally 抛异常替换 try 块原始异常
+                # 同时检查 start() 返回值
+                try:
+                    restart_ok = self._camera_manager.start()
+                    if not restart_ok:
+                        logger.error(
+                            "v4.2 校准后重新启动主程序摄像头失败, "
+                            "后续 main_loop 可能无法获取视频流"
+                        )
+                except Exception as restart_err:
+                    logger.exception(
+                        "v4.2 校准后重启主程序摄像头异常: %s", restart_err
+                    )
 
     def _apply_v4_2_calibration_result(self, result: CalibrationResult) -> None:
         """应用 v4.2 校准结果到各 detector。"""
