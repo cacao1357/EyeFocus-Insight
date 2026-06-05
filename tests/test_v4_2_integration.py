@@ -12,7 +12,7 @@ import sys
 import tempfile
 from dataclasses import replace
 from datetime import datetime
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, PropertyMock
 
 import numpy as np
 import pytest
@@ -69,10 +69,14 @@ def _make_app(tmp_path, monkeypatch):
 
 
 def _make_mock_camera():
-    """构造一个能跟踪 is_running 状态的 mock camera。"""
+    """构造一个能跟踪 is_running 状态的 mock camera。
+
+    v4.3 注意: CameraManager.is_running 是 @property, 不是 method.
+    Mock 用 PropertyMock + lambda with self arg.
+    """
     state = {"running": True}
     cam = MagicMock()
-    cam.is_running = MagicMock(side_effect=lambda: state["running"])
+    type(cam).is_running = PropertyMock(side_effect=lambda *_: state["running"])
     cam.release = MagicMock(side_effect=lambda: state.update(running=False))
     cam.start = MagicMock(side_effect=lambda: state.update(running=True))
     return cam
@@ -128,9 +132,9 @@ def test_run_v4_2_calibration_releases_camera(tmp_path, monkeypatch):
 def test_run_v4_2_calibration_skips_release_if_not_running(tmp_path, monkeypatch):
     """摄像头未启动时，run_v4_2_calibration 不应调 release()。"""
     app = _make_app(tmp_path, monkeypatch)
-    # 构造一个 not running 的 camera mock（用 side_effect）
+    # 构造一个 not running 的 camera mock
     cam = MagicMock()
-    cam.is_running = MagicMock(return_value=False)
+    type(cam).is_running = PropertyMock(return_value=False)
     app._camera_manager = cam
     app._eye_detector = None
     app._fatigue_analyzer = None

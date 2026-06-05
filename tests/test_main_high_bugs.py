@@ -15,7 +15,7 @@ import tempfile
 import threading
 import time
 from datetime import datetime
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch, call, PropertyMock
 
 import cv2
 import numpy as np
@@ -150,7 +150,7 @@ class TestH12RunV42CalibrationFinally:
         app.config = AppConfig()
         # 模拟 _camera_manager: is_running() False (需要重启), start() 抛异常
         app._camera_manager = MagicMock()
-        app._camera_manager.is_running.return_value = False
+        type(app._camera_manager).is_running = PropertyMock(return_value=False)
         app._camera_manager.start.side_effect = RuntimeError("camera start failed")
 
         # 替换 calibration_module.run 为抛异常
@@ -182,7 +182,7 @@ class TestH12RunV42CalibrationFinally:
         # M-21: 构造 Config 供 run_v4_2_calibration 访问 camera_index
         app.config = AppConfig()
         app._camera_manager = MagicMock()
-        app._camera_manager.is_running.return_value = False
+        type(app._camera_manager).is_running = PropertyMock(return_value=False)
         app._camera_manager.start.side_effect = RuntimeError("start failed in finally")
 
         with patch.object(main_module.calibration_module, "run") as mock_run:

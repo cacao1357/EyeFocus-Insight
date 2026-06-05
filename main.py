@@ -1202,7 +1202,7 @@ class EyeFocusApp:
         """
         logger.info("v4.2 校准模块启动 - 释放主程序摄像头")
         # 释放主程序摄像头 → 新模块独占
-        if self._camera_manager is not None and self._camera_manager.is_running():
+        if self._camera_manager is not None and self._camera_manager.is_running:
             self._camera_manager.release()
 
         # M-21: 构造 calibration Config, 显式传入主程序摄像头参数
@@ -1237,7 +1237,7 @@ class EyeFocusApp:
         finally:
             # 重新获取主程序摄像头
             logger.info("v4.2 校准结束 - 重新启动主程序摄像头")
-            if self._camera_manager is not None and not self._camera_manager.is_running():
+            if self._camera_manager is not None and not self._camera_manager.is_running:
                 # H-12: 包 try/except 防止 finally 抛异常替换 try 块原始异常
                 # 同时检查 start() 返回值
                 try:
