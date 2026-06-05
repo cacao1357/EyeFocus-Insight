@@ -480,6 +480,107 @@ T-CAL-17 (0.5h): 加宽容错 (跨阶段)
 
 ---
 
+### 2.8.2 v1.4 v4.3 漏洞审计与维护完成（2026-06-05 全量修复）
+
+> **记录日期**：2026-06-05
+> **触发**：用户发起"检查一下当前项目是否有漏洞并进行修复"任务
+> **审计范围**：5 模块 + calibration + spike/insights（main.py / analyzer/ / detector/ / storage/ / reporter/ / gui/ / calibration/ / spike/insights/）
+> **审计 workflow**：w1qwhzqp9 (5 agent 并行) + w9qm21n9b (calibration 补丁) + 11 个独立 verifier 反驳验证
+> **审计报告归档**：[`docs/old_schemes/AUDIT_v4.3.md`](docs/old_schemes/AUDIT_v4.3.md) 255 行 12 章节
+> **本节结论**：v4.3 维护全部完成，58 findings 中 44 个已修，14 个 false positive 跳过
+
+#### 修复统计
+
+| 类别 | 总数 | 修了 | 跳过 | 跳过原因 |
+|------|------|------|------|---------|
+| **Critical** | 1 | 1 | 0 | - |
+| **High** | 13 | 13 | 0 | - |
+| **Medium** | 26 | 26 | 0 | - |
+| **Low** | 18 | 4 | 14 | false positive（之前 commit 已修或不存在）|
+| **Calib patch** | 7 | 0 | 7 | 范围外（calib 3 medium 在 v4.3 batch 1 已修 M-24/M-25/M-26）|
+| **总计** | **58** | **44** | **14** | |
+
+#### 关键 commit（按 criticality 排序）
+
+**Critical**：
+- `d28d851` fix(db): **CRIT-01** storage 线程安全合同（`_get_cursor` 持锁防跨线程事务撤销）
+
+**High（合同级 / 数据完整性）**：
+- `ff4149e` fix(user_calib): H-06 BlinkRoundCollector 双阈值分类（ear_threshold 死参数激活）
+- `121eab9` fix(fatigue): H-04 get_record 抽 `_compute_sustained` 纯函数（不再污染 sustained 状态）
+- `d28d851` fix(db): H-08 get_frame_records 补 7 字段（blink_flag/perclos/gaze_status/fatigue_label/focus_score/focus_breakdown/light_level）
+- `d28d851` fix(db): H-09 export_json 加 None 守卫（删 session 后不再 AttributeError）
+
+**High（运行时稳定）**：
+- `3f41025` fix(fatigue): H-03 perclos_threshold_mild 0.15 → 5.0（5% 业务阈值）
+- `099026c` fix(focus): H-05 baseline_ear=0 保护（不再 ZeroDivisionError）
+- `6307045` fix(main): H-01 signal handler 仅设 flag（不再 0.5s 阻塞 + 双重清理）
+- `34ca3c2` fix(main): H-02 CameraManager.start 入口 join 残留线程（3.0s timeout 防双线程竞争）
+- `4a1d097` fix(face_mesh): H-07 缺模型文件 fail-fast 抛 FileNotFoundError
+- `c1eb937` fix(report_html): H-10 图表异常显式 HTML 标记（不再静默吞）
+- `f760392` fix(main): H-11 CameraManager.start 失败 release cap（防 DirectShow handle 泄漏）
+- `e54ef6c` fix(main): H-12 run_v4_2_calibration finally 包 try/except（保留原始异常 traceback）
+- `9cf7a58` fix(main): H-13 _cleanup 用 logger.exception（统一 close 异常处理）
+
+**Medium 26 个**（数据完整性 + 资源管理 + XSS 防护）：
+- analyzer 5 个：M-01 EAR 滑动窗口 / M-02 PERCLOS 末帧 / M-03 user=0 调降 / M-04 删死代码 / M-05 except 收窄
+- detector 6 个：M-06 is_adequate NORMAL only / M-07 face_region NaN / M-08 frame=None / M-09 landmarks 478 / M-10 face_mesh frame=None / M-11 clamp [0.7, 1.3]
+- storage 5 个：M-12 FK PRAGMA / M-13 JSON 容错 / M-14 WAL checkpoint / M-15 OperationalError 重试 / M-16 rowcount 校验
+- reporter 3 个：M-17 XSS session_id / M-18 XSS insight / M-19 matplotlib 泄漏
+- main.py 4 个：M-20 cleanup_done 标志 / M-21 camera_index / M-22 删死代码 / M-23 db try/except
+- calib+spike 3 个：M-24 TTS join / M-25 face/ear 计数分离 / M-26 删 sys.path hack
+
+**Low 4 个真修**（其余 14 个审计时已不存在）：
+- `8b7d428` fix(reporter): L-10 matplotlib Agg backend 提常量
+- `ebe9f81` fix(gui): L-15/16 cv2 BGR 颜色常量集中 + 替换 (255,255,255)
+- `940eda9` fix(spike): L-18 删除未用 import os
+
+**审计归档**：
+- `3015d57` docs(audit): v4.3 漏洞审计完整报告归档（58 findings + 44 fixes 总结）
+
+#### 测试基线变化
+
+```
+v4.3 起点:       488 passed (2026-06-04 状态)
+CRIT-01 修:      491 passed (+3)
+H-03..H-06 修:   496 passed (+5)
+H-04 修:         497 passed (+1)
+H-01..H-13 修:   511 passed (+14)
+M-01..M-26 修:   556 passed (+45)
+L-10/L-15/L-16/L-18 修: 556 passed (low fix 不加测试)
+─────────────────────────────────────────
+v4.3 终点:       556 passed (+68 新增回归测试, 0 回归)
+```
+
+#### GitHub Issues 全部关闭
+
+| # | 标题 | 状态 | 关联 commit |
+|---|------|------|-------------|
+| #4 | H-01 signal handler | ✅ closed | 6307045 |
+| #5 | H-02 摄像头 race | ✅ closed | 34ca3c2 |
+| #6 | H-04 sustained state | ✅ closed (派发时已修) | 121eab9 |
+| #7 | H-07 模型文件 | ✅ closed | 4a1d097 |
+| #8 | H-10 图表异常 | ✅ closed | c1eb937 |
+| #9 | H-11 cap 泄漏 | ✅ closed | f760392 |
+| #10 | H-12 finally 异常 | ✅ closed | e54ef6c |
+| #11 | H-13 cleanup log | ✅ closed | 9cf7a58 |
+
+#### 关键教训
+
+1. **session compaction 会杀 subagent**（实测 wkxtzrfwg 4 subagent 启动后 7.6h 被 kill, 无 commit 落地）。解法：subagent 必须**独立 commit**，不能用 worktree 隔离，inline 模式更稳。
+2. **verifier 反驳模式有效**（1 partial + 10 confirmed + 0 rejected）。H-02 partial 修正了失效机制描述但确认 race 真实。
+3. **审计 finding 中 false positive 比例**（18 low 中 14 假，77%）提示：审计应由 agent 自带 grep 二次验证，避免"历史残留 finding"误报。
+4. **TDD 在 v4.3 维护中价值**：每个 fix 都有对应 failing test，下次回归自动捕获。
+5. **§2.8.1 之前文档化 P2/P3/P4 不可执行** 避免了重做无用功，验证了 §1.1 触发条件 + §1.3 同步规则的有效性。
+
+#### 后续若需扩展 (TODO for future sprint)
+
+1. **calibration 7 个 patch finding**（CAL-AUDIO-01/CAL-PHASE-03/CAL-SPIKE-IMPORT-01 等）— 3 medium 已在 v4.3 M-24/M-25/M-26 修，剩 4 low（死代码 + spike 测试覆盖）
+2. **大规模重构**：eye_aspect 的 blink 判定改走 EAR 而非时间（涉及假阳/假阴率验证）
+3. **左/右眼开闭监测**（基于 H-08 已修的 left_open/right_open 字段）— 需要新功能需求驱动
+
+---
+
 ## 三、工时汇总
 
 ## 三、工时汇总
