@@ -490,7 +490,7 @@ class TestEyeFocusAppIntegration:
     def test_app_state_transitions(self, app):
         """测试应用状态转换"""
         assert app._running is False
-        assert app._paused is False
+        # M-22: _paused 是死代码字段, 已删除
 
         # 模拟开始
         app._running = True
