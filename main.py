@@ -1079,7 +1079,14 @@ class EyeFocusApp:
         self._running = False
 
     def shutdown(self) -> None:
-        """安全关闭应用"""
+        """安全关闭应用
+
+        M-20: _cleanup_done 标志防止 main_loop finally + shutdown() 双重清理.
+        第二次 shutdown() 调用直接 return, 不重复 update_session / sleep / _cleanup.
+        """
+        if getattr(self, '_cleanup_done', False):
+            return
+
         if not self._running:
             return
 
@@ -1099,6 +1106,9 @@ class EyeFocusApp:
 
         # 清理资源
         self._cleanup()
+
+        # M-20: 标记已清理, 防止重复
+        self._cleanup_done = True
 
         logger.info("已安全退出")
 

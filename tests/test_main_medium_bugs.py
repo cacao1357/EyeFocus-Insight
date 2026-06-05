@@ -33,12 +33,11 @@ class TestM20ShutdownIdempotent:
     且第二次 shutdown() 应立即 return."""
 
     def test_shutdown_called_twice_second_is_noop(self):
-        """M-20: shutdown() 第二次调用应立即 return, 不重复清理资源"""
+        """M-20: shutdown() 第二次调用应被 _cleanup_done 标志拦截, 不重复清理资源"""
         from main import EyeFocusApp
 
         app = EyeFocusApp.__new__(EyeFocusApp)
         app._running = True
-        app._shutdown_event = threading.Event()
         app._db = MagicMock()
         app._session_id = "s1"
         app._face_detector = MagicMock()
@@ -48,7 +47,7 @@ class TestM20ShutdownIdempotent:
         with patch("main.logger"):
             # 第一次 shutdown: 完整执行
             app.shutdown()
-        # 第二次 shutdown: _running 已 False, 应立即 return
+        # 第二次 shutdown: _cleanup_done 已 True, 应立即 return
         # 验证: _db.update_session 不再被调 (只有第一次会)
         call_count_after_first = app._db.update_session.call_count
 
@@ -58,6 +57,9 @@ class TestM20ShutdownIdempotent:
         # 第二次 shutdown 不应重复 update_session
         assert app._db.update_session.call_count == call_count_after_first, \
             "第二次 shutdown() 不应再调 update_session"
+        # 验证: _cleanup_done 被设
+        assert getattr(app, '_cleanup_done', False) is True, \
+            "_cleanup_done 标志应在第一次 shutdown 后被设置"
 
     def test_cleanup_called_twice_each_close_idempotent(self):
         """M-20: _cleanup() 调两次, 第二次每个 close 都应被 try/except 包裹不抛异常.
