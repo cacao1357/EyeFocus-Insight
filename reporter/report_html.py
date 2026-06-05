@@ -531,16 +531,24 @@ class HTMLReportGenerator:
         if not insights:
             return ""
 
+        # M-18: severity 白名单, 防止恶意 severity 注入 class 属性
+        _ALLOWED_SEVERITY = {"info", "warning", "alert"}
         items = []
         for insight in insights:
-            severity_class = insight.severity
+            severity_class = (
+                insight.severity if insight.severity in _ALLOWED_SEVERITY else "info"
+            )
+            # M-18: title/description/suggestion 来自数据, 需 escape
+            safe_title = html_escape(insight.title)
+            safe_description = html_escape(insight.description)
+            safe_suggestion = html_escape(insight.suggestion)
             badge_html = f'<span class="severity-badge {severity_class}">{severity_class.upper()}</span>'
 
             items.append(f"""
                 <li class="insight-item {severity_class}">
-                    <div class="title">{badge_html}{insight.title}</div>
-                    <div class="description">{insight.description}</div>
-                    <div class="suggestion">💡 {insight.suggestion}</div>
+                    <div class="title">{badge_html}{safe_title}</div>
+                    <div class="description">{safe_description}</div>
+                    <div class="suggestion">💡 {safe_suggestion}</div>
                 </li>
             """)
 

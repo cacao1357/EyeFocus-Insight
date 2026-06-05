@@ -549,6 +549,56 @@ class TestHTMLReportGenerator:
 
     # ===== M-17: session_id HTML XSS escape =====
 
+    def test_m18_insight_fields_escaped_in_html(self, html_generator):
+        """M-18: insight.title/description/suggestion 嵌入 HTML 时必须 escape
+
+        Bug: _render_insights f-string 直接拼 insight.title/description/
+        suggestion, 未 escape, 含 < > & 时会被解释为可执行 HTML。
+        修复同时要求 severity_class 维持白名单 (仅 info/warning/alert),
+        避免恶意 severity 值注入 class 属性。
+        """
+        malicious_insight = Insight(
+            category='focus',
+            severity='info',  # 白名单内
+            title='<script>alert("title-xss")</script>',
+            description='evil description <img src=x onerror=alert(1)> & "quoted"',
+            suggestion='<b>建议</b> & more</div>',
+        )
+
+        # 直接调 _render_insights
+        html_out = html_generator._render_insights([malicious_insight])
+
+        # 1) 不可执行 <script> / <img onerror>
+        assert '<script>alert' not in html_out, \
+            f"title 未转义, 可执行 <script> 注入: {html_out[:500]}"
+        assert '<img src=x onerror' not in html_out, \
+            f"description 未转义, 可执行 <img onerror>: {html_out[:500]}"
+
+        # 2) 转义后的字符应出现
+        assert '&lt;script&gt;alert' in html_out, \
+            "title 应被 html.escape 转为 &lt;script&gt;alert"
+        assert '&lt;img src=x onerror=alert(1)&gt;' in html_out, \
+            "description 应被 escape"
+        assert '&lt;b&gt;建议&lt;/b&gt;' in html_out, \
+            "suggestion 应被 escape"
+
+    def test_m18_insight_severity_whitelist(self, html_generator):
+        """M-18: severity 仅允许 info/warning/alert 三个白名单值
+
+        防止恶意 severity 字符串注入 class 属性 (e.g. severity='foo"><script>')
+        """
+        bad_insight = Insight(
+            category='focus',
+            severity='alert"><script>alert(1)</script>',  # 恶意
+            title='t',
+            description='d',
+            suggestion='s',
+        )
+        html_out = html_generator._render_insights([bad_insight])
+        # severity 未在白名单时, 不应被原样嵌入 class 属性
+        assert 'alert"><script>' not in html_out, \
+            f"恶意 severity 注入 class 属性: {html_out[:500]}"
+
     def test_m17_session_id_escaped_in_html(
         self,
         sample_focus_records,
