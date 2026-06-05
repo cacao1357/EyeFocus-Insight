@@ -455,16 +455,24 @@ class FocusOverlay:
         focus_score: float,
         fatigue_level: Optional[str],
     ) -> np.ndarray:
-        """绘制专注度/疲劳显示（右下角）"""
+        """v4.4: 绘制专注度/疲劳显示（右下角）
+
+        圆环 r=70 (原 50), 数字 1.5x 字号 (原 0.8), 8px 边框颜色按分数。
+        """
         h, w = frame.shape[:2]
-        center_x = w - 80
-        center_y = h - 120
-        radius = 50
+        # v4.4: 圆环 r 50 → 70 (1.4x)
+        center_x = w - 90
+        center_y = h - 130
+        radius = 70
 
         # 绘制圆形背景
         overlay = frame.copy()
         cv2.circle(overlay, (center_x, center_y), radius, (40, 40, 40), -1)
         frame = cv2.addWeighted(overlay, 0.6, frame, 0.4, 0)
+
+        # v4.4: 8px 边框, 颜色按分数 (绿/黄/红)
+        border_color = self._focus_color(focus_score)
+        cv2.circle(overlay, (center_x, center_y), radius, border_color, 8)
 
         # 绘制圆形进度条
         color = self._fatigue_color(fatigue_level) if fatigue_level else self.config.focus_color
@@ -473,10 +481,11 @@ class FocusOverlay:
         cv2.ellipse(frame, (center_x, center_y), (radius - 5, radius - 5),
                     0, start_angle, end_angle, color, 8)
 
-        # 绘制中心分数
-        cv2.putText(frame, f"{focus_score:.0f}",
-                    (center_x - 25, center_y + 8),
-                    self.config.font, 0.8, self.config.text_color, 2)
+        # v4.4: 中心数字 1.5x 字号 (原 0.8), 上方 "FOCUS" 标签
+        cv2.putText(frame, "FOCUS", (center_x - 30, center_y - 30),
+                    self.config.font, 0.5, COLOR_TEXT_MUTED, 1)
+        cv2.putText(frame, f"{focus_score:.0f}", (center_x - 45, center_y + 18),
+                    self.config.font, 1.5, COLOR_WHITE, 3)
 
         # 绘制疲劳等级标签
         if fatigue_level:

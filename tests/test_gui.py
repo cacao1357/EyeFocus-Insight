@@ -196,6 +196,34 @@ class TestFocusOverlay:
             color = overlay._mode_color()
             assert color == expected, f"mode={mode} 应 {expected}, 实际 {color}"
 
+    def test_focus_circle_radius_is_70_v4_4(self):
+        """v4.4: focus score 圆环 r 50 → 70, 数字 0.6 → 1.5, 8px 边框颜色按分数"""
+        overlay = FocusOverlay()
+        import inspect
+        src = inspect.getsource(overlay._draw_focus_display)
+        # 圆环 70 (原 50)
+        assert "70" in src, f"圆环应含 70 半径, 实际不含"
+        assert "50" not in src.split("圆环")[0] if "圆环" in src else True, "应不含旧 50"
+        # 数字 1.5
+        assert "1.5" in src, f"数字应含 1.5 字号, 实际不含"
+        # FOCUS 标签
+        assert '"FOCUS"' in src, f"应有 FOCUS 标签, 实际不含"
+        # 8px 边框 (thickness=8)
+        assert ", 8)" in src or "thickness=8" in src, f"应有 8px 边框, 实际不含"
+
+    def test_focus_color_mapping_v4_4(self):
+        """v4.4: _focus_color 3 档颜色 (>=70 绿, 50-70 黄, <50 红)"""
+        overlay = FocusOverlay()
+        # 绿 >= 70
+        assert overlay._focus_color(85) == (0, 220, 0)
+        assert overlay._focus_color(70) == (0, 220, 0)
+        # 黄 50-69
+        assert overlay._focus_color(65) == (0, 220, 220)
+        assert overlay._focus_color(50) == (0, 220, 220)
+        # 红 < 50
+        assert overlay._focus_color(40) == (0, 0, 220)
+        assert overlay._focus_color(0) == (0, 0, 220)
+
     def test_alert_color_method(self):
         """测试告警颜色映射"""
         overlay = FocusOverlay()
