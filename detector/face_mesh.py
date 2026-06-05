@@ -121,6 +121,14 @@ class FaceMeshDetector:
         Returns:
             FaceMeshResult 对象
         """
+        # M-10: 入口校验 None/空帧/非数组 → 返回 face_detected=False
+        if frame is None or frame.size == 0 or frame.ndim < 2:
+            return FaceMeshResult(
+                landmarks=None,
+                face_detected=False,
+                confidence=0.0,
+            )
+
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         from mediapipe import Image, ImageFormat
 
@@ -140,6 +148,14 @@ class FaceMeshDetector:
         Returns:
             FaceMeshResult 对象
         """
+        # M-10: 入口校验 None/空帧/非数组 → 返回 face_detected=False
+        if frame is None or frame.size == 0 or frame.ndim < 2:
+            return FaceMeshResult(
+                landmarks=None,
+                face_detected=False,
+                confidence=0.0,
+            )
+
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         from mediapipe import Image, ImageFormat
 

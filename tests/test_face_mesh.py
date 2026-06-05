@@ -408,6 +408,56 @@ class TestFaceMeshDetector:
         except ImportError:
             pytest.skip("mediapipe 未安装，跳过此用例")
 
+    # ===== M-10: detect_from_frame / detect_from_image 空帧保护 =====
+
+    @patch('mediapipe.tasks.python.vision')
+    @patch('mediapipe.tasks.python.core.base_options')
+    def test_detect_from_frame_none_returns_no_face_M10(self, mock_base_options, mock_vision):
+        """M-10: detect_from_frame 传 None frame → 返回 face_detected=False
+        不抛 cv2.error
+        """
+        mock_detector = MagicMock()
+        mock_vision.FaceLandmarker.create_from_options.return_value = mock_detector
+        mock_vision.RunningMode.VIDEO = "VIDEO"
+
+        detector = FaceMeshDetector(running_mode="video")
+        result = detector.detect_from_frame(None, timestamp_ms=0)
+
+        assert result.face_detected is False
+        assert result.landmarks is None
+        # 不会调用 mediapipe detector
+        mock_detector.detect_for_video.assert_not_called()
+
+    @patch('mediapipe.tasks.python.vision')
+    @patch('mediapipe.tasks.python.core.base_options')
+    def test_detect_from_image_none_returns_no_face_M10(self, mock_base_options, mock_vision):
+        """M-10: detect_from_image 传 None frame → 返回 face_detected=False"""
+        mock_detector = MagicMock()
+        mock_vision.FaceLandmarker.create_from_options.return_value = mock_detector
+        mock_vision.RunningMode.IMAGE = "IMAGE"
+
+        detector = FaceMeshDetector(running_mode="image")
+        result = detector.detect_from_image(None)
+
+        assert result.face_detected is False
+        assert result.landmarks is None
+        mock_detector.detect.assert_not_called()
+
+    @patch('mediapipe.tasks.python.vision')
+    @patch('mediapipe.tasks.python.core.base_options')
+    def test_detect_from_image_empty_array_M10(self, mock_base_options, mock_vision):
+        """M-10: detect_from_image 传空数组 (size=0) → 返回 face_detected=False"""
+        mock_detector = MagicMock()
+        mock_vision.FaceLandmarker.create_from_options.return_value = mock_detector
+        mock_vision.RunningMode.IMAGE = "IMAGE"
+
+        detector = FaceMeshDetector(running_mode="image")
+        frame = np.array([], dtype=np.uint8)
+        result = detector.detect_from_image(frame)
+
+        assert result.face_detected is False
+        assert result.landmarks is None
+
 
 class TestProcessResult:
     """_process_result 单元测试"""
