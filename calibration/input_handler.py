@@ -5,7 +5,7 @@
 
 设计依据：spec §2.7 + 决策 C2 鼠标主导。
 """
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import cv2
 
@@ -29,11 +29,17 @@ class InputHandler:
         self._panel_y_offset = panel_y_offset
         self._buttons: List[Button] = []
         self._click_buffer: Optional[Tuple[int, int]] = None
+        # v4.4: 回调让 CalibrationFlow 追踪 waitKey 返回时间
+        self._on_waitkey_return: Optional[Callable[[], None]] = None
         try:
             cv2.setMouseCallback(window_name, self._on_mouse)
         except cv2.error:
             # 窗口未创建（测试场景）— 忽略
             pass
+
+    def set_waitkey_callback(self, callback: Callable[[], None]) -> None:
+        """v4.4: 设置 waitKey 返回后回调, 用于 CalibrationFlow 追踪拖窗口检测"""
+        self._on_waitkey_return = callback
 
     def register_buttons(self, buttons: List[Button]) -> None:
         """每帧由 panel 注册当前可见按钮。"""
@@ -56,6 +62,9 @@ class InputHandler:
 
         # 2. waitKey 排空 OS 事件队列 — 鼠标 click 在这里 set _click_buffer
         key = cv2.waitKey(1) & 0xFF
+        # v4.4: 立即更新 _last_waitkey_time (CalibrationFlow 拖窗口检测用)
+        if self._on_waitkey_return is not None:
+            self._on_waitkey_return()
 
         # 3. 再次检查 click_buffer（BUG-3 修复：waitKey 期间设置的 click 不能漏）
         if self._click_buffer is not None:

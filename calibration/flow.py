@@ -64,6 +64,9 @@ class CalibrationFlow:
         self._panel = Panel(width=640, height=config.ui_panel_height_px)
         self._input: Optional[InputHandler] = None
 
+        # v4.4: 追踪 waitKey 返回时间, 用于拖窗口检测 (启发式)
+        self._last_waitkey_time: float = time.time()
+
         # 初始化第 0 阶段
         self._current_phase = self._build_phase(0)
 
@@ -89,6 +92,8 @@ class CalibrationFlow:
         # panel_y_offset = 视频区高度（480）。cv2 鼠标事件返回 composed 坐标，
         # button.rect 是 panel 局部坐标。InputHandler 内部做转换（BUG-2 修复）。
         self._input = InputHandler(WINDOW_NAME, panel_y_offset=480)
+        # v4.4: 注入 waitKey 返回后回调, 用于拖窗口检测
+        self._input.set_waitkey_callback(lambda: setattr(self, '_last_waitkey_time', time.time()))
         # 初始化 face detector（沿用主项目模块，默认参数与 main.py 一致）
         from detector.face_mesh import create_face_mesh_detector
         self._face_detector = create_face_mesh_detector()
@@ -357,8 +362,11 @@ class CalibrationFlow:
 
     def _build_display_info(self) -> PhaseDisplayInfo:
         if self._current_phase is None:
-            return PhaseDisplayInfo(state=self._state, phase_index=1, phase_total=5,
+            # v4.4: 仍设 dragging 让 panel 渲染一致
+            info = PhaseDisplayInfo(state=self._state, phase_index=1, phase_total=5,
                                     phase_name="", instruction="")
+            info.dragging = (time.time() - self._last_waitkey_time) > 0.2
+            return info
         elapsed = time.time() - self._phase_start_time if self._state == FlowState.PHASE_RUNNING else 0.0
         fb = self._current_phase.get_live_feedback(elapsed)
         info = PhaseDisplayInfo(
@@ -371,6 +379,8 @@ class CalibrationFlow:
             sample_count=fb.sample_count,
             quality_hint=fb.quality_hint,
         )
+        # v4.4: 拖窗口检测 — waitKey 超过 200ms 未返回判定为拖窗口
+        info.dragging = (time.time() - self._last_waitkey_time) > 0.2
         # 摘要状态时填 summary_text
         if self._state in (FlowState.PHASE_SUMMARY_SUCCESS, FlowState.PHASE_SUMMARY_FAILED):
             r = self._phase_results[self._current_phase_index]

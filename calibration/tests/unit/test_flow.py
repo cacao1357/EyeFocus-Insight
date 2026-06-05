@@ -371,6 +371,48 @@ def test_panel_renders_rec_indicator_v4_4():
     assert img.shape == (p.height, p.width, 3)
 
 
+def test_flow_dragging_detected_when_waitkey_stalls_v4_4():
+    """v4.4: 拖窗口时 _build_display_info 标 dragging=True (waitKey 200ms+ 未返回)"""
+    import time as _t
+    f = _make_flow()
+    f._state = FlowState.PHASE_RUNNING
+    f._current_phase_index = 0
+    f._current_phase = f._build_phase(0)
+    f._phase_start_time = 0.0
+    f._last_waitkey_time = _t.time() - 0.3  # 300ms 前
+    info = f._build_display_info()
+    assert info.dragging is True, f"waitKey 300ms 未返回应判定 dragging=True, 实际 {info.dragging}"
+
+
+def test_flow_dragging_clears_when_waitkey_resumes_v4_4():
+    """v4.4: waitKey 频率恢复后 dragging 自动 False"""
+    import time as _t
+    f = _make_flow()
+    f._state = FlowState.PHASE_RUNNING
+    f._current_phase_index = 0
+    f._current_phase = f._build_phase(0)
+    f._phase_start_time = 0.0
+    f._last_waitkey_time = _t.time() - 0.05  # 50ms 前, 阈值 200ms
+    info = f._build_display_info()
+    assert info.dragging is False, f"waitKey 50ms 内应判定 dragging=False, 实际 {info.dragging}"
+
+
+def test_panel_renders_dragger_overlay_v4_4():
+    """v4.4: Panel.render 拖窗口时叠加遮罩 + 提示"""
+    import numpy as np
+    from calibration.ui.panel import Panel, PhaseDisplayInfo
+    p = Panel()
+    info = PhaseDisplayInfo(
+        state=FlowState.PHASE_RUNNING,
+        phase_index=1, phase_total=5,
+        phase_name="自动基线采集", instruction="",
+        dragging=True,
+    )
+    img = p.render(info)
+    assert img is not None
+    assert img.shape == (p.height, p.width, 3)
+
+
 def test_flow_build_display_info_summary_failed():
     f = _make_flow()
     f._state = FlowState.PHASE_SUMMARY_FAILED
