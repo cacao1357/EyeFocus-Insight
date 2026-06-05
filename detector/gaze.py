@@ -93,7 +93,7 @@ class GazeDetector:
         Returns:
             GazeResult 或 None（检测失败）
         """
-        if landmarks is None or len(landmarks) < 468:
+        if landmarks is None or len(landmarks) < 478:
             return None
 
         try:

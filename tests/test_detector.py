@@ -386,3 +386,18 @@ class TestGazeDetector:
 
         if result is not None:
             assert isinstance(result.is_looking_at_screen, bool)
+
+    # ===== M-09: landmarks 长度检查 (468 → 478) =====
+
+    def test_detect_landmarks_470_not_indexerror_M09(self):
+        """M-09: landmarks 长度 470 (< 478) 应返回 None, 不 IndexError
+
+        原代码 len(landmarks) < 468 时返回 None, 但函数体访问 landmarks[468..477]
+        虹膜索引, len=470 时通过检查但访问 landmarks[473..477] 仍会 IndexError。
+        修复后: len < 478 早返回 None, 不依赖 try/except 吞异常。
+        """
+        detector = GazeDetector()
+        # 470 个关键点, 满足 < 478 但包含部分虹膜索引
+        landmarks = np.zeros((470, 3), dtype=np.float64)
+        result = detector.detect(landmarks)
+        assert result is None, f"M-09 失败: 期望 None, 实际 {result}"
