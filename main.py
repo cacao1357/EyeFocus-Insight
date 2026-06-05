@@ -109,6 +109,12 @@ class CameraManager:
 
         if not self._cap.isOpened():
             logger.error("无法打开摄像头 (index %d)", self._camera_index)
+            # H-11: 失败时 release cap 并置 None, 避免悬挂引用泄漏
+            try:
+                self._cap.release()
+            except Exception:
+                pass
+            self._cap = None
             return False
 
         self._running = True
