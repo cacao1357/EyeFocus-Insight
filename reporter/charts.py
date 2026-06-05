@@ -10,7 +10,9 @@ import logging
 from typing import List, Optional, Tuple
 
 import matplotlib
-matplotlib.use('Agg')  # 无头模式，不使用交互式后端
+# L-10: 提为模块常量, 避免在 import 期散落硬编码
+MPL_BACKEND = 'Agg'  # 无头模式，不使用交互式后端
+matplotlib.use(MPL_BACKEND)
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import numpy as np
