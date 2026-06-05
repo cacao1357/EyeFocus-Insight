@@ -305,6 +305,10 @@ class FocusAnalyzer:
             # 闭眼状态
             return 0.0
 
+        # v4.3 H-05 修复: baseline_ear<=0 时返回中性分, 避免除零
+        if self.baseline_ear <= 0:
+            return 50.0
+
         # 计算与基线的偏差
         deviation = abs(ear - self.baseline_ear) / self.baseline_ear
 
