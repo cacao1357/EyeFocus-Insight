@@ -238,3 +238,70 @@ def test_apply_v4_2_calibration_result_applies_head_pose_std_P1(tmp_path, monkey
     assert ear_arg == pytest.approx(0.30, abs=0.001)
     assert yaw_std_arg == pytest.approx(17.47, abs=0.01)
     assert pitch_std_arg == pytest.approx(16.23, abs=0.01)
+
+
+# ========== v4.3 集成: calibration_mode 默认 v4_2 ==========
+
+def test_app_config_calibration_mode_default_v4_2(tmp_path, monkeypatch):
+    """v4.3: AppConfig.calibration_mode 默认 'v4_2' (新模块), 替代 v3.x 默认路径"""
+    from main import AppConfig
+    config = AppConfig(camera_index=0)
+    assert config.calibration_mode == "v4_2", (
+        f"calibration_mode 默认应 'v4_2', 实际 '{config.calibration_mode}'"
+    )
+
+
+def test_start_calibration_flow_dispatches_to_v4_2_by_default(tmp_path, monkeypatch):
+    """v4.3: start_calibration_flow() 默认调 run_v4_2_calibration(), 不再走 v3.x 协调器"""
+    app = _make_app(tmp_path, monkeypatch)
+    app.config.calibration_mode = "v4_2"
+    app._calib_coordinator = MagicMock()  # v3.x 路径存在但不应被调
+    app._calib_coordinator.start = MagicMock()
+
+    # 模拟 v4.2 路径: 返回 CalibrationResult
+    from calibration.result import CalibrationResult, CalibrationSignal
+    mock_result = _make_mock_result()
+    app.run_v4_2_calibration = MagicMock(return_value=mock_result)
+
+    result = app.start_calibration_flow()
+
+    # v4.2 路径被调
+    app.run_v4_2_calibration.assert_called_once()
+    # v3.x 协调器 NOT 被调
+    app._calib_coordinator.start.assert_not_called()
+    assert result is True
+    print("  ✓ v4.3 calibration_mode=v4_2 默认走 v4.2 路径")
+
+
+def test_start_calibration_flow_falls_back_to_v3_x(tmp_path, monkeypatch):
+    """v4.3: calibration_mode='v3_x' 走旧 UserCalibrationManager 协调器 (deprecated 兼容)"""
+    app = _make_app(tmp_path, monkeypatch)
+    app.config.calibration_mode = "v3_x"
+    app._calib_coordinator = MagicMock()
+    app._calib_coordinator.start = MagicMock()
+    app.run_v4_2_calibration = MagicMock()  # 不应被调
+    # 模拟 overlay 让 v3.x 分支的 DEBUG 日志不出错
+    app._overlay = MagicMock()
+    app._overlay._calib_display = None  # v3.x 分支容忍 None
+
+    result = app.start_calibration_flow()
+
+    # v3.x 路径被调
+    app._calib_coordinator.start.assert_called_once()
+    # v4.2 NOT 被调
+    app.run_v4_2_calibration.assert_not_called()
+    assert result is True
+    print("  ✓ v4.3 calibration_mode=v3_x fallback 工作")
+
+
+def test_start_calibration_flow_v4_2_cancelled_returns_false(tmp_path, monkeypatch):
+    """v4.3: v4.2 校准被用户取消时 (返回 None), start_calibration_flow 返回 False"""
+    app = _make_app(tmp_path, monkeypatch)
+    app.config.calibration_mode = "v4_2"
+    app.run_v4_2_calibration = MagicMock(return_value=None)
+
+    result = app.start_calibration_flow()
+
+    app.run_v4_2_calibration.assert_called_once()
+    assert result is False
+    print("  ✓ v4.3 v4.2 取消 → start_calibration_flow 返回 False")

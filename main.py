@@ -84,6 +84,10 @@ class AppConfig:
     # M-21: 摄像头帧尺寸 (校准模块需要)
     frame_width: int = 640
     frame_height: int = 480
+    # 2026-06-05 v4.3 集成: 校准模块版本选择
+    #   "v4_2" — 默认, 用 calibration/ 新模块 (5 phase + HEAD 4 sub-phase + 完整 blink counting)
+    #   "v3_x" — 旧 analyzer/user_calibration.py 路径 (5 phase 但 HEAD 只 UP, 跳过 DOWN/LEFT/RIGHT)
+    calibration_mode: str = "v4_2"
 
 
 class CameraManager:
@@ -1036,15 +1040,30 @@ class EyeFocusApp:
             self._fps_start_time = time.time()
 
     def start_calibration_flow(self) -> bool:
-        """启动新的用户校准流程"""
+        """启动用户校准流程
+
+        2026-06-05 v4.3 集成: 按 config.calibration_mode 分发:
+          - "v4_2" (默认): 调 run_v4_2_calibration() 接管摄像头 + UI + 音频
+          - "v3_x": 调 _calib_coordinator.start() 走旧 UserCalibrationManager
+        """
+        mode = getattr(self.config, "calibration_mode", "v4_2")
+        if mode == "v4_2":
+            # v4.2 路径: 释放主程序摄像头让 calibration 模块独占, 完成后重启
+            logger.info("校准流程启动 [mode=v4_2]: 调 calibration.run()")
+            result = self.run_v4_2_calibration()
+            if result is not None:
+                logger.info("v4.2 校准成功: CQS=%.2f", result.cqs)
+            else:
+                logger.info("v4.2 校准被取消/失败, 使用默认基线")
+            return result is not None
+
+        # v3.x 兼容路径 (deprecated, 仅作为 fallback)
+        logger.warning("校准流程启动 [mode=v3_x]: 走旧 UserCalibrationManager, "
+                       "HEAD 姿态只 UP, 跳过 DOWN/LEFT/RIGHT, 建议改 config.calibration_mode='v4_2'")
         if self._calib_coordinator is None:
             logger.error("校准协调器未初始化")
             return False
-
-        # 启动校准（FrameProcessor 通过构造函数注入的 calib_manager 处理数据采集）
         self._calib_coordinator.start()
-
-        # 调试：验证 UI 是否被设置
         if self._overlay._calib_display:
             logger.info("DEBUG: calib_display.is_calibrating=%s", self._overlay._calib_display.is_calibrating)
         else:
