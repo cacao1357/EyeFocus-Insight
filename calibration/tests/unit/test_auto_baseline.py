@@ -94,3 +94,54 @@ def test_auto_baseline_evaluate_fail_no_frames():
     assert r.success is False
     assert r.failure_reason == "no_frames"
     assert "摄像头" in r.failure_diagnosis
+
+
+def test_auto_baseline_separates_face_and_ear_counters():
+    """M-25 修复：face_detected=True 但 EAR=None 时, _ear_computed_frames
+    不应增加, 但 _face_detected_frames 应增加。
+
+    旧实现：face_detected_ratio = n_valid / frames_total, 把 face 检测到
+    但 EAR 失败的帧错误计入"无效" (face 未检测)。
+    """
+    p = AutoBaselinePhase(duration_seconds=7.0)
+
+    # 5 帧正常 (face + EAR 都有)
+    for i in range(5):
+        p.feed_frame(ear=0.30, yaw=0.0, pitch=0.0, timestamp=i / 30.0)
+    # 3 帧 face 检测到但 EAR 计算失败
+    for i in range(3):
+        p.feed_frame(ear=None, yaw=0.5, pitch=1.0, timestamp=(5 + i) / 30.0,
+                     face_detected=True)
+    # 2 帧 face 完全未检测到
+    for i in range(2):
+        p.feed_frame(ear=None, yaw=None, pitch=None, timestamp=(8 + i) / 30.0)
+
+    # 内部状态: face_detected=8, ear_computed=5, frames_total=10
+    assert p._face_detected_frames == 8, f"期望 8 帧 face_detected, 实际 {p._face_detected_frames}"
+    assert p._ear_computed_frames == 5, f"期望 5 帧 ear_computed, 实际 {p._ear_computed_frames}"
+    assert p._frames_total == 10
+
+    r = p.evaluate()
+    # 报告应分别含两个 ratio
+    assert "face_detected_ratio" in r.summary
+    assert "ear_computed_ratio" in r.summary
+    assert r.summary["face_detected_ratio"] == pytest.approx(0.8, abs=0.001)
+    assert r.summary["ear_computed_ratio"] == pytest.approx(0.5, abs=0.001)
+    # 8/10=0.8 >= 0.7 通过 face 检测门禁
+    assert r.success is True
+
+
+def test_auto_baseline_evaluate_fail_low_face_ratio_with_partial_ear():
+    """M-25 修复: 真实"人脸检测不稳定"场景 — face_detected=0.5 (<0.7),
+    即使 ear_computed_ratio 更高也应失败。
+    """
+    p = AutoBaselinePhase(duration_seconds=7.0)
+    # 5 帧正常 (face + EAR)
+    for i in range(5):
+        p.feed_frame(ear=0.30, yaw=0.0, pitch=0.0, timestamp=i / 30.0)
+    # 5 帧 face 完全未检测到
+    for i in range(5):
+        p.feed_frame(ear=None, yaw=None, pitch=None, timestamp=(5 + i) / 30.0)
+    r = p.evaluate()
+    assert r.success is False
+    assert r.failure_reason == "face_detected_ratio_low"

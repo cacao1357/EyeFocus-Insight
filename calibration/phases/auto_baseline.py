@@ -22,16 +22,37 @@ class AutoBaselinePhase(Phase):
         self._yaws: List[float] = []
         self._pitches: List[float] = []
         self._frames_total: int = 0       # 含 None 帧
+        # M-25 修复: 拆分 face 检测与 EAR 计算两个独立计数器
+        self._face_detected_frames: int = 0  # face_detected=True 帧数
+        self._ear_computed_frames: int = 0    # ear 非 None 帧数
 
     def reset(self) -> None:
         self._ears.clear()
         self._yaws.clear()
         self._pitches.clear()
         self._frames_total = 0
+        self._face_detected_frames = 0
+        self._ear_computed_frames = 0
 
-    def feed_frame(self, ear, yaw, pitch, timestamp) -> None:
+    def feed_frame(self, ear, yaw, pitch, timestamp, face_detected: Optional[bool] = None) -> None:
+        """M-25 修复: 新增可选 face_detected 参数, 区分"人脸未检测"与
+        "人脸检测到但 EAR 计算失败"。
+
+        face_detected=None (默认) 时向后兼容: 推 ear/yaw/pitch 任一非 None
+        即视为 face_detected=True。调用方已知 face_result.face_detected 时,
+        显式传入以修正 face_detected_ratio 语义。
+        """
         self._frames_total += 1
+
+        # 兼容旧调用方: 未传 face_detected 时, 用 ear/yaw/pitch 推断
+        if face_detected is None:
+            face_detected = ear is not None or yaw is not None or pitch is not None
+
+        if face_detected:
+            self._face_detected_frames += 1
+
         if ear is not None:
+            self._ear_computed_frames += 1
             self._ears.append(ear)
             self._yaws.append(yaw if yaw is not None else 0.0)
             self._pitches.append(pitch if pitch is not None else 0.0)
@@ -56,12 +77,18 @@ class AutoBaselinePhase(Phase):
                 failure_diagnosis="未收到任何帧，请检查摄像头",
             )
 
-        face_ratio = n_valid / self._frames_total
+        # M-25 修复: 语义分开, face_detected_ratio 不再混入 ear 计算失败
+        face_ratio = self._face_detected_frames / self._frames_total
+        ear_ratio = self._ear_computed_frames / self._frames_total
 
         if face_ratio < 0.7:
             return PhaseResult(
                 success=False,
-                summary={"face_detected_ratio": face_ratio, "sample_count": n_valid},
+                summary={
+                    "face_detected_ratio": face_ratio,
+                    "ear_computed_ratio": ear_ratio,
+                    "sample_count": n_valid,
+                },
                 failure_reason="face_detected_ratio_low",
                 failure_diagnosis="人脸检测不稳定，请确认摄像头对准你的脸",
             )
@@ -75,7 +102,12 @@ class AutoBaselinePhase(Phase):
         if ear_cv > 0.15:
             return PhaseResult(
                 success=False,
-                summary={"ear_mean": ear_mean, "ear_cv": ear_cv, "face_detected_ratio": face_ratio},
+                summary={
+                    "ear_mean": ear_mean,
+                    "ear_cv": ear_cv,
+                    "face_detected_ratio": face_ratio,
+                    "ear_computed_ratio": ear_ratio,
+                },
                 failure_reason="ear_cv_high",
                 failure_diagnosis="请保持自然睁眼，眨眼请等校准后再做",
             )
@@ -89,5 +121,6 @@ class AutoBaselinePhase(Phase):
                 "pitch_mean": pitch_mean,
                 "sample_count": n_valid,
                 "face_detected_ratio": face_ratio,
+                "ear_computed_ratio": ear_ratio,
             },
         )
