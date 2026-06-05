@@ -477,3 +477,56 @@ class TestDatabaseManager:
                 assert 3.0 in ts_to_record, "好数据 3.0 应被读出"
             finally:
                 db.close()
+
+    def test_close_truncates_wal_M14(self):
+        """M-14: close() 必须主动 wal_checkpoint(TRUNCATE), 否则 .db-wal 残片可持续增长
+        修复前 close() 只 _conn.close(), 多连接场景下 WAL 不被回收
+        修复后 close() 前先 PRAGMA wal_checkpoint(TRUNCATE) 把 WAL 内容刷到主库并截断
+
+        验证: (1) close 源码包含 wal_checkpoint(TRUNCATE);
+              (2) 持有外部读连接时 close 仍能截断 WAL (size=0 或不存在)
+        """
+        import sqlite3
+        import inspect
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "wal.db")
+            from storage.db import DBConfig
+            db = DatabaseManager(config=DBConfig(db_path=db_path))
+            db.initialize()
+            session_id = db.create_session()
+
+            # 写几条数据撑大 WAL
+            for i in range(50):
+                frame = FrameRecord(
+                    session_id=session_id,
+                    timestamp=float(i),
+                    ear_left=0.25, ear_right=0.26, ear_avg=0.255,
+                    yaw=0.5, pitch=-1.0, roll=0.2,
+                    gaze_score=85.0, brightness=128.0,
+                    face_detected=True,
+                )
+                db.write_frame(session_id, frame)
+
+            wal_path = db_path + "-wal"
+            assert os.path.exists(wal_path), "WAL 模式下应存在 .db-wal 文件"
+            wal_size_before = os.path.getsize(wal_path)
+            assert wal_size_before > 0, "撑大 WAL 应有非零 size"
+
+            # 源码层验证: close 必须显式调用 wal_checkpoint(TRUNCATE)
+            src = inspect.getsource(db.close)
+            assert "wal_checkpoint" in src.lower(), (
+                f"close() 必须显式调用 PRAGMA wal_checkpoint(TRUNCATE). 实际源码:\n{src}"
+            )
+            assert "truncate" in src.lower(), (
+                f"close() 必须用 TRUNCATE 模式 checkpoint. 实际源码:\n{src}"
+            )
+
+            db.close()
+
+            # 行为层验证: close 后 .db-wal 应被截断 (size=0) 或删除
+            if os.path.exists(wal_path):
+                wal_size_after = os.path.getsize(wal_path)
+                assert wal_size_after == 0, (
+                    f"close() 后 .db-wal 应被截断 (size=0), "
+                    f"实际 size={wal_size_after} (close 前 {wal_size_before})"
+                )

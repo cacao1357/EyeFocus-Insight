@@ -254,6 +254,12 @@ class DatabaseManager:
         """关闭数据库连接"""
         with self._lock:
             if self._conn:
+                # v4.3 M-14 修复: 关闭前主动 wal_checkpoint(TRUNCATE), 把 WAL 内容刷到主库并截断
+                # 否则多连接场景下 .db-wal 残片可持续增长
+                try:
+                    self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                except Exception as e:
+                    logger.warning("close: wal_checkpoint 失败 (忽略, 继续 close): %s", e)
                 self._conn.close()
                 self._conn = None
                 self._initialized = False
