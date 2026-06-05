@@ -1096,12 +1096,15 @@ class EyeFocusApp:
         if self._original_sigterm:
             signal.signal(signal.SIGTERM, self._original_sigterm)
 
-        # 关闭检测器（带超时）
+        # 关闭检测器（带超时）— H-13: 异常用 logger.exception 记录完整 traceback
         if self._face_detector:
             try:
                 self._face_detector.close()
             except Exception as e:
-                logger.warning("FaceDetector.close() 异常: %s", e)
+                if not hasattr(self, '_cleanup_errors'):
+                    self._cleanup_errors = 0
+                self._cleanup_errors += 1
+                logger.exception("FaceDetector.close() 异常: %s", e)
 
         # 关闭数据库
         if self._db:
