@@ -386,3 +386,34 @@ class TestDatabaseManager:
                 )
             finally:
                 db.close()
+
+    def test_foreign_keys_pragma_enabled_M12(self):
+        """M-12: initialize() 必须开启 PRAGMA foreign_keys=ON, FK 约束才生效
+        否则 SCHEMA_SQL 声明 FK 形同虚设, 孤立 frame_records 可插入
+        """
+        import sqlite3
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "fk.db")
+            from storage.db import DBConfig
+            db = DatabaseManager(config=DBConfig(db_path=db_path))
+            db.initialize()
+            try:
+                # 1) PRAGMA foreign_keys 必须返回 1
+                with db._get_cursor() as cursor:
+                    cursor.execute("PRAGMA foreign_keys")
+                    fk_state = cursor.fetchone()[0]
+                assert fk_state == 1, f"PRAGMA foreign_keys 应为 1 (ON), 实际 {fk_state}"
+
+                # 2) 插入孤立 frame_records (不存在的 session_id) 应抛 IntegrityError
+                bad_frame = FrameRecord(
+                    session_id="nonexistent_session_xyz",
+                    timestamp=1.0,
+                    ear_left=0.25, ear_right=0.26, ear_avg=0.255,
+                    yaw=0.5, pitch=-1.0, roll=0.2,
+                    gaze_score=85.0, brightness=128.0,
+                    face_detected=True,
+                )
+                with pytest.raises(sqlite3.IntegrityError):
+                    db.write_frame("nonexistent_session_xyz", bad_frame)
+            finally:
+                db.close()

@@ -228,6 +228,9 @@ class DatabaseManager:
             self._conn.execute(f"PRAGMA journal_mode={self.config.journal_mode}")
             self._conn.execute(f"PRAGMA synchronous={self.config.synchronous}")
             self._conn.execute(f"PRAGMA cache_size={self.config.cache_size}")
+            # v4.3 M-12 修复: 开启 FK 约束, 否则 SCHEMA_SQL 声明的 FK 形同虚设
+            # SQLite 默认 foreign_keys=OFF, 不主动开启则孤立 frame_records 可插入
+            self._conn.execute("PRAGMA foreign_keys = ON")
 
             # 创建表
             self._conn.executescript(SCHEMA_SQL)
