@@ -125,20 +125,44 @@ class BlinkRoundCollector:
         self._blink_start_time: Optional[float] = None
 
     def record_frame(self, ear: float, ear_threshold: float, squint_threshold: float, current_time: float):
-        """记录一帧数据"""
-        if ear < squint_threshold:
+        """记录一帧数据
+
+        v4.3 H-06 修复: 使用 ear_threshold 与 squint_threshold 双阈值, 配合
+        BLINK_DURATION_THRESHOLD 时长门限组合判定, 而非仅靠 squint_threshold
+        触发 + 400ms 时长二分类。
+
+        判定矩阵:
+          ear < ear_threshold + duration < 0.4s  → blink   (短闭眼)
+          ear < ear_threshold + duration ≥ 0.4s  → squint  (长闭眼, 现存 test_long_blink)
+          ear_threshold ≤ ear < squint_threshold  → squint  (持续眯眼, H-06 期望)
+          ear ≥ squint_threshold                  → 正常
+        """
+        if ear < ear_threshold:
+            # 强 EAR 下降 → blink 候选
             if not self._in_blink:
                 self._in_blink = True
+                self._blink_candidate_is_squint = False
+                self._blink_start_time = current_time
+        elif ear < squint_threshold:
+            # 中度 EAR 下降 → squint 候选
+            if not self._in_blink:
+                self._in_blink = True
+                self._blink_candidate_is_squint = True
                 self._blink_start_time = current_time
         else:
+            # EAR 恢复, 结算
             if self._in_blink and self._blink_start_time is not None:
                 duration = current_time - self._blink_start_time
-                if duration < BLINK_DURATION_THRESHOLD:
-                    self.detected_blinks += 1
-                else:
+                candidate_is_squint = getattr(self, '_blink_candidate_is_squint', False)
+                if candidate_is_squint or duration >= BLINK_DURATION_THRESHOLD:
+                    # squint 候选 (mid EAR) 或 长闭眼 (deep EAR 长时) → squint
                     self.detected_squints += 1
+                else:
+                    # deep EAR 短时 → blink
+                    self.detected_blinks += 1
                 self._in_blink = False
                 self._blink_start_time = None
+                self._blink_candidate_is_squint = False
 
 
 class UserCalibrationManager:
