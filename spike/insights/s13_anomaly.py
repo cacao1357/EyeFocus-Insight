@@ -4,17 +4,13 @@
 方法：IsolationForest + z-score 归因
 输出：anomaly_score / 归因 top 3 / 是否命中人造特征
 """
-import os
-import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 import json
 from copy import deepcopy
 import numpy as np
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 
-from _common import (
+from spike.insights._common import (
     SyntheticSession, gen_synthetic_sessions, sessions_to_matrix, save_result,
 )
 

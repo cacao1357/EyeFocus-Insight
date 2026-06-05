@@ -4,10 +4,6 @@
 方法：KMeans + StandardScaler + 自动选 k (silhouette ∈ [2,6])
 输出：选出的 k + silhouette + 聚类标签 + 与真实模式的对齐度
 """
-import os
-import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 import json
 import numpy as np
 import matplotlib
@@ -19,7 +15,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import silhouette_score
 from sklearn.decomposition import PCA
 
-from _common import gen_synthetic_sessions, sessions_to_matrix, save_result, save_png
+from spike.insights._common import gen_synthetic_sessions, sessions_to_matrix, save_result, save_png
 
 
 def run_spike(k_range=(2, 6), silhouette_threshold=0.25, alignment_threshold=75.0, target_k=4, seed=42):

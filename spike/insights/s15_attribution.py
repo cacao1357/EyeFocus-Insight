@@ -8,16 +8,12 @@
   - Cohen's d 效应量
 输出：findings 列表 + 各因素 effect_size
 """
-import os
-import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 import json
 import numpy as np
 import pandas as pd
 from scipy import stats
 
-from _common import save_result
+from spike.insights._common import save_result
 
 
 def gen_frames(n_per_condition=500, seed=42):

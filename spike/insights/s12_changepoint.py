@@ -4,10 +4,6 @@
 方法：ruptures.Pelt(model='rbf') + 自动调 penalty
 输出：检测到的变点 + 与真实断崖的时间误差
 """
-import os
-import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 import json
 import numpy as np
 import matplotlib
@@ -15,7 +11,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import ruptures as rpt
 
-from _common import gen_focus_timeseries_with_drops, save_result, save_png
+from spike.insights._common import gen_focus_timeseries_with_drops, save_result, save_png
 
 
 def run_spike(target_breakpoints_per_hour=4, error_threshold_s=30, seed=42):

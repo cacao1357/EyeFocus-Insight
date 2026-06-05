@@ -4,10 +4,6 @@
 方法：statsmodels STL(period=24, robust=True)
 输出：daily_pattern[24] + peak_hours top 3 与真实位置对比
 """
-import os
-import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 import json
 import numpy as np
 import matplotlib
@@ -15,7 +11,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from statsmodels.tsa.seasonal import STL
 
-from _common import gen_hourly_focus_with_daily_pattern, save_result, save_png
+from spike.insights._common import gen_hourly_focus_with_daily_pattern, save_result, save_png
 
 
 def run_spike(n_days=14, peak_error_threshold_h=1, low_error_threshold_h=1, seed=42):
