@@ -87,6 +87,11 @@ EyeFocus-Insight/
 │   ├── fatigue.py      # 疲劳分析
 │   ├── glasses.py      # 眼镜检测
 │   └── user_calibration.py  # 用户多轮校准（v1.3+）
+├── calibration/        # 校准子系统（v4.2+ 整体重做，按 v4.2 范式开发）
+│   ├── phases/         # 4 阶段校准（中心/角度/距离/眨眼）
+│   ├── audio/          # 校准提示音
+│   └── ui/             # 校准 UI 组件
+├── analyzer/insights/  # 数据洞察子包（v4.1+）
 ├── storage/            # 存储模块
 │   ├── models.py       # 数据模型定义
 │   └── db.py           # SQLite 数据库层
@@ -101,13 +106,14 @@ EyeFocus-Insight/
 │   ├── common.py               # 共享算法实现
 │   └── results/                # 测试结果（按成员分类；.json 输出不入仓，.txt 分析报告入仓）
 │       └── D1/                 # D1 已落盘的 6 份手写分析报告（s4/s5/s6/s7/s9/s10）
-├── tests/              # 单元与集成测试（284 个）
+├── tests/              # 单元与集成测试（382 个）
 ├── docs/               # 文档
 │   └── old_schemes/    # 旧版本方案归档
-├── PROJECT_PLAN.md     # 总规划方案（v4.0.2）
+├── PROJECT_PLAN.md     # 总规划方案（v4.3）
 ├── PHASE0_PLAN.md      # Phase 0 执行计划
 ├── PHASE0_SUMMARY.md   # Phase 0 验证报告
-└── PHASE1_PLAN.md      # Phase 1 开发计划（v1.6）
+├── PHASE1_PLAN.md      # Phase 1 开发计划（v1.9）
+└── PHASE2_PLAN.md      # Phase 2 开发计划（v1.2）
 ```
 
 ---
@@ -125,18 +131,22 @@ EyeFocus-Insight/
 
 ## 当前进度
 
-**v4.0.2** — 审计修复 + UX 修复完成。
+**v4.4** — GUI 清晰化 + 拖窗口 REC + 无脸检测横条完成。
 
-总规划见 [PROJECT_PLAN.md](./PROJECT_PLAN.md)。Phase 0 验证见 [PHASE0_SUMMARY.md](./PHASE0_SUMMARY.md)。Phase 1 任务见 [PHASE1_PLAN.md](./PHASE1_PLAN.md)。
+总规划见 [PROJECT_PLAN.md](./PROJECT_PLAN.md)。Phase 0 验证见 [PHASE0_SUMMARY.md](./PHASE0_SUMMARY.md)。Phase 1 任务见 [PHASE1_PLAN.md](./PHASE1_PLAN.md)。Phase 2 任务见 [PHASE2_PLAN.md](./PHASE2_PLAN.md)。
 
 | 版本 | 内容 | 测试 |
 |------|------|------|
 | **v3.4** | 帧处理重构（FrameProcessor 统一） | 251 |
 | **v4.0** | 10 个审计发现修复（死代码/基线接线/AND-confidence/光照边界） | 275 |
 | **v4.0.1** | 实测新发现 2 bug（create_session 同微秒冲突 / head_pose phases KeyError） | 279 |
-| **v4.0.2** | UX 实测 4 bug（无效摄像头/Mediapipe telemetry/动态文案/日志风格） | **284** |
+| **v4.0.2** | UX 实测 4 bug（无效摄像头/Mediapipe telemetry/动态文案/日志风格） | 284 |
+| **v4.1** | `analyzer/insights/` 子包（v4.1 范式） | 290 |
+| **v4.2** | `calibration/` 整体重做（T148 7 BUG 解决，按 v4.2 范式 6 条硬约束） | 300 |
+| **v4.3** | 集成 v4.2 校准到默认流程 + GUI 重设计 + 44 audit fixes | 380 |
+| **v4.4** | GUI 清晰化（focus 圆环 r=70 / fatigue 切档彩色横条 / MODE 圆点 2.4x） + 拖窗口检测 + DRAGGING 提示 + panel 常驻 ●REC + 无脸检测红底白字横条 | **382** |
 
-### 关键性能指标（v4.0.2 实测）
+### 关键性能指标（v4.3 沿用）
 
 | 指标 | 目标 | 实测 |
 |------|------|------|
@@ -150,7 +160,7 @@ EyeFocus-Insight/
 ### 已知限制
 
 - **B4 部分**：MediaPipe C++ `W0000` 警告仍出现（mediapipe 0.10.35 绕 env var，不影响功能）
-- **GUI 不可测**：CLI 环境无法测试 GUI 渲染；需在 Windows GUI 桌面实机测试
+- **GUI 渲染逻辑测试**：CLI 环境无法验证像素输出；v4.3+ 采用源码字符串验证（如 `_draw_no_face_banner` 方法存在性 + 关键参数）覆盖渲染分支。完整视觉验证仍需 Windows GUI 桌面实机
 
 ---
 
