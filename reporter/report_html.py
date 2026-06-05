@@ -196,6 +196,15 @@ class HTMLReportGenerator:
                 color: #999;
                 padding: 40px;
             }
+            .chart-error {
+                text-align: center;
+                color: #dc3545;
+                background: #fff5f5;
+                border: 1px solid #f5c6cb;
+                border-radius: 8px;
+                padding: 20px;
+                margin: 10px 0;
+            }
         </style>
     """
 
@@ -325,41 +334,59 @@ class HTMLReportGenerator:
     def _generate_charts(self, data: ReportData) -> dict:
         """生成所有图表
 
-        Returns:
-            包含各图表 base64 编码的字典
+        每个图表独立 try/except，失败不互相影响。返回值结构:
+            {name: {"data": base64_str | None, "error": str | None}}
+
+        - data != None, error == None: 成功
+        - data == None, error == None:  无数据（按业务逻辑跳过）
+        - data == None, error != None:  生成失败（异常被记录，HTML 渲染会
+          显示 chart-error 标记，让用户/调用方知道是失败不是无数据）
+
+        H-10 修复: 原代码一个 try/except 包全部 4 个图表，任一失败时
+        charts dict 部分缺失但调用方无任何反馈，HTML 只能看到一片空白。
         """
         charts = {}
 
-        try:
-            # 专注度趋势图
-            if data.focus_records:
-                chart_data = self.chart_gen.generate_focus_trend_chart(data.focus_records)
-                charts['focus_trend'] = self._bytes_to_base64(chart_data)
+        # 每个图表独立 try/except + always populate entry (即使失败)
+        def _try_chart(name, gen_fn, has_data):
+            """单个图表生成包装。始终在 charts 中放条目。"""
+            if not has_data:
+                charts[name] = {"data": None, "error": None}
+                return
+            try:
+                raw = gen_fn()
+                charts[name] = {"data": self._bytes_to_base64(raw), "error": None}
+            except Exception as e:
+                logger.error("生成图表 %s 失败: %s", name, e)
+                charts[name] = {"data": None, "error": str(e)}
 
-            # 眨眼频率分布图
-            if data.focus_records or data.blink_records:
-                chart_data = self.chart_gen.generate_blink_rate_distribution(
-                    data.blink_records, data.focus_records
-                )
-                charts['blink_distribution'] = self._bytes_to_base64(chart_data)
-
-            # 疲劳时间线图
-            if data.fatigue_records:
-                chart_data = self.chart_gen.generate_fatigue_timeline(data.fatigue_records)
-                charts['fatigue_timeline'] = self._bytes_to_base64(chart_data)
-
-            # 摘要图表
-            if data.focus_records:
-                chart_data = self.chart_gen.generate_summary_chart(
-                    avg_focus=data.avg_focus,
-                    avg_blink_rate=data.avg_blink_rate,
-                    fatigue_level=data.fatigue_level,
-                    total_duration=data.total_duration,
-                )
-                charts['summary'] = self._bytes_to_base64(chart_data)
-
-        except Exception as e:
-            logger.error(f"生成图表时出错: {e}")
+        _try_chart(
+            "focus_trend",
+            lambda: self.chart_gen.generate_focus_trend_chart(data.focus_records),
+            has_data=bool(data.focus_records),
+        )
+        _try_chart(
+            "blink_distribution",
+            lambda: self.chart_gen.generate_blink_rate_distribution(
+                data.blink_records, data.focus_records
+            ),
+            has_data=bool(data.focus_records or data.blink_records),
+        )
+        _try_chart(
+            "fatigue_timeline",
+            lambda: self.chart_gen.generate_fatigue_timeline(data.fatigue_records),
+            has_data=bool(data.fatigue_records),
+        )
+        _try_chart(
+            "summary",
+            lambda: self.chart_gen.generate_summary_chart(
+                avg_focus=data.avg_focus,
+                avg_blink_rate=data.avg_blink_rate,
+                fatigue_level=data.fatigue_level,
+                total_duration=data.total_duration,
+            ),
+            has_data=bool(data.focus_records),
+        )
 
         return charts
 
@@ -516,14 +543,35 @@ class HTMLReportGenerator:
         return f"<ul class='insights-list'>\n" + "\n".join(items) + "\n</ul>"
 
     def _render_charts(self, charts: dict) -> dict:
-        """将图表字节数据转换为 HTML img 标签"""
+        """将图表数据转换为 HTML。
+
+        输入 charts 结构 (来自 _generate_charts):
+            {name: {"data": base64_str | None, "error": str | None}}
+
+        渲染规则:
+        - data != None → <div class="chart-container"><img ...></div>
+        - data == None, error != None → <div class="chart-error">图表生成失败 ({name}): {error}</div>
+        - data == None, error == None → <div class="no-data">无数据</div>
+        """
         result = {}
-        for name, base64_data in charts.items():
-            result[name] = f"""
-                <div class="chart-container">
-                    <img src="data:image/png;base64,{base64_data}" alt="{name}">
-                </div>
-            """
+        for name, info in charts.items():
+            data = info.get("data") if isinstance(info, dict) else None
+            error = info.get("error") if isinstance(info, dict) else None
+            if error:
+                # H-10: 失败时显式标记，让用户/调用方知道是生成失败不是无数据
+                result[name] = (
+                    f'<div class="chart-error">'
+                    f'图表生成失败 ({name}): {error}'
+                    f'</div>'
+                )
+            elif data:
+                result[name] = (
+                    f'<div class="chart-container">'
+                    f'<img src="data:image/png;base64,{data}" alt="{name}">'
+                    f'</div>'
+                )
+            else:
+                result[name] = '<div class="no-data">无数据</div>'
         return result
 
     def _bytes_to_base64(self, data: bytes) -> str:

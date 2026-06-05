@@ -446,6 +446,140 @@ class TestHTMLReportGenerator:
         assert '错误' in html
         assert '测试错误消息' in html
 
+    # ===== H-10: 图表生成异常应被报告，不可静默吞 =====
+
+    def test_h10_chart_failure_marked_in_html(
+        self,
+        sample_session,
+        sample_focus_records,
+        sample_fatigue_records,
+        sample_blink_records,
+    ):
+        """H-10: 单个图表生成失败时，HTML 必须包含失败标记
+
+        Bug 现象: 原 _generate_charts 把 4 个图表全包在一个 try/except，
+        任一失败时 logger.error 后继续，charts dict 部分缺失但调用方无
+        任何反馈 — 用户看到空白图但不知道是失败还是无数据。
+
+        Fix 后: 每个图表独立 try/except，失败时 HTML 渲染
+        <div class="chart-error">图表生成失败: {name}</div>。
+        """
+        from reporter.report_html import HTMLReportGenerator
+        from reporter.charts import ChartGenerator
+
+        # 用一个真实的 ChartGenerator（避免 mock 自身行为）
+        # 然后 patch generate_focus_trend_chart 单独抛异常
+        real_gen = create_chart_generator(figsize=(8, 4), dpi=80)
+
+        with patch.object(
+            ChartGenerator,
+            'generate_focus_trend_chart',
+            side_effect=RuntimeError("matplotlib 渲染失败: 模拟"),
+        ):
+            html_gen = HTMLReportGenerator(
+                db_manager=None,
+                chart_generator=real_gen,
+            )
+            html = html_gen.generate_report_from_data(
+                session=sample_session,
+                focus_records=sample_focus_records,
+                fatigue_records=sample_fatigue_records,
+                blink_records=sample_blink_records,
+            )
+
+        # 1) HTML 必须包含 chart-error 标记
+        assert "chart-error" in html, \
+            "图表生成失败时 HTML 必须包含 chart-error 标记"
+
+        # 2) 错误信息应含失败的图表名（focus_trend）
+        assert "focus_trend" in html, \
+            "错误信息应指明哪个图表失败"
+
+        # 3) 错误信息应包含具体异常消息（或其一部分）
+        assert "matplotlib" in html or "模拟" in html, \
+            f"错误信息应包含具体异常原因，实际 HTML 片段: {html[html.find('chart-error'):html.find('chart-error')+200] if 'chart-error' in html else '无 chart-error'}"
+
+        # 4) 其他图表不应受影响 — 仍应有 base64 PNG（说明 focus_trend
+        # 之外的其他图表正常生成）
+        # fatigue_records 有数据 → fatigue_timeline 应当存在
+        assert "fatigue_timeline" in html
+
+    def test_h10_all_charts_failure_does_not_crash(
+        self,
+        sample_session,
+        sample_focus_records,
+        sample_fatigue_records,
+        sample_blink_records,
+    ):
+        """H-10: 所有图表都失败时，HTML 仍可生成（不抛异常），含失败标记
+
+        Fix 后整个报告流程应保持鲁棒 — 单图失败不应让整个 generate_report
+        抛异常使上层崩溃。
+        """
+        from reporter.report_html import HTMLReportGenerator
+        from reporter.charts import ChartGenerator
+
+        real_gen = create_chart_generator(figsize=(8, 4), dpi=80)
+
+        with patch.object(
+            ChartGenerator,
+            'generate_focus_trend_chart',
+            side_effect=RuntimeError("focus_trend 失败"),
+        ), patch.object(
+            ChartGenerator,
+            'generate_fatigue_timeline',
+            side_effect=ValueError("fatigue_timeline 失败"),
+        ):
+            html_gen = HTMLReportGenerator(
+                db_manager=None,
+                chart_generator=real_gen,
+            )
+            # 不应抛异常
+            html = html_gen.generate_report_from_data(
+                session=sample_session,
+                focus_records=sample_focus_records,
+                fatigue_records=sample_fatigue_records,
+                blink_records=sample_blink_records,
+            )
+
+        assert isinstance(html, str)
+        assert len(html) > 0
+        # 至少 2 个 chart-error 标记
+        assert html.count("chart-error") >= 2
+
+    def test_h10_normal_charts_have_no_error_marker(
+        self,
+        sample_session,
+        sample_focus_records,
+        sample_fatigue_records,
+        sample_blink_records,
+    ):
+        """H-10 回归: 图表正常生成时，HTML 不应含 chart-error 标记
+
+        确保 fix 没有把"无数据"和"失败"混淆 — 正常情况下报告应无
+        chart-error 标记（除非真正的生成异常）。
+
+        注意: 检查的是实际渲染的 <div class="chart-error"> 标签，
+        不是 CSS 里的 .chart-error {} 规则。
+        """
+        from reporter.report_html import HTMLReportGenerator
+
+        real_gen = create_chart_generator(figsize=(8, 4), dpi=80)
+        html_gen = HTMLReportGenerator(
+            db_manager=None,
+            chart_generator=real_gen,
+        )
+        html = html_gen.generate_report_from_data(
+            session=sample_session,
+            focus_records=sample_focus_records,
+            fatigue_records=sample_fatigue_records,
+            blink_records=sample_blink_records,
+        )
+
+        # 实际渲染的 div 标签 — 不是 CSS 规则
+        assert '<div class="chart-error">' not in html, \
+            "图表正常生成时不应渲染 chart-error div"
+
 
 # ============ Integration Tests ============
 
