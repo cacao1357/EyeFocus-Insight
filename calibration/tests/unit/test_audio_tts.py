@@ -87,3 +87,62 @@ def test_tts_shutdown_stops_engine():
         t = tts_module.TTS()
         t.shutdown()
         mock_engine.stop.assert_called_once()
+
+
+def test_tts_shutdown_joins_inflight_threads():
+    """shutdown 应 join 所有在飞线程，避免 daemon 线程持有 engine。
+
+    M-24: 旧实现只 engine.stop()，不 join，导致 daemon 线程在引擎
+    释放后仍调用 runAndWait 抛 RuntimeError。
+    """
+    import threading
+    mock_engine = MagicMock()
+    mock_engine.getProperty.return_value = []
+
+    # 让 runAndWait 阻塞,模拟慢速 TTS
+    block_event = threading.Event()
+
+    def slow_run_and_wait():
+        block_event.wait(timeout=2.0)
+
+    mock_engine.runAndWait.side_effect = slow_run_and_wait
+
+    # 让 stop 触发 block_event,unblock runAndWait (模拟真实 pyttsx3 行为)
+    def stop_unblocks():
+        block_event.set()
+    mock_engine.stop.side_effect = stop_unblocks
+
+    with patch("pyttsx3.init", return_value=mock_engine):
+        from calibration.audio import tts as tts_module
+        import importlib
+        importlib.reload(tts_module)
+        t = tts_module.TTS()
+        t.say("测试")
+        # 等待 _do_say 拿到锁并进入 runAndWait
+        time.sleep(0.1)
+        assert any(thr.is_alive() for thr in t._threads), "线程应在飞"
+
+        # 触发 shutdown:stop 应 unblock runAndWait,然后 join
+        t.shutdown()
+
+        # 所有线程应被 join (不再是 is_alive)
+        for thr in t._threads:
+            assert not thr.is_alive(), "shutdown 后线程应已结束"
+        # engine 应被 stop
+        mock_engine.stop.assert_called_once()
+
+
+def test_tts_shutdown_unblocks_say_via_engine_none():
+    """shutdown 后新调 say() 应静默 (engine=None),不抛异常。"""
+    mock_engine = MagicMock()
+    mock_engine.getProperty.return_value = []
+    with patch("pyttsx3.init", return_value=mock_engine):
+        from calibration.audio import tts as tts_module
+        import importlib
+        importlib.reload(tts_module)
+        t = tts_module.TTS()
+        t.shutdown()
+        # engine=None 后 say 静默返回
+        t.say("x")
+        # 不抛
+        assert t._engine is None
