@@ -371,6 +371,10 @@ class FatigueAnalyzer:
             prev_time = ts
             prev_closed = is_closed
 
+        # M-02: 末帧仍闭眼时, 把从最后帧到 current_time 的时长计入 closed_time
+        if prev_closed and current_time > prev_time:
+            closed_time += current_time - prev_time
+
         # 计算 PERCLOS 百分比
         total_time = self._perclos_history[-1][0] - self._perclos_history[0][0]
         if total_time <= 0:

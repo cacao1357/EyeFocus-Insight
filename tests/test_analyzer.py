@@ -280,6 +280,31 @@ class TestFatigueAnalyzer:
             f"start() 未重置 _last_blink_rate, 残留 {analyzer._last_blink_rate}"
         )
 
+    def test_compute_perclos_includes_last_closed_frame_M02(self):
+        """M-02: _compute_perclos 末帧仍闭眼时, 必须把从最后帧到 current_time 的时长计入 closed_time
+
+        复盘: 原实现循环用 (prev, current) 配对累加, 末帧仍闭眼时,
+        该段从最后一帧到 current_time 的时长未累加, 少算末段闭眼时长。
+        """
+        from analyzer.fatigue import create_fatigue_analyzer, FatigueAnalyzer
+        analyzer = FatigueAnalyzer(perclos_window=60.0)
+        analyzer.start()
+
+        # 构造 3 帧历史: t=0.0 闭, t=1.0 闭, t=2.0 闭
+        # 期望: closed_time = (1.0-0.0) + (2.0-1.0) + (current-2.0) = 2.0 + (current-2.0)
+        analyzer._perclos_history.append((0.0, True))
+        analyzer._perclos_history.append((1.0, True))
+        analyzer._perclos_history.append((2.0, True))
+
+        current_time = 3.0  # 末帧到 current 距离 1.0s
+        perclos = analyzer._compute_perclos(current_time)
+
+        # 期望: closed_time = 3.0 (0->1, 1->2, 2->3)
+        # perclos_window = 60, perclos = (3.0/60) * 100 = 5.0%
+        assert perclos == pytest.approx(5.0, abs=0.01), (
+            f"M-02 末帧闭眼时长应计入 PERCLOS, 期望 5.0%, 实际 {perclos}%"
+        )
+
     def test_get_record_does_not_pollute_sustained_state_H04(self):
         """H-04: get_record() 语义上是只读, 不应修改 _medium_onset_time / _high_onset_time
         原实现 get_record 调 _update_sustained_tracking(), 该函数会修改 self._medium_onset_time,
