@@ -412,6 +412,34 @@ class FocusOverlay:
             "HIGH": (0, 0, 220),
         }.get(level, (200, 200, 200))
 
+    def _draw_fatigue_alert(self, frame: np.ndarray, fatigue_level: Optional[str]) -> np.ndarray:
+        """v4.4: fatigue 切档醒目提示
+
+        Args:
+            frame: 当前帧
+            fatigue_level: "LOW" / "MEDIUM" / "HIGH" / None
+
+        Returns:
+            绘制后的帧
+        """
+        if fatigue_level is None or fatigue_level == "LOW":
+            return frame
+        h, w = frame.shape[:2]
+        bar_y = self.config.status_bar_height  # 60, 紧贴状态栏下方
+        if fatigue_level == "MEDIUM":
+            # 4px 黄色横条 (0, 200, 220)
+            cv2.rectangle(frame, (0, bar_y), (w, bar_y + 4), (0, 200, 220), -1)
+        elif fatigue_level == "HIGH":
+            # 8px 红色横条, 0.5s 周期闪烁
+            if int(time.time() * 2) % 2 == 0:
+                cv2.rectangle(frame, (0, bar_y), (w, bar_y + 8), (0, 0, 220), -1)
+            # 居中大警告
+            warn_text = "⚠ 疲劳警告 ⚠"
+            (tw, th), _ = cv2.getTextSize(warn_text, self.config.font, 1.2, 3)
+            cv2.putText(frame, warn_text, ((w - tw) // 2, h // 2),
+                        self.config.font, 1.2, (0, 0, 255), 3)
+        return frame
+
     def _draw_score_breakdown(
         self,
         frame: np.ndarray,

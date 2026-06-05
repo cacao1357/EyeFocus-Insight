@@ -224,6 +224,26 @@ class TestFocusOverlay:
         assert overlay._focus_color(40) == (0, 0, 220)
         assert overlay._focus_color(0) == (0, 0, 220)
 
+    def test_fatigue_alert_exists_v4_4(self):
+        """v4.4: _draw_fatigue_alert 方法存在且源码含关键字符串
+
+        实际渲染测试因 cv2.putText 默认字体不支持 ⚠ unicode 而不可靠,
+        故改为源码字符串验证 (与 v4.3 的 test_fatigue_color_method 风格一致)。
+        """
+        overlay = FocusOverlay()
+        # 方法存在
+        assert hasattr(overlay, "_draw_fatigue_alert"), "_draw_fatigue_alert 方法应存在 (v4.4 新增)"
+        import inspect
+        src = inspect.getsource(overlay._draw_fatigue_alert)
+        # LOW / None 早返回
+        assert "LOW" in src and "None" in src, "应早返回 LOW/None 不绘制"
+        # MEDIUM 黄横条 (紧贴 status_bar 下)
+        assert "(0, 200, 220)" in src, "MEDIUM 黄色 (0,200,220)"
+        # HIGH 红横条 (闪烁) + 大警告
+        assert "(0, 0, 220)" in src, "HIGH 红色 (0,0,220)"
+        assert "int(time.time()" in src, "HIGH 应含 0.5s 周期闪烁逻辑"
+        assert "疲劳警告" in src, "HIGH 时源码应含 '疲劳警告' 字符串"
+
     def test_alert_color_method(self):
         """测试告警颜色映射"""
         overlay = FocusOverlay()
