@@ -232,6 +232,129 @@ class TestFatigueAnalyzer:
         analyzer = create_fatigue_analyzer()
         assert isinstance(analyzer, FatigueAnalyzer)
 
+    def test_create_fatigue_analyzer_perclos_default_H03(self):
+        """H-03: 工厂函数 perclos_threshold_mild 默认值必须等于类常量 5.0
+        原 default=0.15 与类常量 DEFAULT_PERCLOS_THRESHOLD_MILD=5.0 不一致,
+        PERCLOS 是百分比 (0-100), 0.15 几乎永远成立, 中度疲劳误判率 100%
+        """
+        from analyzer.fatigue import DEFAULT_PERCLOS_THRESHOLD_MILD
+        analyzer = create_fatigue_analyzer()
+        assert analyzer.perclos_threshold_mild == DEFAULT_PERCLOS_THRESHOLD_MILD, (
+            f"perclos_threshold_mild={analyzer.perclos_threshold_mild}, "
+            f"应等于类常量 {DEFAULT_PERCLOS_THRESHOLD_MILD}"
+        )
+        # 显式断言 5% 业务阈值
+        assert analyzer.perclos_threshold_mild == 5.0, (
+            f"perclos_threshold_mild 应为 5.0 (5%), 实际 {analyzer.perclos_threshold_mild}"
+        )
+
+
+class TestFocusAnalyzerBaselineZero:
+    """H-05: _compute_eye_score baseline_ear=0 必须不除零"""
+
+    def test_focus_analyzer_baseline_ear_zero_no_crash_H05(self):
+        """H-05: set_baseline(0.0) 后 _compute_eye_score 必须不除零崩溃
+        修法: _compute_eye_score 入口加 if self.baseline_ear <= 0: return 50.0
+        """
+        analyzer = create_focus_analyzer()
+        analyzer.set_baseline(ear=0.0, yaw_std=None, pitch_std=None)
+
+        try:
+            score = analyzer._compute_eye_score(ear=0.25)
+        except ZeroDivisionError as e:
+            pytest.fail(f"baseline_ear=0 时 _compute_eye_score 不应除零, 实际: {e}")
+
+        assert score == 50.0, (
+            f"baseline_ear=0 时应返回中性分 50.0, 实际 {score}"
+        )
+
+    def test_focus_analyzer_baseline_ear_negative_no_crash_H05(self):
+        """H-05: set_baseline(-0.1) 后 _compute_eye_score 必须不除零"""
+        analyzer = create_focus_analyzer()
+        analyzer.set_baseline(ear=-0.1, yaw_std=None, pitch_std=None)
+
+        try:
+            score = analyzer._compute_eye_score(ear=0.25)
+        except ZeroDivisionError as e:
+            pytest.fail(f"baseline_ear<0 时 _compute_eye_score 不应除零, 实际: {e}")
+
+        assert score == 50.0
+
+
+class TestBlinkRoundCollectorThreshold:
+    """H-06: BlinkRoundCollector.record_frame 必须用 ear_threshold 区分 blink/squint"""
+
+    def test_record_frame_uses_ear_threshold_for_squint_H06(self):
+        """H-06: ear 介于 ear_threshold 与 squint_threshold 之间 + 短持续 → 分类为 squint
+        当前实现只判断 ear < squint_threshold, 把所有 EAR 下降按 400ms 时长二分类,
+        忽略了 ear_threshold (blink 强信号) 这个本应作为 blink 强判据的字段。
+
+        调用方约定: ear_threshold=0.225, squint_threshold=0.27
+        ear=0.24: 大于 blink 阈值 (0.225) 但小于 squint 阈值 (0.27) → squint 候选
+        短持续 0.1s → 修复后期望 classified as squint, 当前实现 classified as blink
+        """
+        from analyzer.user_calibration import BlinkRoundCollector
+        collector = BlinkRoundCollector()
+        collector.reset()
+
+        blink_threshold = 0.225
+        squint_threshold = 0.27
+
+        # ear=0.24 (介于两者之间) 持续 0.1s (短)
+        collector.record_frame(
+            ear=0.24,
+            ear_threshold=blink_threshold,
+            squint_threshold=squint_threshold,
+            current_time=0.0,
+        )
+        # EAR 恢复
+        collector.record_frame(
+            ear=0.30,
+            ear_threshold=blink_threshold,
+            squint_threshold=squint_threshold,
+            current_time=0.1,
+        )
+
+        assert collector.detected_squints >= 1, (
+            f"ear=0.24 介于 blink/squint 阈值之间 + 短持续 0.1s, 应分类为 squint. "
+            f"实际 detected_blinks={collector.detected_blinks}, "
+            f"detected_squints={collector.detected_squints}"
+        )
+        assert collector.detected_blinks == 0, (
+            f"ear=0.24 不应分类为 blink (因为它 > ear_threshold 0.225). "
+            f"实际 detected_blinks={collector.detected_blinks}"
+        )
+
+    def test_record_frame_ear_below_blink_threshold_classified_as_blink_H06(self):
+        """H-06: ear 显著低于 ear_threshold + 短持续 → 分类为 blink
+        验证 ear_threshold 仍能作为 blink 强信号 (修复不应破坏原行为)
+        """
+        from analyzer.user_calibration import BlinkRoundCollector
+        collector = BlinkRoundCollector()
+        collector.reset()
+
+        blink_threshold = 0.225
+        squint_threshold = 0.27
+
+        # ear=0.10 显著低于 blink 阈值 0.225, 持续 0.1s (短)
+        collector.record_frame(
+            ear=0.10,
+            ear_threshold=blink_threshold,
+            squint_threshold=squint_threshold,
+            current_time=0.0,
+        )
+        collector.record_frame(
+            ear=0.30,
+            ear_threshold=blink_threshold,
+            squint_threshold=squint_threshold,
+            current_time=0.1,
+        )
+
+        assert collector.detected_blinks >= 1, (
+            f"ear=0.10 显著低于 blink 阈值, 短持续 0.1s, 应分类为 blink. "
+            f"实际 detected_blinks={collector.detected_blinks}"
+        )
+
 
 class TestBaselineCalibratorBoundary:
     """BaselineCalibrator 边界条件测试"""
