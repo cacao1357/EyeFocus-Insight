@@ -689,7 +689,6 @@ class EyeFocusApp:
 
         # 状态标志
         self._running: bool = False
-        self._paused: bool = False
 
         # 子组件（保持与测试兼容的属性名）
         self._camera_manager: Optional[CameraManager] = None
@@ -713,9 +712,6 @@ class EyeFocusApp:
         self._fps: float = 0.0
         self._fps_start_time: float = 0.0
         self._fps_frame_count: int = 0
-
-        # 线程管理
-        self._shutdown_event: threading.Event = threading.Event()
 
         # 信号处理
         self._original_sigint: Optional[object] = None
@@ -1077,10 +1073,10 @@ class EyeFocusApp:
 
         H-01: 不在 signal handler 内调 self.shutdown() (内含 0.5s 阻塞 + 写盘 + 资源清理,
         异步不安全). 改为仅设 flag, 由 main_loop finally 块统一调 shutdown().
+        M-22: 移除 _shutdown_event 死代码 (从未被 main_loop 读取, 仅 set 无用).
         """
         logger.info("收到信号 %d，准备退出...", signum)
         self._running = False
-        self._shutdown_event.set()
 
     def shutdown(self) -> None:
         """安全关闭应用"""
@@ -1089,7 +1085,6 @@ class EyeFocusApp:
 
         logger.info("正在关闭...")
         self._running = False
-        self._shutdown_event.set()
 
         # 结束会话
         if self._db and self._session_id:
