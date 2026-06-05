@@ -417,3 +417,63 @@ class TestDatabaseManager:
                     db.write_frame("nonexistent_session_xyz", bad_frame)
             finally:
                 db.close()
+
+    def test_get_frame_records_tolerates_bad_json_M13(self):
+        """M-13: get_frame_records 单条坏 blendshapes_json 不能让整次查询失败
+        修复前: json.loads 无 try/except, 坏数据抛 JSONDecodeError 整次崩溃
+        修复后: 每个反序列化 try/except, 坏字段返回 None, 整条 row 异常跳过
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "badjson.db")
+            from storage.db import DBConfig
+            db = DatabaseManager(config=DBConfig(db_path=db_path))
+            db.initialize()
+            try:
+                session_id = db.create_session()
+
+                # 写入 1 条好数据
+                good = FrameRecord(
+                    session_id=session_id,
+                    timestamp=1.0,
+                    ear_left=0.25, ear_right=0.26, ear_avg=0.255,
+                    yaw=0.5, pitch=-1.0, roll=0.2,
+                    gaze_score=85.0, brightness=128.0,
+                    face_detected=True,
+                    blendshapes={"eyeBlinkLeft": 0.5, "eyeBlinkRight": 0.4},
+                )
+                db.write_frame(session_id, good)
+
+                # 直接用 SQL 注入 1 条坏数据 (blendshapes_json = 非法 JSON 字符串)
+                with db._get_cursor() as cursor:
+                    cursor.execute(
+                        """INSERT INTO frame_records
+                           (session_id, timestamp, ear_avg, face_detected, blendshapes_json)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (session_id, 2.0, 0.30, 1, "{not valid json at all"),
+                    )
+
+                # 再写 1 条好数据
+                good2 = FrameRecord(
+                    session_id=session_id,
+                    timestamp=3.0,
+                    ear_left=0.27, ear_right=0.28, ear_avg=0.275,
+                    yaw=0.6, pitch=-1.1, roll=0.3,
+                    gaze_score=86.0, brightness=130.0,
+                    face_detected=True,
+                )
+                db.write_frame(session_id, good2)
+
+                # get_frame_records 不应抛异常
+                records = db.get_frame_records(session_id)
+
+                # 至少有 2 条好数据 (坏数据 blendshapes 字段降级为 None 或整条跳过都接受)
+                assert len(records) >= 2, (
+                    f"应至少有 2 条好记录, 实际 {len(records)}"
+                )
+                # 验证第一条 (时间戳 1.0) 的 blendshapes 字段被正确读出
+                ts_to_record = {r.timestamp: r for r in records}
+                assert 1.0 in ts_to_record, "好数据 1.0 应被读出"
+                assert ts_to_record[1.0].blendshapes == {"eyeBlinkLeft": 0.5, "eyeBlinkRight": 0.4}
+                assert 3.0 in ts_to_record, "好数据 3.0 应被读出"
+            finally:
+                db.close()

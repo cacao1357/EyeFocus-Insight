@@ -488,32 +488,49 @@ class DatabaseManager:
 
         records = []
         for row in rows:
-            blendshapes = None
-            if row["blendshapes_json"]:
-                blendshapes = json.loads(row["blendshapes_json"])
+            # v4.3 M-13 修复: 反序列化包 try/except, 坏字段降级 None, 整条 row 异常跳过
+            # 修复前 json.loads 无防护, 单条坏数据导致整次 get_frame_records 全失败
+            try:
+                blendshapes = None
+                if row["blendshapes_json"]:
+                    try:
+                        blendshapes = json.loads(row["blendshapes_json"])
+                    except (json.JSONDecodeError, TypeError) as e:
+                        logger.warning(
+                            "get_frame_records: blendshapes_json 反序列化失败 (ts=%s): %s",
+                            row["timestamp"], e,
+                        )
+                        blendshapes = None
 
-            records.append(FrameRecord(
-                session_id=row["session_id"],
-                timestamp=row["timestamp"],
-                ear_left=row["ear_left"],
-                ear_right=row["ear_right"],
-                ear_avg=row["ear_avg"],
-                yaw=row["yaw"],
-                pitch=row["pitch"],
-                roll=row["roll"],
-                gaze_score=row["gaze_score"],
-                brightness=row["brightness"],
-                face_detected=bool(row["face_detected"]),
-                blendshapes=blendshapes,
-                # v4.3 H-08 修复: 补 7 个 v4.x 新增字段, 否则 FrameRecord dataclass 默认值覆盖 DB 真实值
-                blink_flag=bool(row["blink_flag"]),
-                perclos=row["perclos"],
-                gaze_status=row["gaze_status"],
-                fatigue_label=row["fatigue_label"],
-                focus_score=row["focus_score"],
-                focus_breakdown=row["focus_breakdown"],
-                light_level=row["light_level"],
-            ))
+                records.append(FrameRecord(
+                    session_id=row["session_id"],
+                    timestamp=row["timestamp"],
+                    ear_left=row["ear_left"],
+                    ear_right=row["ear_right"],
+                    ear_avg=row["ear_avg"],
+                    yaw=row["yaw"],
+                    pitch=row["pitch"],
+                    roll=row["roll"],
+                    gaze_score=row["gaze_score"],
+                    brightness=row["brightness"],
+                    face_detected=bool(row["face_detected"]),
+                    blendshapes=blendshapes,
+                    # v4.3 H-08 修复: 补 7 个 v4.x 新增字段, 否则 FrameRecord dataclass 默认值覆盖 DB 真实值
+                    blink_flag=bool(row["blink_flag"]),
+                    perclos=row["perclos"],
+                    gaze_status=row["gaze_status"],
+                    fatigue_label=row["fatigue_label"],
+                    focus_score=row["focus_score"],
+                    focus_breakdown=row["focus_breakdown"],
+                    light_level=row["light_level"],
+                ))
+            except Exception as e:
+                # v4.3 M-13 修复: 整条 row 构造失败跳过, 不影响其他记录
+                logger.warning(
+                    "get_frame_records: 跳过坏记录 (ts=%s): %s",
+                    row["timestamp"] if "timestamp" in row.keys() else "?", e,
+                )
+                continue
 
         return records
 
