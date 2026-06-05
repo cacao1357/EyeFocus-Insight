@@ -44,6 +44,7 @@ def test_mouse_click_misses_all_buttons():
     h._buttons = _make_buttons()
     h._panel_y_offset = 0
     h._click_buffer = (999, 999)
+    h._on_waitkey_return = None  # v4.4: __new__ 绕过 __init__, 需手动初始化
     with patch("cv2.waitKey", return_value=255):
         action, digit = h.poll(FlowState.WAITING_TO_START_PHASE)
     assert action == UIAction.NONE
@@ -53,6 +54,7 @@ def test_keyboard_digit_in_blink_input_state():
     h = InputHandler.__new__(InputHandler)
     h._buttons = []
     h._click_buffer = None
+    h._on_waitkey_return = None  # v4.4: __new__ 绕过 __init__, 需手动初始化
     with patch("cv2.waitKey", return_value=ord('7')):
         action, digit = h.poll(FlowState.BLINK_INPUT_AWAITING)
     assert action == UIAction.DIGIT
@@ -64,6 +66,7 @@ def test_keyboard_digit_ignored_outside_blink_input():
     h = InputHandler.__new__(InputHandler)
     h._buttons = []
     h._click_buffer = None
+    h._on_waitkey_return = None  # v4.4: __new__ 绕过 __init__, 需手动初始化
     with patch("cv2.waitKey", return_value=ord('5')):
         action, digit = h.poll(FlowState.PHASE_RUNNING)
     assert action == UIAction.NONE
@@ -73,6 +76,7 @@ def test_keyboard_enter_submits_in_blink_input():
     h = InputHandler.__new__(InputHandler)
     h._buttons = []
     h._click_buffer = None
+    h._on_waitkey_return = None  # v4.4: __new__ 绕过 __init__, 需手动初始化
     with patch("cv2.waitKey", return_value=13):
         action, digit = h.poll(FlowState.BLINK_INPUT_AWAITING)
     assert action == UIAction.SUBMIT
@@ -82,6 +86,7 @@ def test_keyboard_backspace_in_blink_input():
     h = InputHandler.__new__(InputHandler)
     h._buttons = []
     h._click_buffer = None
+    h._on_waitkey_return = None  # v4.4: __new__ 绕过 __init__, 需手动初始化
     with patch("cv2.waitKey", return_value=8):
         action, digit = h.poll(FlowState.BLINK_INPUT_AWAITING)
     assert action == UIAction.BACKSPACE
@@ -92,6 +97,7 @@ def test_keyboard_esc_works_in_any_state():
     h = InputHandler.__new__(InputHandler)
     h._buttons = []
     h._click_buffer = None
+    h._on_waitkey_return = None  # v4.4: __new__ 绕过 __init__, 需手动初始化
     for state in [FlowState.PHASE_RUNNING, FlowState.WAITING_TO_START_PHASE,
                   FlowState.FINAL_SUMMARY]:
         with patch("cv2.waitKey", return_value=27):
