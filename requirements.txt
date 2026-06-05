@@ -11,3 +11,6 @@ scikit-learn>=1.3.0
 scipy>=1.11.0
 statsmodels>=0.14.0
 ruptures>=1.1.0
+# R6 审查发现 (2026-06-05): spike/insights/ 用了 pandas 但未声明
+# 来源: spike/insights/_common.py:14 + spike/insights/s15_attribution.py:13
+pandas>=2.0.0
