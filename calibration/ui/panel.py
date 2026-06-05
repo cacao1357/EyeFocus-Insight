@@ -71,6 +71,9 @@ class PhaseDisplayInfo:
     program_blink_count: int = 0
     user_input_buffer: str = ""
     final_summary: Dict[str, Any] = field(default_factory=dict)
+    # v4.4 新增: 常驻 REC 指示 + 拖窗口检测
+    rec_indicator: str = "●REC 录制中"  # 始终显示
+    dragging: bool = False                  # 拖窗口时为 True
 
 
 _STYLE_COLOR = {
@@ -92,6 +95,22 @@ class Panel:
         img = np.full((self.height, self.width, 3), 20, dtype=np.uint8)  # 深色背景
         # 顶部边框
         cv2.line(img, (0, 0), (self.width, 0), (0, 200, 100), 2)
+
+        # v4.4: 顶部 ●REC 录制中 指示 (绿底白字, 让用户知道数据在记录)
+        if info.rec_indicator and _FONT_SMALL:
+            self._put_text(img, info.rec_indicator, (10, 10), _FONT_SMALL, (0, 0, 0), bg_color=(0, 200, 100))
+
+        # v4.4: 拖窗口时叠加 ❄ DRAGGING 画面冻结 遮罩
+        if info.dragging:
+            h, w = img.shape[:2]
+            overlay = img.copy()
+            cv2.rectangle(overlay, (0, 0), (w, h), (0, 0, 0), -1)
+            img[:] = cv2.addWeighted(overlay, 0.4, img, 0.6, 0)
+            if _FONT_LARGE:
+                self._put_text(img, "❄ DRAGGING 画面冻结", (w // 2 - 110, h // 2 - 20),
+                               _FONT_LARGE, (100, 200, 255))
+                self._put_text(img, "(数据继续录制)", (w // 2 - 80, h // 2 + 20),
+                               _FONT_MED, (200, 200, 200))
 
         if info.state == FlowState.WAITING_TO_START_PHASE:
             self._render_waiting(img, info)
@@ -177,7 +196,22 @@ class Panel:
             self._put_text(img, btn.label, (x + 10, y + 8), _FONT_MED, (255, 255, 255))
 
     def _put_text(self, img: np.ndarray, text: str, pos: Tuple[int, int],
-                  font, color_bgr: Tuple[int, int, int]) -> None:
+                  font, color_bgr: Tuple[int, int, int],
+                  bg_color: Optional[Tuple[int, int, int]] = None) -> None:
+        # v4.4: 可选背景色 (给 REC 指示器加绿底)
+        if bg_color is not None:
+            pil = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+            draw = ImageDraw.Draw(pil)
+            # 用 textbbox 算文字尺寸画背景
+            try:
+                bbox = draw.textbbox(pos, text, font=font)
+                pad = 4
+                cv2.rectangle(img,
+                              (bbox[0] - pad, bbox[1] - pad),
+                              (bbox[2] + pad, bbox[3] + pad),
+                              bg_color, -1)
+            except Exception:
+                pass  # textbbox 失败时降级到无背景
         pil = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
         draw = ImageDraw.Draw(pil)
         draw.text(pos, text, font=font, fill=color_bgr[::-1])

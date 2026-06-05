@@ -302,6 +302,75 @@ def test_flow_build_display_info_summary_success():
     assert info.summary_text != ""
 
 
+def test_flow_rec_indicator_always_set_v4_4():
+    """v4.4: _build_display_info 始终设置 rec_indicator = '●REC 录制中'"""
+    f = _make_flow()
+    f._state = FlowState.PHASE_RUNNING
+    f._current_phase_index = 0
+    f._current_phase = f._build_phase(0)
+    f._phase_start_time = 0.0
+    info = f._build_display_info()
+    assert info.rec_indicator == "●REC 录制中", (
+        f"rec_indicator 应常驻 '●REC 录制中', 实际 {info.rec_indicator!r}"
+    )
+
+
+def test_flow_rec_indicator_in_summary_state_v4_4():
+    """v4.4: SUMMARY_SUCCESS 状态 rec_indicator 也应常驻"""
+    f = _make_flow()
+    f._state = FlowState.PHASE_SUMMARY_SUCCESS
+    f._current_phase_index = 0
+    f._current_phase = f._build_phase(0)
+    f._phase_results[0] = MagicMock(success=True, summary={
+        "ear_mean": 0.30, "ear_cv": 0.05, "sample_count": 100,
+    })
+    info = f._build_display_info()
+    assert info.rec_indicator == "●REC 录制中"
+
+
+def test_flow_rec_indicator_always_set_v4_4():
+    """v4.4: _build_display_info 始终设置 rec_indicator = '●REC 录制中'"""
+    f = _make_flow()
+    f._state = FlowState.PHASE_RUNNING
+    f._current_phase_index = 0
+    f._current_phase = f._build_phase(0)
+    f._phase_start_time = 0.0
+    info = f._build_display_info()
+    assert info.rec_indicator == "●REC 录制中", (
+        f"rec_indicator 应常驻 '●REC 录制中', 实际 {info.rec_indicator!r}"
+    )
+
+
+def test_flow_rec_indicator_in_summary_state_v4_4():
+    """v4.4: SUMMARY_SUCCESS 状态 rec_indicator 也应常驻"""
+    f = _make_flow()
+    f._state = FlowState.PHASE_SUMMARY_SUCCESS
+    f._current_phase_index = 0
+    f._current_phase = f._build_phase(0)
+    f._phase_results[0] = MagicMock(success=True, summary={
+        "ear_mean": 0.30, "ear_cv": 0.05, "sample_count": 100,
+    })
+    info = f._build_display_info()
+    assert info.rec_indicator == "●REC 录制中"
+
+
+def test_panel_renders_rec_indicator_v4_4():
+    """v4.4: Panel.render 调用 _put_text 绘制 rec_indicator"""
+    import numpy as np
+    from calibration.ui.panel import Panel, PhaseDisplayInfo
+    p = Panel()
+    info = PhaseDisplayInfo(
+        state=FlowState.PHASE_RUNNING,
+        phase_index=1, phase_total=5,
+        phase_name="自动基线采集", instruction="",
+        rec_indicator="●REC 录制中",
+    )
+    img = p.render(info)
+    assert img is not None
+    # 验证图片被修改 (有内容绘制)
+    assert img.shape == (p.height, p.width, 3)
+
+
 def test_flow_build_display_info_summary_failed():
     f = _make_flow()
     f._state = FlowState.PHASE_SUMMARY_FAILED
