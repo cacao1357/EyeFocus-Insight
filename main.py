@@ -866,16 +866,20 @@ class EyeFocusApp:
             return
 
         try:
+            # 首次渲染后窗口才存在, 设标志后才检测 × 关闭
+            _window_initialized = False
             while self._running:
-                # 检测主窗口是否被关闭 (×按钮)
-                try:
-                    if cv2.getWindowProperty("EyeFocus Insight", cv2.WND_PROP_VISIBLE) < 1:
-                        logger.info("主窗口被关闭, 退出")
+                # 检测主窗口是否被关闭 (×按钮) — 窗口初始化后才检测
+                if _window_initialized:
+                    try:
+                        if cv2.getWindowProperty("EyeFocus Insight", cv2.WND_PROP_VISIBLE) < 1:
+                            logger.info("主窗口被关闭, 退出")
+                            self._running = False
+                            break
+                    except cv2.error:
+                        logger.info("主窗口已销毁, 退出")
                         self._running = False
                         break
-                except cv2.error:
-                    self._running = False
-                    break
 
                 # 处理 cv2 窗口事件（每帧都调用）
                 key = cv2.waitKey(1) & 0xFF
@@ -896,6 +900,7 @@ class EyeFocusApp:
                     self._update_fps()
                 else:
                     self._render_frame_placeholder()
+                _window_initialized = True  # 首次渲染后窗口存在
 
                 # 校准流程定时器
                 self._process_calibration_tick()
@@ -916,8 +921,13 @@ class EyeFocusApp:
             display = self._overlay.draw(placeholder, focus_score=None, fatigue_level=None)
             # v4.4: 占位符也绘制按键提示和确认弹窗
             self._draw_key_hints(display)
+            # v4.4: Q 用 1s 自动退出; ESC 用 5s 超时取消
             if self._confirm_quit_pending:
-                self._draw_confirmation_overlay(display, "再按一次 Q 确认退出", 5.0, self._confirm_quit_time)
+                # 1s 内无取消键则自动退出
+                if time.time() - self._confirm_quit_time > 1.0:
+                    self._running = False
+                    self._confirm_quit_pending = False
+                self._draw_confirmation_overlay(display, "按 Q 退出 (1秒)", 1.0, self._confirm_quit_time)
             elif self._confirm_cancel_pending:
                 self._draw_confirmation_overlay(display, "再按 ESC 确认取消校准", 5.0, self._confirm_cancel_time)
             if self._feedback_text and time.time() < self._feedback_until:
@@ -934,27 +944,27 @@ class EyeFocusApp:
                 logger.info("校准状态变化: %s -> %s", old_state, new_state)
 
     def _handle_keyboard(self, key: int) -> None:
-        """处理键盘输入 (v4.4: 确认弹窗 + 按键反馈)
+        """处理键盘输入 (v4.4: Q单次+1s取消窗口, ESC二次确认)
 
-        Q 退出(需二次确认) | ESC 取消校准(需二次确认) | P/Space 暂停
-        C 启动校准 | Tab 切换面板 | 数字+Enter 校准输入
+        Q 退出(按Q后1s内按其他键取消) | ESC 取消校准(需二次确认)
+        C 启动校准 | P/Space 暂停 | Tab 切换面板
         """
         now = time.time()
 
-        # --- 二次确认处理 (Q/ESC) ---
-        # 如果正在等待 Q 确认, 第二次 Q → 退出; 其他键/超时 → 取消
+        # --- Q 单键退出 (1s 取消窗口) ---
         if self._confirm_quit_pending:
             if key == ord('q') or key == ord('Q'):
-                logger.info("用户确认退出 (Q×2)")
+                logger.info("用户退出")
                 self._running = False
+                self._confirm_quit_pending = False
             else:
                 self._confirm_quit_pending = False
-                self._set_feedback("已取消退出")
+                self._set_feedback("已取消")
             return
 
-        # 如果正在等待 ESC 确认, 第二次 ESC → 取消校准
+        # --- ESC 取消校准 (二次确认) ---
         if self._confirm_cancel_pending:
-            if key == 27:  # ESC
+            if key == 27:
                 logger.info("用户确认取消校准 (ESC×2)")
                 self._confirm_cancel_pending = False
                 self._cancel_calibration()
@@ -964,8 +974,8 @@ class EyeFocusApp:
                 self._set_feedback("已取消操作")
             return
 
-        # --- 正常按键处理 ---
-        # ESC → 仅在校准激活时触发二次确认
+        # --- 正常按键 ---
+        # ESC → 校准中触发二次确认
         if key == 27:
             if self._calib_coordinator and (self._calib_coordinator.is_active()
                                            or self._calib_coordinator.input_mode):
@@ -974,25 +984,25 @@ class EyeFocusApp:
                 self._set_feedback("再按 ESC 确认取消校准")
             return
 
-        # Q → 触发二次确认
+        # Q → 单次, 显示退出倒计时 (1s内按其他键取消)
         if key == ord('q') or key == ord('Q'):
             self._confirm_quit_pending = True
             self._confirm_quit_time = now
-            self._set_feedback("再按 Q 确认退出")
+            self._set_feedback("按 Q 退出, 1秒内按其他键取消")
             return
 
         # 数字键和 Enter（仅在校准输入模式）
         if self._calib_coordinator and self._calib_coordinator.input_mode:
-            if 48 <= key <= 57:  # 数字键 0-9
+            if 48 <= key <= 57:
                 digit = str(key - 48)
                 self._calib_coordinator.handle_digit_input(digit)
                 self._set_feedback(f"输入: {digit}")
-            elif key == 13 or key == 10:  # Enter
+            elif key == 13 or key == 10:
                 self._calib_coordinator.handle_enter_pressed()
                 self._set_feedback("已确认")
             return
 
-        # C 键：正常模式下启动校准
+        # C 键：启动校准
         if key == ord('c') or key == ord('C'):
             if self._calib_coordinator and not self._calib_coordinator.is_active():
                 self.start_calibration_flow()
@@ -1007,8 +1017,8 @@ class EyeFocusApp:
             self._set_feedback("⏸ 已暂停" if self._paused else "▶ 已恢复")
             return
 
-        # Tab 键：切换极简/完整模式 (阶段一)
-        if key == 9:  # Tab
+        # Tab 键：切换极简/完整模式
+        if key == 9:
             if hasattr(self._overlay, 'toggle_mode'):
                 self._overlay.toggle_mode()
                 self._set_feedback("面板切换")
@@ -1099,7 +1109,11 @@ class EyeFocusApp:
 
         # v4.4: 按键确认弹窗 (Q退出 / ESC取消校准)
         if self._confirm_quit_pending:
-            self._draw_confirmation_overlay(display, "再按一次 Q 确认退出", 5.0, self._confirm_quit_time)
+            # 1s 内无取消键则自动退出
+            if time.time() - self._confirm_quit_time > 1.0:
+                self._running = False
+                self._confirm_quit_pending = False
+            self._draw_confirmation_overlay(display, "按 Q 退出 (1秒)", 1.0, self._confirm_quit_time)
         elif self._confirm_cancel_pending:
             self._draw_confirmation_overlay(display, "再按 ESC 确认取消校准", 5.0, self._confirm_cancel_time)
 
