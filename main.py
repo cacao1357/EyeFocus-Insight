@@ -866,21 +866,7 @@ class EyeFocusApp:
             return
 
         try:
-            # 首次渲染后窗口才存在, 设标志后才检测 × 关闭
-            _window_initialized = False
             while self._running:
-                # 检测主窗口是否被关闭 (×按钮) — 窗口初始化后才检测
-                if _window_initialized:
-                    try:
-                        if cv2.getWindowProperty("EyeFocus Insight", cv2.WND_PROP_VISIBLE) < 1:
-                            logger.info("主窗口被关闭, 退出")
-                            self._running = False
-                            break
-                    except cv2.error:
-                        logger.info("主窗口已销毁, 退出")
-                        self._running = False
-                        break
-
                 # 处理 cv2 窗口事件（每帧都调用）
                 key = cv2.waitKey(1) & 0xFF
                 if key != 255 and key != 0:  # 0 = 无键事件(Win), 255 = 无键事件(Unix)
@@ -900,7 +886,6 @@ class EyeFocusApp:
                     self._update_fps()
                 else:
                     self._render_frame_placeholder()
-                _window_initialized = True  # 首次渲染后窗口存在
 
                 # 校准流程定时器
                 self._process_calibration_tick()
