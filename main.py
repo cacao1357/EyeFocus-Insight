@@ -747,6 +747,9 @@ class EyeFocusApp:
         # 按键反馈消息 (显示在画面中央, 1.5s后消失)
         self._feedback_text: Optional[str] = None
         self._feedback_until: float = 0.0
+        # v4.4: 校准取消/跳过提示 (显示5s)
+        self._calib_cancelled_msg: Optional[str] = None
+        self._calib_cancelled_until: float = 0.0
 
     def initialize(self) -> bool:
         """初始化所有模块
@@ -1086,6 +1089,15 @@ class EyeFocusApp:
         if self._feedback_text and time.time() < self._feedback_until:
             self._draw_feedback_text(display, self._feedback_text)
 
+        # v4.4: 校准取消/跳过提示
+        if self._calib_cancelled_msg and time.time() < self._calib_cancelled_until:
+            h, w = display.shape[:2]
+            (tw, th), _ = cv2.getTextSize(self._calib_cancelled_msg, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+            cv2.putText(display, self._calib_cancelled_msg, ((w - tw) // 2, h - 100),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
+        elif self._calib_cancelled_msg and time.time() >= self._calib_cancelled_until:
+            self._calib_cancelled_msg = None
+
         # 当人脸未检测到时，显示明确提示 (校准期间)
         if not face_detected and self.is_calibration_flow_active():
             cv2.putText(
@@ -1181,6 +1193,9 @@ class EyeFocusApp:
                 logger.info("v4.2 校准成功: CQS=%.2f", result.cqs)
             else:
                 logger.info("v4.2 校准被取消/失败, 使用默认基线")
+                # v4.4: 显示提示
+                self._calib_cancelled_msg = "未校准 — 使用默认参数监测中"
+                self._calib_cancelled_until = time.time() + 5.0
             return result is not None
 
         # v3.x 兼容路径 (deprecated, 仅作为 fallback)

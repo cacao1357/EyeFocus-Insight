@@ -168,6 +168,15 @@ class CalibrationFlow:
         self._input.register_buttons(self._panel.get_buttons(info))
         action, digit = self._input.poll(self._state)
 
+        # v4.4: FINAL_SUMMARY 3 秒倒计时自动进入监测
+        if self._state == FlowState.FINAL_SUMMARY:
+            auto_wait = getattr(self.config, 'auto_enter_monitoring_seconds', 3.0)
+            if elapsed >= auto_wait:
+                self._done = True
+                self._user_accepted = True
+                self._tts.say("即将进入监测模式")
+                return
+
         # 检查窗口被关 (× 按钮或 Alt+F4)
         try:
             if cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1:
@@ -253,6 +262,13 @@ class CalibrationFlow:
                     self._current_phase.reset()
                 self._state = FlowState.PHASE_RUNNING
                 self._phase_start_time = time.time()
+            elif action == UIAction.SKIP_PHASE:
+                # 跳过剩余校准, 直接进入最终总结
+                self._tts.say("跳过剩余校准")
+                self._current_phase_index = 5  # 跳到结束
+                self._state = FlowState.FINAL_SUMMARY
+                self._phase_start_time = time.time()  # v4.4: auto-advance 计时
+                self._beep.calibration_complete()
         elif self._state == FlowState.PHASE_SUMMARY_FAILED:
             if action == UIAction.RETRY_PHASE:
                 self._consecutive_failures += 1
@@ -338,6 +354,7 @@ class CalibrationFlow:
         self._current_phase_index += 1
         if self._current_phase_index >= 5:
             self._state = FlowState.FINAL_SUMMARY
+            self._phase_start_time = time.time()  # v4.4: 用于 auto-advance 计时
             self._beep.calibration_complete()
             self._tts.say("校准完成")
         else:

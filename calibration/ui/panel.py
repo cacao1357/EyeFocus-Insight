@@ -145,8 +145,9 @@ class Panel:
         if info.state == FlowState.PHASE_SUMMARY_SUCCESS:
             return [
                 Button("▶ 继续", (40, 170, 160, 50), UIAction.PROCEED, "primary"),
-                Button("↺ 重做", (240, 170, 160, 50), UIAction.RETRY_PHASE, "neutral"),
-                Button("取消", (440, 170, 160, 50), UIAction.CANCEL, "danger"),
+                Button("↺ 重做", (210, 170, 130, 50), UIAction.RETRY_PHASE, "neutral"),
+                Button("跳过校准", (350, 170, 130, 50), UIAction.SKIP_PHASE, "neutral"),
+                Button("取消", (490, 170, 130, 50), UIAction.CANCEL, "danger"),
             ]
         if info.state == FlowState.PHASE_SUMMARY_FAILED:
             return [
@@ -257,3 +258,6 @@ class Panel:
             for k, v in info.final_summary.items():
                 self._put_text(img, f"{k}: {v}", (20, y), _FONT_SMALL, (220, 220, 220))
                 y += 22
+        # v4.4: 自动进入监测倒计时提示
+        if _FONT_SMALL:
+            self._put_text(img, "3秒后自动进入监测模式...", (20, 130), _FONT_SMALL, (150, 200, 255))
