@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 
 import cv2
 import numpy as np
+import pytest
 
 from calibration.flow import CalibrationFlow
 from calibration.config import CalibrationConfig
@@ -82,6 +83,7 @@ def test_extract_metrics_returns_none_when_face_not_detected():
     assert pitch is None
 
 
+@pytest.mark.slow
 def test_extract_metrics_with_real_detector_face_detected_true():
     """Smoke test: 真实 detector + 真实摄像头, _extract_metrics 应能拿到 ear/yaw/pitch。
 
@@ -91,6 +93,9 @@ def test_extract_metrics_with_real_detector_face_detected_true():
     注意: pytest 环境可能与 standalone 表现不同 (pytest stdout 捕获,
     MediaPipe warmup 状态差异), 本测试作为 happy-path 验证; 严格
     集成测试在真机验收中执行。
+
+    ⚠️ 标记 @pytest.mark.slow: 单测 ~43s (MediaPipe 模型加载 + 真摄像头推理)。
+    跳过方式: pytest tests/ calibration/tests/ -m "not slow"
     """
     from detector.face_mesh import create_face_mesh_detector
     from detector.eye_aspect import create_eye_aspect_detector
@@ -99,29 +104,36 @@ def test_extract_metrics_with_real_detector_face_detected_true():
     if not cap.isOpened():
         return  # skip if no camera
 
-    detector = create_face_mesh_detector()
-    eye_det = create_eye_aspect_detector()
-    flow = CalibrationFlow.__new__(CalibrationFlow)
-    flow._face_detector = detector
-    flow._eye_detector = eye_det  # BUG-6 修复需要
-
-    # 读 1 帧, 验证 _extract_metrics 不抛 ImportError / AttributeError
-    ret, frame = cap.read()
-    cap.release()
-    if not ret:
-        return
-
-    # BUG-6 修复后: 调 _extract_metrics 不应抛 ImportError
-    # (修复前: compute_ear_from_landmarks 不存在 → ImportError → except)
+    detector = None
     try:
-        ear, yaw, pitch = flow._extract_metrics(frame)
-    except ImportError as e:
-        raise AssertionError(f"BUG-6 复现: {e}")
-    except AttributeError as e:
-        # BUG-4 修复点 (face_detected)
-        raise AssertionError(f"BUG-4 复现: {e}")
+        detector = create_face_mesh_detector()
+        eye_det = create_eye_aspect_detector()
+        flow = CalibrationFlow.__new__(CalibrationFlow)
+        flow._face_detector = detector
+        flow._eye_detector = eye_det  # BUG-6 修复需要
 
-    # 这个测试不强制数值正确 (受 pytest 环境 MediaPipe warmup 影响),
-    # 关键是 _extract_metrics 不抛 ImportError, 即 BUG-6 修复点
-    # standalone 验证: 10/10 帧 ear/yaw/pitch 全部非 None
+        # 读 1 帧, 验证 _extract_metrics 不抛 ImportError / AttributeError
+        ret, frame = cap.read()
+        if not ret:
+            return
+
+        # BUG-6 修复后: 调 _extract_metrics 不应抛 ImportError
+        # (修复前: compute_ear_from_landmarks 不存在 → ImportError → except)
+        try:
+            ear, yaw, pitch = flow._extract_metrics(frame)
+        except ImportError as e:
+            raise AssertionError(f"BUG-6 复现: {e}")
+        except AttributeError as e:
+            # BUG-4 修复点 (face_detected)
+            raise AssertionError(f"BUG-4 复现: {e}")
+
+        # 这个测试不强制数值正确 (受 pytest 环境 MediaPipe warmup 影响),
+        # 关键是 _extract_metrics 不抛 ImportError, 即 BUG-6 修复点
+        # standalone 验证: 10/10 帧 ear/yaw/pitch 全部非 None
+    finally:
+        # 关键: 释放 MediaPipe 资源, 防止 daemon 线程 (clearcut uploader 等)
+        # 泄漏到后续测试, 避免与 test_audio_tts.py 的 importlib.reload 冲突
+        cap.release()
+        if detector is not None:
+            detector.close(timeout=2.0)
 
