@@ -13,11 +13,15 @@ from calibration.flow import CalibrationFlow
 from calibration.config import CalibrationConfig
 
 
+@pytest.mark.slow
 def test_setup_creates_real_face_detector_without_typeerror():
     """_setup() 必须能用真实 create_face_mesh_detector 工厂（不带任何额外 kwarg）。
 
     前置：mock cv2.VideoCapture / cv2.namedWindow / InputHandler 避免真实摄像头/窗口；
           但 detector factory 必须真实调用。
+
+    ⚠️ 标记 @pytest.mark.slow: 加载 MediaPipe ~3-5s。
+    ⚠️ 必须清理 detector，否则 MediaPipe daemon 线程泄漏到后续 unit 测试触发死锁。
     """
     config = CalibrationConfig(audio_enabled=False)
 
@@ -29,11 +33,17 @@ def test_setup_creates_real_face_detector_without_typeerror():
         mock_cap.return_value.isOpened.return_value = True
 
         flow = CalibrationFlow(session_id="setup_test", config=config)
-        flow._setup()
+        try:
+            flow._setup()
 
-        # 关键断言：face_detector 被创建（不是 None），且是 FaceMeshDetector 实例
-        assert flow._face_detector is not None
-        # 不抛 TypeError 即视为通过（之前 mode="video" 会抛 TypeError）
+            # 关键断言：face_detector 被创建（不是 None），且是 FaceMeshDetector 实例
+            assert flow._face_detector is not None
+            # 不抛 TypeError 即视为通过（之前 mode="video" 会抛 TypeError）
+        finally:
+            # 释放 MediaPipe 资源, 防止 daemon 线程 (clearcut uploader 等)
+            # 泄漏到后续 unit 测试, 避免与 test_audio_tts.py 的 importlib.reload 冲突
+            if flow._face_detector is not None:
+                flow._face_detector.close(timeout=2.0)
 
 
 def test_setup_raises_runtimeerror_if_camera_unavailable():
