@@ -324,11 +324,15 @@ class CalibrationFlow:
             self._consecutive_failures = 0
             if self._current_phase.tts_complete:
                 self._tts.say(self._current_phase.tts_complete)
+            # v4.4: 成功后提示用户点击继续
+            self._tts.say("请点击继续")
         else:
             self._state = FlowState.PHASE_SUMMARY_FAILED
             self._beep.phase_failed()
             if result.failure_diagnosis:
                 self._tts.say(result.failure_diagnosis)
+            # v4.4: 失败后提示用户选择
+            self._tts.say("请选择重试、跳过或取消")
 
     def _advance_to_next_phase(self) -> None:
         self._current_phase_index += 1

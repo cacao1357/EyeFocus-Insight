@@ -13,8 +13,8 @@ from calibration.phases.base import LiveFeedback, Phase, PhaseResult
 
 class SquintPhase(Phase):
     name = "眯眼校准"
-    tts_intro = "请眯眼，眼睛留一条缝，保持 8 秒"
-    tts_complete = "好"
+    tts_intro = "请眯眼，眼睛留一条缝"
+    tts_complete = "好，可以睁眼了"
 
     def __init__(
         self,

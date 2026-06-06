@@ -25,8 +25,8 @@ BLINK_MAX_DURATION_SEC = 0.4
 
 class BlinkCountPhase(Phase):
     name = "眨眼计数校准"
-    tts_intro = "接下来 15 秒，请自然眨眼，结束后告诉我你眨了多少次"
-    tts_complete = "好"
+    tts_intro = "请自然眨眼，结束后告诉我你眨了多少次"
+    tts_complete = "眨眼记录完成"
 
     def __init__(
         self,

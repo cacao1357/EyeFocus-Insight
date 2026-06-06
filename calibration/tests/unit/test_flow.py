@@ -552,7 +552,10 @@ def test_flow_on_phase_time_up_failed():
     f._on_phase_time_up()
     assert f._state == FlowState.PHASE_SUMMARY_FAILED
     f._beep.phase_failed.assert_called_once()
-    f._tts.say.assert_called_with("闭眼不够")
+    # v4.4: 先播 failure_diagnosis, 再播操作提示
+    calls = [call[0][0] for call in f._tts.say.call_args_list]
+    assert "闭眼不够" in calls
+    assert "请选择重试" in calls[1] or "跳过" in calls[1]
 
 
 def test_flow_get_ear_mid_default():
