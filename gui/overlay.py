@@ -142,6 +142,8 @@ class OverlayConfig:
     show_score_breakdown: bool = False  # 默认关, 减少信息过载
     show_fps: bool = True
     status_bar_height: int = 60  # 容纳 MODE + face/eye + focus + fatigue + glasses
+    # v4.4: 极简模式 (默认开启), Tab 键切换
+    minimal_mode: bool = True
 
 
 # ========== 校准 UI 相关 ==========
@@ -237,7 +239,17 @@ class FocusOverlay:
         if frame is None:
             return frame
 
-        # 创建叠加层
+        # v4.4: 极简模式 (Tab切换, 默认开启) — 居中大数字 + 底部疲劳条
+        if self.config.minimal_mode and self._current_mode != "CALIBRATING":
+            result = self._draw_minimal_layout(
+                frame, focus_score, fatigue_level, face_detected, eye_detected,
+            )
+            # 极简模式下也画无脸横幅
+            if last_face_time is not None:
+                result = self._draw_no_face_banner(result, face_detected, last_face_time)
+            return result
+
+        # 创建叠加层 (完整模式, 沿用 v4.3 布局)
         overlay = frame.copy()
 
         # 绘制状态栏 (含 glasses)
@@ -304,6 +316,11 @@ class FocusOverlay:
             logger.warning("set_mode: 未知 mode '%s', 用 'INITIALIZING' 兜底", mode)
             mode = "INITIALIZING"
         self._current_mode = mode
+
+    # v4.4: Tab键切换极简/完整模式
+    def toggle_mode(self) -> None:
+        """切换极简/完整模式"""
+        self.config.minimal_mode = not self.config.minimal_mode
 
     def _draw_status_bar(
         self,
@@ -400,6 +417,68 @@ class FocusOverlay:
             "INITIALIZING": (255, 255, 0),   # 黄
             "ERROR": (0, 0, 220),            # 红
         }.get(self._current_mode, (200, 200, 200))
+
+    # ========== v4.4 极简模式 (Tab切换, 默认) ==========
+
+    def _draw_minimal_layout(
+        self,
+        frame: np.ndarray,
+        focus_score: Optional[float],
+        fatigue_level: Optional[str],
+        face_detected: bool,
+        eye_detected: bool,
+    ) -> np.ndarray:
+        """极简模式: 居中大号专注度数字 + 底部疲劳条 + 右下状态"""
+        h, w = frame.shape[:2]
+        result = frame.copy()
+
+        # 居中大号专注度数字
+        if focus_score is not None:
+            score_text = f"{focus_score:.0f}"
+            label_text = "FOCUS"
+            # 分数 (font 3.0, 大号)
+            (tw, th), _ = cv2.getTextSize(score_text, self.config.font, 3.0, 4)
+            cx = (w - tw) // 2
+            cy = h // 2 - 30
+            # 阴影
+            cv2.putText(result, score_text, (cx + 2, cy + 2),
+                        self.config.font, 3.0, (0, 0, 0), 4)
+            # 主数字 (颜色按分数)
+            score_color = self._focus_color(focus_score)
+            cv2.putText(result, score_text, (cx, cy),
+                        self.config.font, 3.0, score_color, 4)
+            # FOCUS 标签
+            (lw, lh), _ = cv2.getTextSize(label_text, self.config.font, 0.5, 1)
+            cv2.putText(result, label_text, ((w - lw) // 2, cy - 15),
+                        self.config.font, 0.5, COLOR_TEXT_MUTED, 1)
+
+        # 底部疲劳横条 (全宽)
+        if fatigue_level is not None:
+            bar_y = h - 50
+            bar_h = 16
+            bar_color = self._fatigue_color(fatigue_level)
+            # 背景条 (灰)
+            cv2.rectangle(result, (0, bar_y), (w, bar_y + bar_h), (40, 40, 40), -1)
+            # 填充条 (按等级比例)
+            ratios = {"LOW": 0.3, "MEDIUM": 0.6, "HIGH": 1.0}
+            fill = ratios.get(fatigue_level, 0.3)
+            cv2.rectangle(result, (0, bar_y), (int(w * fill), bar_y + bar_h), bar_color, -1)
+            # 边框
+            cv2.rectangle(result, (0, bar_y), (w, bar_y + bar_h), (80, 80, 80), 1)
+            # 文字
+            cv2.putText(result, f"FATIGUE {fatigue_level}", (12, bar_y - 6),
+                        self.config.font, 0.45, bar_color, 1)
+
+        # 右下人脸/眼睛状态
+        status_parts = []
+        status_parts.append(f"Face {'✓' if face_detected else '✗'}")
+        status_parts.append(f"Eyes {'✓' if eye_detected else '✗'}")
+        status_text = "  ".join(status_parts)
+        (sw, sh), _ = cv2.getTextSize(status_text, self.config.font, 0.45, 1)
+        cv2.putText(result, status_text, (w - sw - 12, h - 16),
+                    self.config.font, 0.45, COLOR_TEXT_MUTED, 1)
+
+        return result
 
     def _focus_color(self, score: float) -> Tuple[int, int, int]:
         """FOCUS 分数对应颜色 (绿 > 70, 黄 50-70, 红 < 50)"""
