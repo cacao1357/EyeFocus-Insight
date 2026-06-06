@@ -158,13 +158,19 @@ class CameraManager:
             return self._latest_ret, self._latest_frame
 
     def release(self) -> None:
-        """释放摄像头资源"""
+        """释放摄像头资源
+
+        H-02 修复: 先 release cap 解阻塞 cap.read(), 再 join 线程,
+        避免 join 超时后 cap 仍被线程占用。
+        """
         self._running = False
-        if self._read_thread:
-            self._read_thread.join(timeout=1.0)
+        # 先 release cap → cap.read() 立即返回（可能空 tuple）
         if self._cap:
             self._cap.release()
             self._cap = None
+        # 再 join 线程（此时 read 循环已退出或即将退出）
+        if self._read_thread:
+            self._read_thread.join(timeout=1.0)
 
     def stop(self) -> bool:
         """停止摄像头（保留 start() 重启能力，等价于 release 但不删 self._camera_index）
