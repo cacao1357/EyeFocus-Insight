@@ -739,6 +739,15 @@ class EyeFocusApp:
         self._calib_manager: Optional[UserCalibrationManager] = None
         self._calib_callbacks: Optional[CalibrationFlowCallbacks] = None
 
+        # v4.4 按键确认状态
+        self._confirm_quit_pending: bool = False     # 第一次按 Q, 等待第二次确认
+        self._confirm_quit_time: float = 0.0          # 第一次按 Q 的时间戳
+        self._confirm_cancel_pending: bool = False    # 第一次按 ESC (校准中), 等待确认
+        self._confirm_cancel_time: float = 0.0
+        # 按键反馈消息 (显示在画面中央, 1.5s后消失)
+        self._feedback_text: Optional[str] = None
+        self._feedback_until: float = 0.0
+
     def initialize(self) -> bool:
         """初始化所有模块
 
@@ -904,44 +913,84 @@ class EyeFocusApp:
                 logger.info("校准状态变化: %s -> %s", old_state, new_state)
 
     def _handle_keyboard(self, key: int) -> None:
-        """处理键盘输入
+        """处理键盘输入 (v4.4: 确认弹窗 + 按键反馈)
 
-        ESC 在任何状态下都可以取消校准或退出
-        Q 在任何状态下都可以退出应用
+        Q 退出(需二次确认) | ESC 取消校准(需二次确认) | P/Space 暂停
+        C 启动校准 | Tab 切换面板 | 数字+Enter 校准输入
         """
-        # ESC 键：任何状态下都取消校准
-        if key == 27:  # ESC
-            if self._calib_coordinator and self._calib_coordinator.is_active():
-                self._cancel_calibration()
-            elif self._calib_coordinator and self._calib_coordinator.input_mode:
-                self._cancel_calibration()
+        now = time.time()
+
+        # --- 二次确认处理 (Q/ESC) ---
+        # 如果正在等待 Q 确认, 第二次 Q → 退出; 其他键/超时 → 取消
+        if self._confirm_quit_pending:
+            if key == ord('q') or key == ord('Q'):
+                logger.info("用户确认退出 (Q×2)")
+                self._running = False
+            else:
+                self._confirm_quit_pending = False
+                self._set_feedback("已取消退出")
             return
 
-        # Q 键：任何状态下都退出
+        # 如果正在等待 ESC 确认, 第二次 ESC → 取消校准
+        if self._confirm_cancel_pending:
+            if key == 27:  # ESC
+                logger.info("用户确认取消校准 (ESC×2)")
+                self._confirm_cancel_pending = False
+                self._cancel_calibration()
+                self._set_feedback("校准已取消")
+            else:
+                self._confirm_cancel_pending = False
+                self._set_feedback("已取消操作")
+            return
+
+        # --- 正常按键处理 ---
+        # ESC → 仅在校准激活时触发二次确认
+        if key == 27:
+            if self._calib_coordinator and (self._calib_coordinator.is_active()
+                                           or self._calib_coordinator.input_mode):
+                self._confirm_cancel_pending = True
+                self._confirm_cancel_time = now
+                self._set_feedback("再按 ESC 确认取消校准")
+            return
+
+        # Q → 触发二次确认
         if key == ord('q') or key == ord('Q'):
-            logger.info("用户请求退出 (Q)")
-            self._running = False
+            self._confirm_quit_pending = True
+            self._confirm_quit_time = now
+            self._set_feedback("再按 Q 确认退出")
             return
 
         # 数字键和 Enter（仅在校准输入模式）
         if self._calib_coordinator and self._calib_coordinator.input_mode:
             if 48 <= key <= 57:  # 数字键 0-9
-                digit = str(key - 48)  # 正确转换数字
+                digit = str(key - 48)
                 self._calib_coordinator.handle_digit_input(digit)
+                self._set_feedback(f"输入: {digit}")
             elif key == 13 or key == 10:  # Enter
                 self._calib_coordinator.handle_enter_pressed()
+                self._set_feedback("已确认")
             return
 
         # C 键：正常模式下启动校准
         if key == ord('c') or key == ord('C'):
             if self._calib_coordinator and not self._calib_coordinator.is_active():
                 self.start_calibration_flow()
+                self._set_feedback("启动校准...")
             return
 
-        # P 键或空格：切换暂停 (v4.3 修复, 不与窗口拖动混淆)
-        if key == ord('p') or key == ord('P') or key == 32:  # 32 = space
+        # P 键或空格：切换暂停
+        if key == ord('p') or key == ord('P') or key == 32:
             self._paused = not self._paused
-            logger.info("用户切换暂停: %s", "PAUSED" if self._paused else "RESUMED")
+            state = "PAUSED" if self._paused else "RESUMED"
+            logger.info("用户切换暂停: %s", state)
+            self._set_feedback("⏸ 已暂停" if self._paused else "▶ 已恢复")
+            return
+
+        # Tab 键：切换极简/完整模式 (阶段一)
+        if key == 9:  # Tab
+            if hasattr(self._overlay, 'toggle_mode'):
+                self._overlay.toggle_mode()
+                self._set_feedback("面板切换")
             return
 
     def toggle_pause(self) -> None:
@@ -1024,6 +1073,19 @@ class EyeFocusApp:
             last_face_time=self._last_face_time,  # v4.4: 无脸横幅
         )
 
+        # v4.4: 底栏快捷键提示
+        self._draw_key_hints(display)
+
+        # v4.4: 按键确认弹窗 (Q退出 / ESC取消校准)
+        if self._confirm_quit_pending:
+            self._draw_confirmation_overlay(display, "再按一次 Q 确认退出", 3.0, self._confirm_quit_time)
+        elif self._confirm_cancel_pending:
+            self._draw_confirmation_overlay(display, "再按 ESC 确认取消校准", 3.0, self._confirm_cancel_time)
+
+        # v4.4: 按键反馈文字
+        if self._feedback_text and time.time() < self._feedback_until:
+            self._draw_feedback_text(display, self._feedback_text)
+
         # 当人脸未检测到时，显示明确提示 (校准期间)
         if not face_detected and self.is_calibration_flow_active():
             cv2.putText(
@@ -1047,6 +1109,61 @@ class EyeFocusApp:
             self._fps = self._fps_frame_count / elapsed
             self._fps_frame_count = 0
             self._fps_start_time = time.time()
+
+    # ============ v4.4 按键提示与反馈 ============
+
+    def _draw_key_hints(self, frame: np.ndarray) -> None:
+        """底栏快捷键提示 (半透明底条)"""
+        h, w = frame.shape[:2]
+        hints = "[Q]退出  [C]校准  [P]暂停  [Tab]面板"
+        (tw, th), _ = cv2.getTextSize(hints, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+        bar_h = th + 16
+        # 半透明底条
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (0, h - bar_h), (w, h), (20, 20, 20), -1)
+        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, dst=frame)
+        cv2.putText(frame, hints, (12, h - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (140, 140, 140), 1)
+
+    def _draw_confirmation_overlay(self, frame: np.ndarray, msg: str,
+                                    timeout: float, start_time: float) -> None:
+        """按键确认覆盖层 (半透明背景 + 居中文字)"""
+        elapsed = time.time() - start_time
+        if elapsed > timeout:
+            # 超时自动取消确认
+            self._confirm_quit_pending = False
+            self._confirm_cancel_pending = False
+            return
+        h, w = frame.shape[:2]
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (0, 0), (w, h), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.4, frame, 0.6, 0, dst=frame)
+        # 倒计时圆环 (3→0秒)
+        remaining = max(0, int(timeout - elapsed))
+        (tw, th), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
+        cv2.putText(frame, msg, ((w - tw) // 2, h // 2 - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 2)
+        cv2.putText(frame, f"{remaining}s", ((w - 30) // 2, h // 2 + 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
+
+    def _draw_feedback_text(self, frame: np.ndarray, text: str) -> None:
+        """按键反馈文字 (屏幕中央闪过)"""
+        if time.time() >= self._feedback_until:
+            self._feedback_text = None
+            return
+        h, w = frame.shape[:2]
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+        x = (w - tw) // 2
+        y = h // 2 + 60  # 底部确认弹窗上方
+        # 半透明背景
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (x - 10, y - th - 10), (x + tw + 10, y + 10), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, dst=frame)
+        cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+    def _set_feedback(self, text: str, duration: float = 1.5) -> None:
+        """设置按键反馈文字 (自动过期)"""
+        self._feedback_text = text
+        self._feedback_until = time.time() + duration
 
     def start_calibration_flow(self) -> bool:
         """启动用户校准流程
