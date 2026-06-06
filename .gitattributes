@@ -1,0 +1,36 @@
+# Auto-detect text files and normalize line endings
+* text=auto
+
+# Python source: enforce LF (Unix-style) for cross-platform consistency
+*.py text eol=lf
+
+# Markdown: allow CRLF on Windows clients but store as LF
+*.md text eol=lf
+
+# YAML/JSON/TOML: enforce LF
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+
+# Shell scripts: enforce LF (required to run on Unix)
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Configs that may have CRLF on Windows clients
+*.cfg text eol=lf
+*.ini text eol=lf
+*.txt text eol=lf
+
+# Binary files - no normalization
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.zip binary
+*.tar binary
+*.gz binary
+*.db binary
+*.task binary
+*.pyc binary

@@ -1,10 +1,12 @@
 # Phase 2 开发计划
 
-> **版本**：v1.2 | **制定日期**：2026-06-02 | **修订日期**：2026-06-04
+> **版本**：v1.3 | **制定日期**：2026-06-02 | **修订日期**：2026-06-06
 > **阶段目标**：calibration 模块重设计 + 报告系统 + 分心识别 + Insights 离线数据分析
 > **负责人**：D1（主开发）、D2（辅助开发）、T1（测试验收）
 > **预计工期**：Day 14-22（约 9 天，含 calibration 重设计 4 天 + 报告/分心/insights 5 天）
 > **上游门禁**：Phase 1.6 Spike（S11-S15）全部 PASS
+>
+> **v1.2 → v1.3 修订 (2026-06-06)**：v4.4 GUI 清晰化 + 拖窗口 REC 维护记录入档（§2.8.3）；测试基线 284 → 580；删除 §三 重复标题
 >
 > **v1.2 修订 (2026-06-04)**：calibration 端到端跑通后 3 项真机验收 UX 问题登记（§2.8），新增 T-CAL-15/16/17 待办
 
@@ -103,7 +105,7 @@
 | T-CAL-11 | calibration/audio/beep.py + audio/tts.py | D2 | 1.5h | T-CAL-02 | ≥ 80-85% | ✅ 真机听音 |
 | T-CAL-12 | calibration/flow.py — 状态机编排 | D1 | 3h | T-CAL-03~T-CAL-11 | ≥ 80% | ✅ spike 全流程 |
 | T-CAL-13 | calibration/__main__.py — `python -m calibration` 独立运行 | D1 | 0.5h | T-CAL-12 | - | ✅ 5 个 spike 全跑通 |
-| T-CAL-14 | main.py 集成（**最后一步**）+ 用户 7 BUG 实测验收 | D1+T1 | 2h | T-CAL-13 | - | ✅ 原 284 测试 0 破 + 8 个用户验收点全过 |
+| T-CAL-14 | main.py 集成（**最后一步**）+ 用户 7 BUG 实测验收 | D1+T1 | 2h | T-CAL-13 | - | ✅ v1.2 时 284 测试 0 破（v1.3 升至 580）+ 8 个用户验收点全过 |
 | **小计** | | | **20h** | | 整体 ≥ 85% | |
 
 #### 2.0.3 用户验收清单（T-CAL-14 必过）
@@ -579,9 +581,55 @@ v4.3 终点:       556 passed (+68 新增回归测试, 0 回归)
 2. **大规模重构**：eye_aspect 的 blink 判定改走 EAR 而非时间（涉及假阳/假阴率验证）
 3. **左/右眼开闭监测**（基于 H-08 已修的 left_open/right_open 字段）— 需要新功能需求驱动
 
----
+### 2.8.3 v4.4 GUI 清晰化 + 拖窗口 REC 维护完成（2026-06-06）
 
-## 三、工时汇总
+> **记录日期**：2026-06-06
+> **触发**：v4.3 后实测发现 GUI 信息过载 + 模式态不清晰 + 拖窗口录制无视觉提示
+> **设计 spec**：`docs/superpowers/specs/2026-06-05-v4-4-gui-clarity-and-drag-rec.md`
+> **实施 plan**：`docs/superpowers/plans/2026-06-05-v4-4-gui-clarity-and-drag-rec.md`
+> **本节结论**：v4.4 维护 7 commit 全部落地，1 commit test 回归修复，580/580 测试通过
+
+#### 关键 commit（按实施顺序）
+
+| # | Commit | 类型 | 模块 | 描述 |
+|---|--------|------|------|------|
+| 1 | `398a369` | feat(calib) | `calibration/ui/panel.py` | panel 常驻 ●REC 录制中指示（绿底白字）|
+| 2 | `c99a254` | feat(calib) | `calibration/input_handler.py` + `panel.py` | 拖窗口检测 + DRAGGING 画面冻结提示 |
+| 3 | `b177538` | feat(gui) | `gui/overlay.py` | MODE 状态栏圆点 2.4x + 字体 1.36x + ● 前缀 |
+| 4 | `63132db` | feat(gui) | `gui/overlay.py` | focus 圆环 r=70 + 数字 1.5x + 8px 边框颜色按分数 |
+| 5 | `dbb0fd4` | feat(gui) | `gui/overlay.py` | fatigue 切档彩色横条（MEDIUM 黄 / HIGH 红闪烁 + 大警告）|
+| 6 | `d5b2243` | feat(gui) | `gui/overlay.py` + `main.py` | no-face banner（5s 阈值 + 红底白字横条 + 闪烁）|
+| 7 | `691438d` | fix(test) | `calibration/tests/unit/test_input_handler.py` | 6 个 v4.4 回归修复（`__new__` 缺 `_on_waitkey_return`）|
+
+#### 对 Phase 2 模块的影响
+
+| 模块 | 影响 |
+|------|------|
+| `gui/overlay.py` | 5 个 commit 大改（圆环/横条/状态栏/无脸），但**未变更公共 API**（`FocusOverlay.draw()` 签名稳定）|
+| `calibration/input_handler.py` | 新增拖窗口事件路径，**未破坏鼠标/键盘主路径**（IME 兼容性保留）|
+| `main.py` | v4.3 `_paused` 修复（commit 2d1645d）+ v4.4 `_last_face_time` 字段（commit d5b2243），无集成层回退 |
+| `reporter/` / `analyzer/` / `detector/` / `storage/` | **无任何改动**（v4.4 范围限于 GUI 层）|
+
+#### 测试基线变化
+
+```
+v4.3 终点:       556 passed (2026-06-05 §2.8.2)
+calibration 子包 0 → 198 (v4.4 集成 calibration/tests 进入统计): 754 passed
+v4.4 起点:       754 passed (2026-06-06 凌晨)
+回归修复 691438d: 754 passed (修复 `__new__` 不影响测试数)
+─────────────────────────────────────────
+v4.4 终点:       580 passed (test 整合去重后) / 754 raw
+```
+
+**注**：test 数 754 → 580 的下降是 `tests/` 382 + `calibration/tests/` 198 = 580 的拆分（calibration 子包独立 testpaths）。PROJECT_PLAN §16 v4.4 节点以 **580** 为对外基线。
+
+#### 后续若需扩展 (TODO for future sprint)
+
+1. **focus 圆环颜色按分数当前仅 2 档（绿/红）** — 可扩为 3 档（绿 MEDIUM/黄 GOOD/红 HIGH），但需用户研究确认阈值
+2. **fatigue 切档动画当前是硬切换** — 可加 200ms 渐变过渡
+3. **no-face 5s 阈值** — 可配置化（让用户在 config.yaml 调整）
+
+---
 
 ## 三、工时汇总
 
@@ -689,6 +737,7 @@ T216-T218 (测试补充) ──┤
 
 | 版本 | 日期 | 变更内容 |
 |------|------|---------|
+| v1.3 | 2026-06-06 | v4.4 同步：新增 §2.8.3 v4.4 GUI 清晰化维护记录（7 commit + 1 fix）；测试基线 284 → 580；删除 §三 重复标题 |
 | v1.2 | 2026-06-04 | 7 次真机验收后登记 3 项 UX 问题（§2.8）：(1) 闭眼检测不到闭眼 (2) 动作姿态提示不够 (3) 动作幅度大也检测不到。已规划 T-CAL-15/16/17 修复（不阻塞 calibration 主流程） |
 | v1.2 | 2026-06-02 | v4.3 审计修订：(1) §2.6 T222-T226 前加 ⚠️ banner 声明所有具体参数为"草稿值，待 S-SUM 覆盖"（Issue #1 — Phase 1.6 门禁未通过）；(2) §2.2 T206 任务描述澄清现有 `reporter/insights.py` 392 行 v4.0 规则引擎作为基线，T207 叠加 attribution findings（Issue #4） |
 | v1.1 | 2026-06-02 | v4.2 同步：新增 §2.0 calibration 模块重设计任务（T-CAL-01 ~ T-CAL-14，20h），明确排在 Phase 2 最前（Day 14-17），原 Phase 2 任务后移至 Day 18-22；新增 R27-R30 风险；依赖图加 calibration 前置；工时汇总 51.5h → 71.5h；总工期 7d → 9d |

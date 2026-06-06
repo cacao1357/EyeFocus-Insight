@@ -42,15 +42,22 @@ htmlcov/
 /debug_*.py
 /test_*_temp.py
 /test_*_flow.py
-# spike 脚本自动输出（results/ 下 .json 是机器生成，.txt 是手写报告）
+# spike 脚本自动输出（results/ 下 .json 是机器生成，.txt/.png 是手写报告）
 spike/s2_result.json
-spike/results/*/*.json
-spike/results/*/*/*.json
-spike/results/*/*/*/*.json
 spike/results/**/*.json
+spike/results/**/*.png
 # 数据/报告输出
 /data/
 /reports/
 
 # brainstorm visual companion session dirs (do not track)
 .superpowers/
+
+# Python 工具链缓存（pytest / mypy / ruff / coverage XML）
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage.xml
+
+# 跨平台行尾符锁定
+.gitattributes tracked in repo

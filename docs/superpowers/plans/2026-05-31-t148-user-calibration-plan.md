@@ -1,5 +1,10 @@
 # T148 用户校准系统实现计划
 
+> ⚠️ **【状态：已被 v4.2 取代，未实施】**
+> 此 T148 计划（2026-05-31）实测全部失效，**未落地**。被 2026-06-02 重设计 spec 取代：`docs/superpowers/specs/2026-06-02-user-calibration-redesign.md`，v4.2 校准模块 `calibration/` 已完成 14 子任务（T-CAL-01~T-CAL-14）并集成进 main.py（真机 CQS=1.00）。**新读者请直接阅读 v4.2 文档。**
+>
+> 本文件作为失败教训保留：警示"模块耦合 main.py → 实测失效"的失败链。归档于 `docs/old_schemes/T148_USER_CALIBRATION_DESIGN_v1.0.md` 已有设计稿。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 实现 T148 用户辅助多轮校准系统，包括 6 阶段校准流程（自动基线采集、闭眼、睁眼恢复、眯眼、头部姿态、眨眼计数）。

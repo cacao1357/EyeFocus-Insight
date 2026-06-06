@@ -11,7 +11,7 @@
 ```bash
 git clone https://github.com/cacao1357/EyeFocus-Insight.git
 cd EyeFocus-Insight
-git checkout feat/phase0-spike
+# main 分支已包含 v4.4 全部 commit（feat/phase0-spike 已合并）
 ```
 
 ### 2. 创建虚拟环境
@@ -65,7 +65,7 @@ python spike/baseline_proto.py
 
 **验收**：
 - 3 次校准的 EAR CV < 10%
-- 至少 2/3 次 CQS ≥ 0.70
+- 至少 2/3 次 CQS ≥ 0.60（v4.0 起阈值从 0.70 改为 0.60，参见 PROJECT_PLAN §1.6 决策 #6）
 
 ---
 
@@ -204,12 +204,12 @@ spike/results/
 **示例：**
 
 ```bash
-# 首次：创建自己的文件夹
-mkdir spike/results/D2
+# 首次：创建自己的文件夹（用 Python 避免 Windows Git Bash 缺 mkdir）
+python -X utf8 -c "import os; os.makedirs('spike/results/D2', exist_ok=True)"
 
-# 测试完成后：移动文件到自己的文件夹
-mv spike/s1_result.json spike/results/D2/
-mv spike/s2_result.json spike/results/D2/s2_result_1.json
+# 测试完成后：移动文件到自己的文件夹（用 Python 避免 Windows Git Bash 缺 mv）
+python -X utf8 -c "import shutil; shutil.move('spike/s1_result.json', 'spike/results/D2/')"
+python -X utf8 -c "import shutil; shutil.move('spike/s2_result.json', 'spike/results/D2/s2_result_1.json')"
 ```
 
 ---
