@@ -1374,6 +1374,13 @@ class EyeFocusApp:
                 config=calib_config,
                 db=self._db,
             )
+            # v4.4: 立即创建主窗口占位, 避免窗口切换黑屏
+            cv2.namedWindow("EyeFocus Insight", cv2.WINDOW_AUTOSIZE)
+            placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+            cv2.putText(placeholder, "正在启动监测模式...", (180, 240),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+            cv2.imshow("EyeFocus Insight", placeholder)
+            cv2.waitKey(1)
             # v4.4: 用户点 × 关闭校准窗口 → 退出整个程序
             if result is None and calibration_module.is_exit_requested():
                 logger.info("用户关闭校准窗口, 退出程序")
