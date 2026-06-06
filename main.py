@@ -169,8 +169,9 @@ class CameraManager:
             self._cap.release()
             self._cap = None
         # 再 join 线程（此时 read 循环已退出或即将退出）
+        # v4.4: timeout 1.0→0.5 (关闭卡顿, cap已先释放, 线程应快速退出)
         if self._read_thread:
-            self._read_thread.join(timeout=1.0)
+            self._read_thread.join(timeout=0.5)
 
     def stop(self) -> bool:
         """停止摄像头（保留 start() 重启能力，等价于 release 但不删 self._camera_index）

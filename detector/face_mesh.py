@@ -238,14 +238,16 @@ class FaceMeshDetector:
             return yaw + 180.0
         return yaw
 
-    def close(self, timeout: float = 2.0) -> None:
+    def close(self, timeout: float = 0.5) -> None:
         """关闭检测器，释放资源
 
         使用独立线程调用 MediaPipe 的 close()，并通过 join(timeout)
         实现超时控制，防止 close() 可能无限阻塞。
 
+        v4.4: timeout 2.0→0.5 (关闭卡顿, 进程即将退出无需等待)
+
         Args:
-            timeout: 超时时间（秒），默认 2.0 秒
+            timeout: 超时时间（秒），默认 0.5 秒
         """
         def _close_async():
             with self._lock:
