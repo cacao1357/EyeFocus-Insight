@@ -256,7 +256,7 @@ class FaceMeshDetector:
                 except Exception as e:
                     logger.warning("FaceMeshDetector._detector.close() 异常: %s", e)
 
-        close_thread = threading.Thread(target=_close_async, name="FaceMeshDetector-close")
+        close_thread = threading.Thread(target=_close_async, name="FaceMeshDetector-close", daemon=True)
         close_thread.start()
         close_thread.join(timeout=timeout)
 
