@@ -1224,6 +1224,11 @@ class EyeFocusApp:
                 config=calib_config,
                 db=self._db,
             )
+            # v4.4: 用户点 × 关闭校准窗口 → 退出整个程序
+            if result is None and calibration_module.is_exit_requested():
+                logger.info("用户关闭校准窗口, 退出程序")
+                self._running = False
+                return None
             if result is not None:
                 logger.info(
                     "v4.2 校准成功: EAR=%.4f, 眨眼率=%.2f/min, CQS=%.2f",

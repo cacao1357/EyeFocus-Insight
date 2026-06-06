@@ -53,6 +53,8 @@ class CalibrationFlow:
         self._done: bool = False
         self._user_accepted: bool = False
         self._consecutive_failures: int = 0
+        # v4.4: 用户点窗口×关闭 → 退出整个程序 (区别于 ESC 取消 → 回到主程序)
+        self._exit_requested: bool = False
 
         # 子系统（运行时注入；测试时 mock）
         self._cap = None
@@ -82,6 +84,11 @@ class CalibrationFlow:
             return None
         finally:
             self._teardown()
+
+    @property
+    def exit_requested(self) -> bool:
+        """用户是否通过关闭窗口请求退出整个程序。"""
+        return self._exit_requested
 
     def _setup(self) -> None:
         # M-21: 使用 config.camera_index 而非硬编码 0
@@ -161,13 +168,15 @@ class CalibrationFlow:
         self._input.register_buttons(self._panel.get_buttons(info))
         action, digit = self._input.poll(self._state)
 
-        # 检查窗口被关
+        # 检查窗口被关 (× 按钮或 Alt+F4)
         try:
             if cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1:
                 self._cancelled = True
+                self._exit_requested = True  # v4.4: ×关闭 → 退出整个程序
                 return
         except cv2.error:
             self._cancelled = True
+            self._exit_requested = True
             return
 
         self._handle_action(action, digit)
