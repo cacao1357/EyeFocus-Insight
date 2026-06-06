@@ -930,23 +930,33 @@ class EyeFocusApp:
                 logger.info("校准状态变化: %s -> %s", old_state, new_state)
 
     def _handle_keyboard(self, key: int) -> None:
-        """处理键盘输入 (v4.4: Q单次+1s取消窗口, ESC二次确认)
+        """处理键盘输入
 
-        Q 退出(按Q后1s内按其他键取消) | ESC 取消校准(需二次确认)
-        C 启动校准 | P/Space 暂停 | Tab 切换面板
+        Q 退出(按Q→"正在退出"→1s后退出, 按其他键取消)
+        ESC 取消校准(二次确认) | C 校准 | P 暂停 | Tab 面板
         """
         now = time.time()
 
-        # --- Q 单键退出 (1s 取消窗口) ---
-        if self._confirm_quit_pending:
-            if key == ord('q') or key == ord('Q'):
-                logger.info("用户退出")
+        # --- Q 处理 (最高优先级) ---
+        if key == ord('q') or key == ord('Q'):
+            if self._confirm_quit_pending:
+                # 第二次按 Q → 立即退出
+                logger.info("用户退出 (Q)")
                 self._running = False
                 self._confirm_quit_pending = False
             else:
-                self._confirm_quit_pending = False
-                self._set_feedback("已取消")
+                # 第一次按 Q → 启动 1s 倒计时
+                self._confirm_quit_pending = True
+                self._confirm_quit_time = now
+                self._set_feedback("按 Q 退出... (1秒内按其他键取消)")
             return
+
+        # 在 Q 倒计时中按了其他键 → 取消退出
+        # ⚠️ key=255 (无按键) 时不取消, 否则每帧清 pending, 1s自动退出永不触发
+        if self._confirm_quit_pending and key != 255 and key != 0:
+            self._confirm_quit_pending = False
+            self._set_feedback("已取消退出")
+            # 不 return, 让其他按键处理继续（如 ESC 取消校准）
 
         # --- ESC 取消校准 (二次确认) ---
         if self._confirm_cancel_pending:
@@ -960,21 +970,12 @@ class EyeFocusApp:
                 self._set_feedback("已取消操作")
             return
 
-        # --- 正常按键 ---
-        # ESC → 校准中触发二次确认
         if key == 27:
             if self._calib_coordinator and (self._calib_coordinator.is_active()
                                            or self._calib_coordinator.input_mode):
                 self._confirm_cancel_pending = True
                 self._confirm_cancel_time = now
                 self._set_feedback("再按 ESC 确认取消校准")
-            return
-
-        # Q → 单次, 显示退出倒计时 (1s内按其他键取消)
-        if key == ord('q') or key == ord('Q'):
-            self._confirm_quit_pending = True
-            self._confirm_quit_time = now
-            self._set_feedback("按 Q 退出, 1秒内按其他键取消")
             return
 
         # 数字键和 Enter（仅在校准输入模式）
