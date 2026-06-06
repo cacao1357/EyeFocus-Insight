@@ -9,15 +9,15 @@ def test_default_config_fields_present():
     assert c.auto_baseline_seconds == 7.0
     assert c.closed_eyes_seconds == 5.0
     assert c.open_eyes_verify_seconds == 0.0  # T-CAL-27: 跳过
-    assert c.squint_seconds == 5.0
-    assert c.head_direction_seconds == 3.0
-    assert c.blink_round_seconds == 15.0
-    assert c.blink_rounds_count == 2
+    assert c.squint_seconds == 3.0      # v4.4: 5→3
+    assert c.head_direction_seconds == 2.5  # v4.4: 3.0→2.5
+    assert c.blink_round_seconds == 8.0  # v4.4: 15→8
+    assert c.blink_rounds_count == 1     # v4.4: 2→1
 
     # 阈值 (T-CAL-15: closed_eyes_min_ratio 0.5→0.6; T-CAL-16: head_direction_min_degrees 10→20)
     assert c.closed_eyes_min_ratio == 0.6
     assert c.squint_baseline_ratio == 0.75
-    assert c.head_direction_min_degrees == 12.0  # T-CAL-26: 20→12
+    assert c.head_direction_min_degrees == 15.0  # v4.4: 12→15
     assert c.blink_count_min == 5
     assert c.blink_count_max == 60
 
@@ -41,7 +41,7 @@ def test_config_total_estimated_seconds():
         + c.head_direction_seconds * 4
         + c.blink_round_seconds * c.blink_rounds_count
     )
-    assert total < 80, f"5 阶段裸时长 {total}s 超过 80 秒上限"
+    assert total < 50, f"5 阶段裸时长 {total}s 超过 50 秒上限 (v4.4 缩短后)"
 
 
 def test_config_customizable():
