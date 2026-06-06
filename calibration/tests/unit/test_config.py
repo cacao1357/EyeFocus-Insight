@@ -6,7 +6,7 @@ from calibration.config import CalibrationConfig
 def test_default_config_fields_present():
     c = CalibrationConfig()
     # 阶段时长
-    assert c.auto_baseline_seconds == 7.0
+    assert c.auto_baseline_seconds == 4.0  # v4.4: 7→4
     assert c.closed_eyes_seconds == 5.0
     assert c.open_eyes_verify_seconds == 0.0  # T-CAL-27: 跳过
     assert c.squint_seconds == 3.0      # v4.4: 5→3
@@ -28,7 +28,7 @@ def test_default_config_fields_present():
 
     # 音频
     assert c.tts_rate == 180
-    assert c.audio_enabled is True
+    assert c.audio_enabled is False  # v4.4: 默认关TTS, 仅蜂鸣
 
 
 def test_config_total_estimated_seconds():

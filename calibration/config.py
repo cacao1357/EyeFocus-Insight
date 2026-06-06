@@ -16,7 +16,7 @@ class CalibrationConfig:
     frame_height: int = 480
 
     # ---------- 阶段时长（秒）----------
-    auto_baseline_seconds: float = 7.0
+    auto_baseline_seconds: float = 4.0    # v4.4: 7→4 (用户反馈睁眼7s太长)
     closed_eyes_seconds: float = 5.0
     open_eyes_verify_seconds: float = 0.0  # T-CAL-27: 2→0 (用户反映睁眼验证太长, 跳过)
     squint_seconds: float = 3.0            # v4.4: 5→3 (眯眼保持太久, 肌肉酸)
@@ -38,4 +38,4 @@ class CalibrationConfig:
 
     # ---------- 音频参数 ----------
     tts_rate: int = 180                         # pyttsx3 语速（中文）
-    audio_enabled: bool = True                  # False 时跳过所有音频
+    audio_enabled: bool = False                 # v4.4: 默认关闭TTS (SAPI5不稳定), 仅用蜂鸣
