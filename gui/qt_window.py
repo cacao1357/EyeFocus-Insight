@@ -161,9 +161,8 @@ class EyeFocusWindow(QMainWindow):
         self._glasses_str = glasses_str
         self._fps = fps
 
-    def update_data_from_processor(self, frame_processor) -> None:
+    def update_data_from_processor(self, frame_processor, fps: float = 0.0) -> None:
         """从 FrameProcessor 读取最新分析结果"""
-        from gui.overlay import FocusOverlay
         fr = frame_processor.latest_focus_result
         fa = frame_processor.latest_fatigue_result
         face = frame_processor.latest_face_detected
@@ -184,9 +183,9 @@ class EyeFocusWindow(QMainWindow):
             focus_score=focus_score,
             fatigue_level=fatigue_level,
             face_detected=face,
-            eye_detected=frame_processor.latest_face_detected,
+            eye_detected=face,
             glasses_str=glasses_str,
-            fps=frame_processor._app.fps if hasattr(frame_processor, '_app') else 0.0,
+            fps=fps,
         )
 
     # ── 内部 ──

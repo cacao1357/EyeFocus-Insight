@@ -86,6 +86,8 @@ class AppConfig:
     #   "v4_2" — 默认, 用 calibration/ 新模块 (5 phase + HEAD 4 sub-phase + 完整 blink counting)
     #   "v3_x" — 旧 analyzer/user_calibration.py 路径 (5 phase 但 HEAD 只 UP, 跳过 DOWN/LEFT/RIGHT)
     calibration_mode: str = "v4_2"
+    # v4.4: PyQt5 UI 模式 (替换 OpenCV cv2.imshow 主循环)
+    use_qt: bool = False
 
 
 class CameraManager:
@@ -752,6 +754,10 @@ class EyeFocusApp:
         self._calib_cancelled_msg: Optional[str] = None
         self._calib_cancelled_until: float = 0.0
 
+        # v4.4: Qt UI 模式
+        self._frame_buffer = None
+        self._qt_window = None
+
     def initialize(self) -> bool:
         """初始化所有模块
 
@@ -856,8 +862,11 @@ class EyeFocusApp:
         if self.config.enable_calibration:
             self.start_calibration_flow()
 
-        # 启动主循环
-        self._main_loop()
+        # 启动主循环 (Qt 或 OpenCV)
+        if self.config.use_qt:
+            self._start_qt_monitoring()
+        else:
+            self._main_loop()
 
     def _main_loop(self) -> None:
         """主循环"""
@@ -928,6 +937,73 @@ class EyeFocusApp:
             new_state = self._calib_coordinator.state
             if old_state != new_state:
                 logger.info("校准状态变化: %s -> %s", old_state, new_state)
+
+    def _start_qt_monitoring(self) -> None:
+        """v4.4: 使用 PyQt5 窗口进行监测 (替代 OpenCV _main_loop)"""
+        import sys
+        from PyQt5.QtWidgets import QApplication
+        from gui.qt_window import EyeFocusWindow, FrameBuffer
+
+        # 创建帧缓冲区 (CameraManager 写入, Qt 显示读取)
+        self._frame_buffer = FrameBuffer()
+
+        # 启动摄像头
+        if not self._camera_manager.start():
+            logger.error("Qt 模式: 摄像头启动失败")
+            return
+
+        # 创建 Qt 应用和窗口
+        # ⚠️ QApplication 只能创建一次, 但 _start_qt_monitoring 也只会被调用一次
+        self._qt_app = QApplication(sys.argv)
+        self._qt_window = EyeFocusWindow(self._frame_buffer)
+
+        # 连接退出信号
+        self._qt_window.exit_requested.connect(self._on_qt_exit)
+
+        # 设置定时器驱动帧处理 (30fps)
+        from PyQt5.QtCore import QTimer
+        self._qt_timer = QTimer()
+        self._qt_timer.timeout.connect(self._qt_process_frame)
+        self._qt_timer.start(33)  # ~30fps
+
+        # 校准取消消息
+        if self._calib_cancelled_msg:
+            self._calib_cancelled_msg = None
+
+        # 显示窗口并启动事件循环
+        self._qt_window.show()
+        self._qt_window.start()
+        self._qt_app.exec_()
+
+        # 事件循环结束后清理
+        logger.info("Qt 事件循环结束")
+        self._qt_timer.stop()
+        self._camera_manager.release()
+        self._cleanup()
+
+    def _qt_process_frame(self) -> None:
+        """Qt 定时器回调: 处理一帧"""
+        if not self._camera_manager or not self._camera_manager.is_running:
+            return
+
+        ret, frame = self._camera_manager.get_frame()
+        if ret and frame is not None:
+            # 处理帧 (检测+分析)
+            self._frame_processor.process_frame(frame)
+
+            # FPS
+            self._update_fps()
+
+            # 更新 Qt 窗口的数据
+            self._qt_window.update_data_from_processor(self._frame_processor, self._fps)
+
+            # 将原始帧写入 FrameBuffer 供 Qt 显示
+            self._frame_buffer.write(frame)
+
+    def _on_qt_exit(self) -> None:
+        """Qt 退出信号处理"""
+        logger.info("用户请求退出 (Qt)")
+        self._qt_app.quit()
 
     def _handle_keyboard(self, key: int) -> None:
         """处理键盘输入
