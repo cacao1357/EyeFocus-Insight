@@ -58,14 +58,12 @@ from analyzer.user_calibration import (
 )
 from storage.models import CalibrationResult
 import calibration as calibration_module  # v4.2: 新校准模块
-from gui.overlay import FocusOverlay, CalibrationProgress
+from gui.overlay import FocusOverlay
 from storage.db import DatabaseManager, create_database_manager
 from storage.models import (
     BlinkRecord,
-    FatigueLevel,
     FatigueRecord,
     FrameRecord,
-    GlassesMode,
     Session,
 )
 
@@ -1033,11 +1031,6 @@ class EyeFocusApp:
             )
 
         cv2.imshow("EyeFocus Insight", display)
-        # DEBUG: Log every 60 frames to verify rendering
-        frame_count = self._frame_processor.frame_count
-        if frame_count % 60 == 0:
-            logger.info("渲染帧 #%d: face=%s, focus=%s, fatigue=%s, calib_active=%s",
-                       frame_count, face_detected, focus_score_val, fatigue_level_str, self.is_calibration_flow_active())
 
     def _update_fps(self) -> None:
         """更新 FPS 计数"""
@@ -1074,10 +1067,6 @@ class EyeFocusApp:
             logger.error("校准协调器未初始化")
             return False
         self._calib_coordinator.start()
-        if self._overlay._calib_display:
-            logger.info("DEBUG: calib_display.is_calibrating=%s", self._overlay._calib_display.is_calibrating)
-        else:
-            logger.warning("DEBUG: calib_display is None!")
         return True
 
     def _cancel_calibration(self) -> None:
