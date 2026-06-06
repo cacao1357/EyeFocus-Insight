@@ -207,12 +207,14 @@ class FocusOverlay:
         gaze_score: Optional[float] = None,
         glasses_str: Optional[str] = None,
         fps: Optional[float] = None,
+        last_face_time: Optional[float] = None,  # v4.4: 无脸横幅 (BUG-1 修复)
     ) -> np.ndarray:
         """在帧上绘制 GUI 叠加
 
         v4.3 重设计: 顶部单行 4 段状态栏 (MODE + face/eye + FOCUS + FATIGUE + GLASSES),
         移除左下 3 行细分分数 (默认关, 需 config.show_score_breakdown=True),
         FPS 移右下角避免与状态栏重叠, glasses 合并入状态栏。
+        v4.4: 末尾调 _draw_no_face_banner, 5s+ 无脸 → 红底白字横条闪烁。
 
         Args:
             frame: 原始摄像头帧
@@ -227,6 +229,7 @@ class FocusOverlay:
             gaze_score: 视线方向分量 (0-100)
             glasses_str: 眼镜状态字符串 (e.g. "ON" / "OFF")
             fps: 帧率, 显式传入而非 main.py 单独 putText
+            last_face_time: 最后一次检测到人脸的时间戳 (v4.4 no-face banner)
 
         Returns:
             叠加后的帧
@@ -283,6 +286,10 @@ class FocusOverlay:
             (tw, th), _ = cv2.getTextSize(fps_text, self.config.font, 0.45, 1)
             cv2.putText(result, fps_text, (w - tw - 12, h - 12),
                         self.config.font, 0.45, COLOR_TEXT_MUTED, 1)
+
+        # v4.4: 无脸横幅 (5s+ 倒计时 + 闪烁) — BUG-1 真机测试发现
+        if last_face_time is not None:
+            result = self._draw_no_face_banner(result, face_detected, last_face_time)
 
         return result
 
