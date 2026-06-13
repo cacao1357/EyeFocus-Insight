@@ -48,8 +48,14 @@ pip install -r requirements.txt
 ### 5. 运行程序
 
 ```bash
-# 主程序（自动校准 + 实时检测）
+# 主程序（自动校准 + 实时检测，OpenCV GUI）
 python main.py
+
+# Qt GUI 模式（推荐）：校准对话框 + 监测窗口
+python test_qt_monitor.py
+
+# 运行测试
+python -m pytest tests/ --tb=line -q
 
 # 帧率基准测试
 python spike/fps_benchmark.py
@@ -59,10 +65,6 @@ python spike/baseline_proto.py
 
 # 头部姿态验证（4阶段）
 python spike/head_pose_proto.py
-
-# EAR 方差采集
-python spike/ear_variance.py --label no_glasses
-python spike/ear_variance.py --label with_glasses
 ```
 
 ---
@@ -95,25 +97,34 @@ EyeFocus-Insight/
 ├── storage/            # 存储模块
 │   ├── models.py       # 数据模型定义
 │   └── db.py           # SQLite 数据库层
-├── gui/                # GUI 模块
-│   └── overlay.py      # 实时叠加层
+├── gui/                # Qt GUI 模块
+│   ├── qt_window.py    # 主监测窗口（v4.5+）
+│   ├── calibration_dialog.py  # 校准对话框（v4.7 重设计）
+│   ├── qt_overlay.py   # Apple Health 风格叠加组件
+│   ├── video_label.py  # 摄像头画面显示
+│   └── overlay.py      # OpenCV 实时叠加层（旧路径备用）
+├── analyzer/insights/  # 离线分析子系统（v4.1+：聚类/变点/异常/时序/归因）
 ├── reporter/           # 报告生成（v1.4+）
+│   ├── report_html.py  # HTML 报告（含 9 章节 + insights 集成）
+│   ├── charts.py       # Matplotlib 图表（含 4 种 insights 图表）
+│   └── insights.py     # 个性化建议引擎
 ├── spike/              # Phase 0 验证脚本
 │   ├── fps_benchmark.py        # S1: 帧率测试
 │   ├── baseline_proto.py       # S2: 基线校准
 │   ├── head_pose_proto.py      # S3: 头部姿态
 │   ├── ear_variance.py         # S5: EAR 方差
-│   ├── common.py               # 共享算法实现
-│   └── results/                # 测试结果（按成员分类；.json 输出不入仓，.txt 分析报告入仓）
-│       └── D1/                 # D1 已落盘的 6 份手写分析报告（s4/s5/s6/s7/s9/s10）
-├── tests/              # 单元与集成测试（完整套件 580 个，含 calibration/tests/；pytest 默认只跑 tests/ = 382）
+│   ├── insights/              # Insights spike 验证（S11-S15）
+│   └── results/               # 测试结果
+├── tests/              # 单元与集成测试（380+ 用例，含 insights 22 个）
 ├── docs/               # 文档
-│   └── old_schemes/    # 旧版本方案归档
-├── PROJECT_PLAN.md     # 总规划方案（v4.3）
+│   ├── old_schemes/    # 旧版本方案归档
+│   └── superpowers/    # 详细设计文档
+├── test_qt_monitor.py  # Qt GUI 启动脚本（v4.6.2+）
+├── PROJECT_PLAN.md     # 总规划方案（v4.6）
 ├── PHASE0_PLAN.md      # Phase 0 执行计划
 ├── PHASE0_SUMMARY.md   # Phase 0 验证报告
-├── PHASE1_PLAN.md      # Phase 1 开发计划（v1.9）
-└── PHASE2_PLAN.md      # Phase 2 开发计划（v1.2）
+├── PHASE1_PLAN.md      # Phase 1 开发计划（v2.0）
+└── PHASE2_PLAN.md      # Phase 2 开发计划（v1.3）
 ```
 
 ---
@@ -131,20 +142,28 @@ EyeFocus-Insight/
 
 ## 当前进度
 
-**v4.4** — GUI 清晰化 + 拖窗口 REC + 无脸检测横条完成。
+**v4.6** — Insights 离线分析子系统 + v4.7 Qt 校准对话框重设计完成。
 
 总规划见 [PROJECT_PLAN.md](./PROJECT_PLAN.md)。Phase 0 验证见 [PHASE0_SUMMARY.md](./PHASE0_SUMMARY.md)。Phase 1 任务见 [PHASE1_PLAN.md](./PHASE1_PLAN.md)。Phase 2 任务见 [PHASE2_PLAN.md](./PHASE2_PLAN.md)。
 
 | 版本 | 内容 | 测试 |
 |------|------|------|
 | **v3.4** | 帧处理重构（FrameProcessor 统一） | 251 |
-| **v4.0** | 10 个审计发现修复（死代码/基线接线/AND-confidence/光照边界） | 275 |
-| **v4.0.1** | 实测新发现 2 bug（create_session 同微秒冲突 / head_pose phases KeyError） | 279 |
-| **v4.0.2** | UX 实测 4 bug（无效摄像头/Mediapipe telemetry/动态文案/日志风格） | 284 |
-| **v4.1** | `analyzer/insights/` 子包（v4.1 范式） | 284 |
-| **v4.2** | `calibration/` 整体重做（T148 7 BUG 解决，按 v4.2 范式 6 条硬约束） | 284 |
-| **v4.3** | 集成 v4.2 校准到默认流程 + GUI 重设计 + 44 audit fixes | 556 |
-| **v4.4** | GUI 清晰化（focus 圆环 r=70 / fatigue 切档彩色横条 / MODE 圆点 2.4x） + 拖窗口检测 + DRAGGING 提示 + panel 常驻 ●REC + 无脸检测红底白字横条 | **580** |
+| **v4.0** | 10 个审计发现修复 | 275 |
+| **v4.0.1** | 实测 bug 修复（create_session 冲突 / head_pose KeyError） | 279 |
+| **v4.0.2** | UX 实测 4 bug 修复 | 284 |
+| **v4.1** | `analyzer/insights/` 离线分析子包（聚类/变点/异常/时序/归因） | 284 |
+| **v4.2** | `calibration/` 模块重做（T148 7 BUG 解决） | 284 |
+| **v4.3** | 集成校准 + GUI 重设计 + 44 audit fixes | 556 |
+| **v4.4** | GUI 清晰化（圆环/疲劳横条/MODE 圆点/无脸检测横条）+ 拖窗口 REC | **580** |
+| **v4.5** | Qt 校准对话框（数据驱动阈值 + 3 轮眨眼验证闭环 + 检测器共享） | **580** |
+| **v4.6** | Qt 校准 v4.7 重设计（70/30 白底面板 + 手动步进） + Insights 子系统实现 | 380+ |
+
+### 关键性能指标
+
+| 指标 | 目标 | 实测 |
+|------|------|------|
+| 端到端帧率 | ≥ 30 FPS | **70-109 FPS** |
 
 ### 关键性能指标（v4.3 沿用）
 

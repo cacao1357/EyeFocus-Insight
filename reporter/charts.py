@@ -338,6 +338,145 @@ class ChartGenerator:
         ax.text(0.5, 0.15, label, ha='center', va='center', fontsize=10)
         ax.axis('off')
 
+    # ── v4.1 Insights 图表 ──────────────────────────────────
+
+    def generate_pattern_pie_chart(
+        self,
+        pattern_labels: dict,
+        cluster_sizes: List[int],
+        title: str = "工作模式分布",
+    ) -> bytes:
+        """生成工作模式饼图"""
+        if not cluster_sizes:
+            return self._create_empty_chart("无数据")
+
+        fig, ax = plt.subplots(figsize=(6, 4), dpi=self.dpi)
+
+        labels = []
+        sizes = []
+        colors = ["#667eea", "#28a745", "#ffc107", "#dc3545", "#17a2b8", "#6f42c1"]
+        for i, sz in enumerate(cluster_sizes):
+            label = pattern_labels.get(i, f"模式{i + 1}")
+            labels.append(f"{label}\n({sz}次)")
+            sizes.append(sz)
+
+        wedges, texts, autotexts = ax.pie(
+            sizes, labels=None, autopct="%1.0f%%",
+            colors=colors[:len(sizes)],
+            startangle=90, pctdistance=0.75,
+        )
+        ax.legend(wedges, labels, title="工作模式",
+                  loc="center left", bbox_to_anchor=(1, 0, 0.5, 1),
+                  fontsize=8)
+        ax.set_title(title, fontsize=11)
+
+        plt.tight_layout()
+        return self._fig_to_bytes(fig)
+
+    def generate_anomaly_bar_chart(
+        self,
+        top_factors: List[str],
+        title: str = "异常主要特征",
+    ) -> bytes:
+        """生成异常因子水平条形图"""
+        if not top_factors:
+            return self._create_empty_chart("无异常")
+
+        fig, ax = plt.subplots(figsize=(6, 3), dpi=self.dpi)
+
+        y_pos = range(len(top_factors))
+        scores = [max(0.5, 1.0 - i * 0.2) for i in range(len(top_factors))]  # 递减示意
+
+        bars = ax.barh(y_pos, scores, color="#dc3545", alpha=0.7)
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(top_factors, fontsize=9)
+        ax.set_xlim(0, 1.2)
+        ax.set_title(title, fontsize=11)
+        ax.invert_yaxis()
+
+        for bar, score in zip(bars, scores):
+            ax.text(bar.get_width() + 0.02, bar.get_y() + bar.get_height() / 2,
+                    f"重要", va="center", fontsize=8, color="#666")
+
+        plt.tight_layout()
+        return self._fig_to_bytes(fig)
+
+    def generate_temporal_line_chart(
+        self,
+        hourly_pattern: List[float],
+        peak_hours: List[str],
+        low_hours: List[str],
+        title: str = "日内专注度模式",
+    ) -> bytes:
+        """生成 24h 专注度折线图"""
+        if not hourly_pattern or len(hourly_pattern) < 6:
+            return self._create_empty_chart("数据不足")
+
+        fig, ax = plt.subplots(figsize=(8, 3.5), dpi=self.dpi)
+
+        hours = list(range(24))
+        vals = hourly_pattern[:24]
+        # 补齐
+        while len(vals) < 24:
+            vals.append(0.0)
+
+        ax.plot(hours, vals, "b-", linewidth=2, alpha=0.8)
+        ax.fill_between(hours, vals, alpha=0.15, color="blue")
+
+        # 标注高效时段
+        if peak_hours:
+            for ph in peak_hours:
+                parts = ph.split("-")
+                if len(parts) == 2:
+                    try:
+                        start_h, end_h = int(parts[0]), int(parts[1])
+                        ax.axvspan(start_h, end_h, alpha=0.1, color="green")
+                        ax.annotate("高效", xy=((start_h + end_h) / 2, max(vals) * 0.9),
+                                    ha="center", fontsize=8, color="green",
+                                    fontweight="bold")
+                    except ValueError:
+                        pass
+
+        ax.set_xlabel("小时")
+        ax.set_ylabel("平均专注度")
+        ax.set_title(title, fontsize=11)
+        ax.set_xticks(range(0, 24, 2))
+        ax.set_xticklabels([f"{h:02d}:00" for h in range(0, 24, 2)])
+        ax.set_ylim(0, 100)
+        ax.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        return self._fig_to_bytes(fig)
+
+    def generate_attribution_bar_chart(
+        self,
+        findings: list,
+        title: str = "关联分析结果",
+    ) -> bytes:
+        """生成关联分析效果量条形图"""
+        if not findings:
+            return self._create_empty_chart("无显著发现")
+
+        fig, ax = plt.subplots(figsize=(6, max(2.5, len(findings) * 0.6)), dpi=self.dpi)
+
+        factors = [f["factor"] for f in findings]
+        effects = [abs(f["effect_size"]) for f in findings]
+        colors = ["#28a745" if f["p_value"] < 0.01 else "#ffc107" for f in findings]
+
+        bars = ax.barh(range(len(factors)), effects, color=colors, alpha=0.7)
+        ax.set_yticks(range(len(factors)))
+        ax.set_yticklabels(factors, fontsize=9)
+        ax.set_xlabel("效果量 (Cohen's d / r)")
+        ax.set_title(title, fontsize=11)
+        ax.invert_yaxis()
+
+        for bar, f in zip(bars, findings):
+            ax.text(bar.get_width() + 0.01, bar.get_y() + bar.get_height() / 2,
+                    f"p={f['p_value']:.3f}", va="center", fontsize=8, color="#666")
+
+        plt.tight_layout()
+        return self._fig_to_bytes(fig)
+
     def _create_empty_chart(self, message: str) -> bytes:
         """创建空白占位图表"""
         fig, ax = plt.subplots(figsize=(self.figsize[0], 2), dpi=self.dpi)

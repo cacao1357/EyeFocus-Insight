@@ -26,6 +26,14 @@ from storage.models import FocusRecord, FatigueRecord, FatigueLevel, BlinkRecord
 from reporter.charts import ChartGenerator, create_chart_generator
 from reporter.insights import InsightsEngine, Insight, create_insights_engine
 
+# v4.1: 可选 insights 集成
+try:
+    from analyzer.insights import InsightsResult as _InsightsResult
+    HAS_INSIGHTS = True
+except ImportError:
+    _InsightsResult = None
+    HAS_INSIGHTS = False
+
 logger = logging.getLogger("eyefocus.reporter")
 
 
@@ -614,6 +622,192 @@ class HTMLReportGenerator:
 
         # 返回出现最多的等级
         return max(level_counts, key=level_counts.get)
+
+    # ── v4.1 Insights 集成 ──────────────────────────────────
+
+    def generate_report_with_insights(
+        self,
+        session_id: str,
+        insights_result: Optional["_InsightsResult"] = None,
+    ) -> str:
+        """生成含离线分析章节的 HTML 报告。
+
+        Args:
+            session_id: 会话 ID
+            insights_result: 可选，Insights Pipeline 结果（为 None 时自动运行）
+
+        Returns:
+            HTML 字符串
+        """
+        base_html = self.generate_report(session_id)
+
+        if not HAS_INSIGHTS:
+            return base_html
+
+        if insights_result is None:
+            # 自动运行 pipeline
+            from analyzer.insights import run_pipeline
+            try:
+                insights_result = run_pipeline(self.db, session_id)
+            except Exception as e:
+                logger.warning("Insights pipeline 自动运行失败: %s", e)
+                return base_html
+
+        # 生成 insights 图表
+        charts = self._generate_insights_charts(insights_result)
+
+        # 渲染 insights HTML 章节
+        insights_html = self._render_insights_sections(insights_result, charts)
+
+        # 插入到 base_html 的 </div><!-- 个性化建议 --> 之后
+        insert_marker = "<!-- 个性化建议 -->"
+        if insert_marker in base_html:
+            parts = base_html.split(insert_marker, 1)
+            return parts[0] + insert_marker + parts[1].replace(
+                '<div class="footer">',
+                insights_html + '\n        <div class="footer">', 1)
+        return base_html
+
+    def _generate_insights_charts(self, insights: "_InsightsResult") -> dict:
+        """生成 insights 章节所需的 4 个图表。"""
+        charts = {}
+
+        def _safe_chart(name: str, gen_fn):
+            try:
+                raw = gen_fn()
+                charts[name] = {"data": self._bytes_to_base64(raw), "error": None}
+            except Exception as e:
+                logger.warning("insights 图表 %s 失败: %s", name, e)
+                charts[name] = {"data": None, "error": str(e)}
+
+        # 1. 聚类饼图
+        if insights.patterns_result:
+            _safe_chart("pattern_pie", lambda: self.chart_gen.generate_pattern_pie_chart(
+                insights.patterns_result.get("pattern_labels", {}),
+                insights.patterns_result.get("cluster_sizes", []),
+            ))
+        else:
+            charts["pattern_pie"] = {"data": None, "error": None}
+
+        # 2. 异常因子条形图
+        if insights.anomaly_result and insights.anomaly_result.get("top_factors"):
+            _safe_chart("anomaly_bar", lambda: self.chart_gen.generate_anomaly_bar_chart(
+                insights.anomaly_result["top_factors"],
+            ))
+        else:
+            charts["anomaly_bar"] = {"data": None, "error": None}
+
+        # 3. 时序折线图
+        if insights.temporal_result and insights.temporal_result.get("hourly_pattern"):
+            _safe_chart("temporal_line", lambda: self.chart_gen.generate_temporal_line_chart(
+                insights.temporal_result["hourly_pattern"],
+                insights.temporal_result.get("peak_hours", []),
+                insights.temporal_result.get("low_hours", []),
+            ))
+        else:
+            charts["temporal_line"] = {"data": None, "error": None}
+
+        # 4. 关联分析条形图
+        if insights.attribution_findings:
+            _safe_chart("attribution_bar", lambda: self.chart_gen.generate_attribution_bar_chart(
+                insights.attribution_findings,
+            ))
+        else:
+            charts["attribution_bar"] = {"data": None, "error": None}
+
+        return charts
+
+    def _render_insights_sections(self, insights: "_InsightsResult", charts: dict) -> str:
+        """渲染 4 个 insights HTML 章节。"""
+        sections = []
+
+        def _chart_html(name: str, title: str, desc: str = "") -> str:
+            info = charts.get(name, {})
+            data = info.get("data") if isinstance(info, dict) else None
+            error = info.get("error") if isinstance(info, dict) else None
+            if error:
+                return f'<div class="chart-error">图表生成失败: {error}</div>'
+            elif data:
+                return (
+                    f'<div class="chart-container">'
+                    f'<img src="data:image/png;base64,{data}" alt="{title}">'
+                    f'</div>'
+                )
+            return '<div class="no-data">数据不足，暂不展示</div>'
+
+        # 章节 1: 工作模式聚类
+        pr = insights.patterns_result
+        if pr:
+            sizes = pr.get("cluster_sizes", [])
+            labels = pr.get("pattern_labels", {})
+            summary = (
+                f"共发现 {pr.get('n_clusters', 0)} 种工作模式，"
+                f"轮廓系数 {pr.get('silhouette', 0):.3f}。"
+            )
+            sections.append(f"""
+        <div class="card">
+            <h2>📊 工作模式分析</h2>
+            <p style="color:#666;margin-bottom:10px;">{summary}</p>
+            {_chart_html("pattern_pie", "工作模式分布")}
+            <ul style="color:#666;font-size:13px;">
+                {"".join(f'<li>{l}</li>' for l in labels.values())}
+            </ul>
+        </div>""")
+
+        # 章节 2: 异常检测
+        ar = insights.anomaly_result
+        if ar and ar.get("anomaly_count", 0) > 0:
+            factors = ar.get("top_factors", [])
+            factors_html = "、".join(f"<strong>{f}</strong>" for f in factors) if factors else "无显著异常因子"
+            sections.append(f"""
+        <div class="card">
+            <h2>🔍 异常会话检测</h2>
+            <p style="color:#666;margin-bottom:10px;">
+                在 {ar.get('n_sessions', 0)} 个历史会话中发现
+                <span style="color:#dc3545;font-weight:bold;">{ar.get('anomaly_count', 0)}</span>
+                个异常会话。主要异常特征：{factors_html}
+            </p>
+            {_chart_html("anomaly_bar", "异常因子")}
+        </div>""")
+
+        # 章节 3: 时序分解
+        tr = insights.temporal_result
+        if tr:
+            peak_text = "、".join(tr.get("peak_hours", [])) if tr.get("peak_hours") else "未检测到明显高效时段"
+            low_text = "、".join(tr.get("low_hours", [])) if tr.get("low_hours") else "未检测到明显低效时段"
+            method_label = "STL 分解" if tr.get("method") == "stl" else "直方图分析"
+            sections.append(f"""
+        <div class="card">
+            <h2>⏰ 高效时段分析</h2>
+            <p style="color:#666;margin-bottom:10px;">
+                基于 {tr.get('n_days', 0)} 天数据（{method_label}），
+                高效时段：<span style="color:#28a745;font-weight:bold;">{peak_text}</span> ｜
+                低效时段：<span style="color:#dc3545;font-weight:bold;">{low_text}</span>
+            </p>
+            {_chart_html("temporal_line", "日内专注度模式")}
+        </div>""")
+
+        # 章节 4: 关联分析
+        afs = insights.attribution_findings
+        if afs:
+            findings_html = "".join(
+                f'<li style="margin-bottom:8px;padding:8px;background:#f8f9fa;'
+                f'border-radius:6px;border-left:3px solid #667eea;">'
+                f'<strong>{f.get("factor", "未知因子")}</strong>：{f.get("summary", "")}'
+                f' (p={f.get("p_value", 0):.3f})</li>'
+                for f in afs
+            )
+            sections.append(f"""
+        <div class="card">
+            <h2>📈 关联分析</h2>
+            <p style="color:#666;margin-bottom:10px;">以下因素与专注度存在统计显著关联：</p>
+            {_chart_html("attribution_bar", "关联分析")}
+            <ul style="list-style:none;padding:0;">
+                {findings_html}
+            </ul>
+        </div>""")
+
+        return "\n".join(sections)
 
     def _format_duration(self, seconds: float) -> str:
         """格式化时长"""

@@ -171,6 +171,21 @@ ON fatigue_records(session_id, timestamp);
 
 CREATE INDEX IF NOT EXISTS idx_blink_events_session
 ON blink_events(session_id, start_timestamp);
+
+CREATE TABLE IF NOT EXISTS insights_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    pipeline_version TEXT DEFAULT 'v4.1',
+    n_sessions INTEGER DEFAULT 0,
+    patterns_json TEXT,
+    changepoint_json TEXT,
+    anomaly_json TEXT,
+    temporal_json TEXT,
+    attribution_json TEXT,
+    total_duration_ms REAL DEFAULT 0.0,
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+);
 """
 
 
