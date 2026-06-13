@@ -228,12 +228,11 @@ class FocusRing(QWidget):
         dot_r = 5.0
         spacing = 6.0
         keys = list(labels.keys())[:3]
-        values = list(labels.values())[:3]
         total_w = 3 * (dot_r * 2) + 2 * spacing
         start_x = cx - total_w / 2
 
         painter.setFont(self._dot_font)
-        for i, (key, label) in enumerate(zip(keys, values)):
+        for i, key in enumerate(keys):
             dx = start_x + i * (dot_r * 2 + spacing) + dot_r
             if key == current:
                 color = C_FATIGUE_COLORS.get("LOW" if "RESTED" in str(key) else
@@ -244,10 +243,6 @@ class FocusRing(QWidget):
             painter.setPen(Qt.NoPen)
             painter.setBrush(QBrush(color))
             painter.drawEllipse(QPointF(dx, y), dot_r, dot_r)
-            painter.setPen(QPen(C_TEXT_SECONDARY))
-            tw = painter.fontMetrics().horizontalAdvance(label)
-            painter.drawText(QRectF(dx - tw / 2, y + dot_r + 2, tw, 12),
-                             Qt.AlignCenter, label)
 
     def sizeHint(self):
         return self.minimumSize()

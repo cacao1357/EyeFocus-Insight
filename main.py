@@ -1003,6 +1003,7 @@ class EyeFocusApp:
 
         # 事件循环结束后清理
         logger.info("Qt 事件循环结束")
+        self._running = False
         self._qt_timer.stop()
         self._camera_manager.release()
         self._cleanup()

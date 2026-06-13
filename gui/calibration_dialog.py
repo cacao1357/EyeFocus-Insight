@@ -651,16 +651,17 @@ class CalibrationDialog(QDialog):
 
         dlg = _QD(self)
         dlg.setWindowTitle(f"阈值校验 · 第{self._blink_round}轮")
-        dlg.setMinimumWidth(340)
+        dlg.setMinimumWidth(480)
         dlg.setStyleSheet(DLG_STYLE)
         dl = _VL(dlg)
-        dl.setContentsMargins(24, 20, 24, 16)
-        dl.setSpacing(14)
+        dl.setContentsMargins(32, 24, 32, 20)
+        dl.setSpacing(16)
         msg = _QL(
             f"第 {self._blink_round} 轮 · 已确认 {self._blink_match_streak}/3\n"
             f"10s 检测到 {detected} 次眨眼\n\n"
             f"和你实际感觉一致吗？"
         )
+        msg.setStyleSheet("color: #000000; font-size: 20px; border: none; background: transparent;")
         dl.addWidget(msg)
         bl = _HL()
         bl.setSpacing(10)
@@ -669,7 +670,7 @@ class CalibrationDialog(QDialog):
         no_btn.setStyleSheet(
             "QPushButton { background-color: #FFFFFF; color: #555555;"
             "  border: 1.5px solid #BBBBBB; border-radius: 8px;"
-            "  font-size: 14px; padding: 6px 16px; min-height: 38px; }"
+            "  font-size: 16px; padding: 8px 20px; min-height: 42px; }"
             "QPushButton:hover { background-color: #F5F5F5; }"
         )
         yes_btn = QPushButton("一致")
@@ -686,21 +687,21 @@ class CalibrationDialog(QDialog):
 
         d2 = _QD(self)
         d2.setWindowTitle("输入实际次数")
-        d2.setMinimumWidth(280)
+        d2.setMinimumWidth(400)
         d2.setStyleSheet(DLG_STYLE)
         d2l = _VL(d2)
-        d2l.setContentsMargins(24, 16, 24, 12)
-        d2l.setSpacing(10)
+        d2l.setContentsMargins(32, 20, 32, 16)
+        d2l.setSpacing(14)
         lb = _QL("你实际眨眼多少次？")
         lb.setStyleSheet(
             "color: #000000; background-color: #FFFFFF;"
-            "font-size: 15px; font-family: 'Segoe UI'; border: none;")
+            "font-size: 20px; font-family: 'Segoe UI'; border: none;")
         d2l.addWidget(lb)
         le = QLineEdit(str(max(1, detected)))
         le.setStyleSheet(
             "QLineEdit { background-color: #FFFFFF; color: #000000;"
             "  border: 1.5px solid #BBBBBB; border-radius: 6px;"
-            "  font-size: 20px; padding: 6px 10px; }"
+            "  font-size: 24px; padding: 8px 12px; }"
         )
         le.setAlignment(Qt.AlignCenter)
         le.setMaxLength(3)
