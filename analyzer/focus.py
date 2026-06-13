@@ -1,19 +1,16 @@
 """
-analyzer/focus.py — 专注度评分算法
+analyzer/focus.py — 专注度分析器 (v4.6)
 
-提供 FocusAnalyzer 类，综合眼部、头部姿态、视线等因素
-计算专注度评分（0-100 分）。
-
-评分权重：
-- 眼部专注 (eye_score): 35% — EAR 是否在正常范围
-- 头部姿态 (head_score): 30% — 是否正视屏幕
-- 视线方向 (gaze_score): 35% — 视线是否聚焦
+v4.6: 从 0-100 精细分数改为 FocusLevel 三档。
+诚实面对 EAR 信号精度上限：6 个眼部关键点 → 1 个浮点数
+只能可靠判断"眼睛是否正常睁开"，无法支持 100 级精度。
 """
 
 import logging
 import time
 from collections import deque
 from dataclasses import dataclass
+from enum import Enum
 from typing import Deque, Optional
 
 import numpy as np
@@ -23,30 +20,43 @@ from storage.models import FocusRecord
 logger = logging.getLogger("eyefocus.analyzer")
 
 
-# 默认配置
-DEFAULT_FPS = 30.0
-DEFAULT_WINDOW_SIZE = 5.0  # 秒
-DEFAULT_EYE_WEIGHT = 0.35
-DEFAULT_HEAD_WEIGHT = 0.30
-DEFAULT_GAZE_WEIGHT = 0.35
+# ═══════════════════════════════════════════════════
+# v4.6: FocusLevel 三档（替代 0-100 分数）
+# ═══════════════════════════════════════════════════
+
+class FocusLevel(Enum):
+    FOCUSED = "focused"        # 专注：眼睛稳定睁开
+    NORMAL = "normal"          # 一般：偶尔偏离
+    DISTRACTED = "distracted"  # 分心：频繁闭眼或脸部丢失
+
+
+FOCUS_LEVEL_LABELS = {
+    FocusLevel.FOCUSED: "专注",
+    FocusLevel.NORMAL: "一般",
+    FocusLevel.DISTRACTED: "分心",
+}
+
+FOCUSED_MAX_DEVIATION_SECS = 5     # ≤5 秒偏差 → FOCUSED
+DISTRACTED_MIN_DEVIATION_SECS = 15  # ≥15 秒偏差 → DISTRACTED
 
 
 @dataclass
 class FocusResult:
-    """专注度分析结果"""
-    focus_score: float  # 综合专注度 0-100
-    eye_score: float  # 眼部专注度 0-100
-    head_score: float  # 头部姿态分数 0-100
-    gaze_score: float  # 视线分数 0-100
-    blink_rate: float  # 眨眼频率 (次/分钟)
-    is_attentive: bool  # 是否专注（focus_score >= 60）
+    """专注度分析结果 (v4.6: 三档等级替代 0-100 分数)"""
+    focus_level: FocusLevel = FocusLevel.NORMAL
+    eye_openness: float = 1.0     # 0-1, 当前睁眼程度
+    eye_stability: float = 1.0    # 0-1, 30s 窗口稳定性
+    blink_rate: float = 0.0
+    is_attentive: bool = True
+    # 向后兼容 (旧代码读 .focus_score 不崩溃)
+    focus_score: float = 50.0
+    eye_score: float = 50.0
+    head_score: float = 50.0
+    gaze_score: float = 50.0
 
 
 class KalmanFilter1D:
-    """一维卡尔曼滤波器
-
-    用于平滑专注度评分输出，减少抖动。
-    """
+    """一维卡尔曼滤波器 (保留，供其他模块使用)"""
 
     def __init__(self, process_variance: float = 0.001, measurement_variance: float = 0.1):
         self.process_variance = process_variance
@@ -55,41 +65,25 @@ class KalmanFilter1D:
         self.estimation_error = 1.0
 
     def update(self, measurement: float) -> float:
-        """更新滤波器状态
-
-        Args:
-            measurement: 当前测量值
-
-        Returns:
-            平滑后的估计值
-        """
-        # 首次更新：直接使用测量值，不进行滤波
         if self.estimate is None:
             self.estimate = measurement
             return self.estimate
-
-        # 预测
         self.estimation_error += self.process_variance
-
-        # 更新
         kalman_gain = self.estimation_error / (self.estimation_error + self.measurement_variance)
         self.estimate += kalman_gain * (measurement - self.estimate)
         self.estimation_error *= (1 - kalman_gain)
-
         return self.estimate
 
     def reset(self) -> None:
-        """重置滤波器"""
         self.estimate = None
         self.estimation_error = 1.0
 
 
 class FocusAnalyzer:
-    """专注度分析器
+    """专注度分析器 (v4.6)
 
-    使用方法：
-        analyzer = FocusAnalyzer(baseline_ear=0.25)
-        result = analyzer.analyze(ear=0.24, yaw=2.0, pitch=-5.0, gaze_score=85.0)
+    从单一 EAR 信号做 30s 滑动窗口统计，输出 FocusLevel 三档。
+    诚实面对信号精度上限，不强行算出 0-100 分数。
     """
 
     def __init__(
@@ -97,64 +91,28 @@ class FocusAnalyzer:
         baseline_ear: float = 0.25,
         baseline_yaw_std: float = 3.0,
         baseline_pitch_std: float = 3.0,
-        eye_weight: float = DEFAULT_EYE_WEIGHT,
-        head_weight: float = DEFAULT_HEAD_WEIGHT,
-        gaze_weight: float = DEFAULT_GAZE_WEIGHT,
-        window_size: float = DEFAULT_WINDOW_SIZE,
-        fps: float = DEFAULT_FPS,
-        enable_kalman: bool = True,
+        eye_weight: float = 0.35,
+        head_weight: float = 0.30,
+        gaze_weight: float = 0.35,
+        window_size: float = 30.0,
+        fps: float = 30.0,
+        enable_kalman: bool = False,
     ):
-        """初始化专注度分析器
-
-        Args:
-            baseline_ear: 基线 EAR 均值
-            baseline_yaw_std: 基线偏航角标准差
-            baseline_pitch_std: 基线俯仰角标准差
-            eye_weight: 眼部权重
-            head_weight: 头部姿态权重
-            gaze_weight: 视线权重
-            window_size: 滑动窗口大小（秒）
-            fps: 帧率
-            enable_kalman: 是否启用卡尔曼滤波
-        """
         self.baseline_ear = baseline_ear
         self.baseline_yaw_std = baseline_yaw_std
         self.baseline_pitch_std = baseline_pitch_std
-        self.eye_weight = eye_weight
-        self.head_weight = head_weight
-        self.gaze_weight = gaze_weight
         self.window_size = window_size
         self.fps = fps
-        self.enable_kalman = enable_kalman
 
-        # 确保权重和为 1
-        total = eye_weight + head_weight + gaze_weight
-        if abs(total - 1.0) > 1e-6:
-            self.eye_weight /= total
-            self.head_weight /= total
-            self.gaze_weight /= total
+        self._max_samples = int(window_size)
+        self._window_samples: Deque[float] = deque(maxlen=self._max_samples)
+        self._last_sample_second: int = -1
 
-        # 滑动窗口
-        self._window_frames = int(window_size * fps)
-        self._recent_data: Deque[dict] = deque(maxlen=self._window_frames)
-
-        # 眨眼检测器引用
         self._blink_detector = None
-
-        # 卡尔曼滤波器
-        self._kalman = KalmanFilter1D() if enable_kalman else None
-        self._last_focus_score = 0.0
-
-        # 人脸丢失时的衰减策略
-        self._face_lost_start_time: Optional[float] = None  # 人脸丢失起始时间
-        self._last_valid_focus_score: float = 0.0  # 上次有效的专注度分数
+        self._current_level = FocusLevel.NORMAL
+        self._face_lost_start_time: Optional[float] = None
 
     def set_blink_detector(self, blink_detector) -> None:
-        """设置眨眼检测器引用
-
-        Args:
-            blink_detector: EyeAspectDetector 实例
-        """
         self._blink_detector = blink_detector
 
     def set_baseline(
@@ -163,232 +121,134 @@ class FocusAnalyzer:
         yaw_std: Optional[float] = None,
         pitch_std: Optional[float] = None,
     ) -> None:
-        """更新基线值
-
-        Args:
-            ear: 基线 EAR 均值
-            yaw_std: 基线偏航角标准差
-            pitch_std: 基线俯仰角标准差
-        """
         self.baseline_ear = ear
         if yaw_std is not None:
             self.baseline_yaw_std = yaw_std
         if pitch_std is not None:
             self.baseline_pitch_std = pitch_std
-
-        # 重置卡尔曼滤波器
-        if self._kalman:
-            self._kalman.reset()
-
-        logger.info("专注度基线已更新: EAR=%.4f, YAW_std=%.2f, PITCH_std=%.2f",
-                    ear, yaw_std, pitch_std)
+        self._window_samples.clear()
+        self._last_sample_second = -1
+        logger.info("专注度基线已更新: EAR=%.4f", ear)
 
     def analyze(
         self,
         ear: float,
-        yaw: float,
-        pitch: float,
+        yaw: float = 0.0,
+        pitch: float = 0.0,
         gaze_score: float = 100.0,
         brightness: float = 128.0,
         face_detected: bool = True,
     ) -> FocusResult:
-        """分析单帧专注度
-
-        Args:
-            ear: 当前 EAR 值
-            yaw: 偏航角（度）
-            pitch: 俯仰角（度）
-            gaze_score: 视线聚焦分数 (0-100)
-            brightness: 帧亮度 (0-255)
-            face_detected: 人脸是否检测到
-
-        Returns:
-            FocusResult 对象
-        """
         current_time = time.time()
 
         if not face_detected:
-            # 人脸丢失：hold-last-value + 衰减策略
-            if self._face_lost_start_time is None:
-                self._face_lost_start_time = current_time
-
-            lost_duration = current_time - self._face_lost_start_time
-
-            if lost_duration < 2.0:
-                # < 2秒: hold last valid score
-                focus_score = self._last_valid_focus_score
-                raw_score = focus_score
-                eye_score = 0.0
-                head_score = 0.0
-                gaze_score = 0.0
-            elif lost_duration < 10.0:
-                # 2-10秒: 线性衰减
-                decay_ratio = (lost_duration - 2.0) / 8.0  # 2到10秒区间
-                focus_score = self._last_valid_focus_score * (1.0 - decay_ratio)
-                raw_score = focus_score
-                eye_score = 0.0
-                head_score = 0.0
-                gaze_score = 0.0
-            else:
-                # > 10秒: 归零，标记应暂停
-                focus_score = 0.0
-                raw_score = 0.0
-                eye_score = 0.0
-                head_score = 0.0
-                gaze_score = 0.0
-                self._last_valid_focus_score = 0.0
-        else:
-            # 人脸正常检测
-            self._face_lost_start_time = None
-
-            # 计算各项分数
-            eye_score = self._compute_eye_score(ear)
-            head_score = self._compute_head_score(yaw, pitch)
-            gaze_score = max(0.0, min(100.0, gaze_score))
-
-            # 综合评分
-            raw_score = (
-                eye_score * self.eye_weight
-                + head_score * self.head_weight
-                + gaze_score * self.gaze_weight
+            level = self._handle_face_lost(current_time)
+            return FocusResult(
+                focus_level=level,
+                eye_openness=0.0,
+                eye_stability=0.0,
+                blink_rate=self._get_blink_rate(),
+                is_attentive=(level == FocusLevel.FOCUSED),
+                focus_score=self._level_to_score(level),
             )
 
-            # 更新 last valid score
-            self._last_valid_focus_score = raw_score
+        self._face_lost_start_time = None
 
-        # 卡尔曼滤波平滑（仅在人脸检测到时使用）
-        if self._kalman and face_detected:
-            focus_score = self._kalman.update(raw_score)
+        current_second = int(current_time)
+        if current_second != self._last_sample_second:
+            self._last_sample_second = current_second
+            self._window_samples.append(ear)
+
+        if self.baseline_ear > 0:
+            openness = min(1.0, max(0.0, ear / self.baseline_ear))
         else:
-            focus_score = raw_score
+            openness = 0.5
 
-        focus_score = max(0.0, min(100.0, focus_score))
-        self._last_focus_score = focus_score
-
-        # 记录到窗口
-        self._recent_data.append({
-            "ear": ear,
-            "yaw": yaw,
-            "pitch": pitch,
-            "gaze_score": gaze_score,
-            "focus_score": focus_score,
-        })
-
-        # 获取眨眼频率
-        blink_rate = 0.0
-        if self._blink_detector:
-            blink_rate, _ = self._blink_detector.get_blink_rate(window_seconds=60.0)
+        stability, level = self._compute_window_level()
+        self._current_level = level
 
         return FocusResult(
-            focus_score=round(focus_score, 1),
-            eye_score=round(eye_score, 1),
-            head_score=round(head_score, 1),
-            gaze_score=round(gaze_score, 1),
-            blink_rate=round(blink_rate, 1),
-            is_attentive=focus_score >= 60.0,
+            focus_level=level,
+            eye_openness=round(openness, 2),
+            eye_stability=round(stability, 2),
+            blink_rate=self._get_blink_rate(),
+            is_attentive=(level == FocusLevel.FOCUSED),
+            focus_score=self._level_to_score(level),
         )
 
-    def _compute_eye_score(self, ear: float) -> float:
-        """计算眼部专注分数
+    def _compute_window_level(self) -> tuple[float, FocusLevel]:
+        if len(self._window_samples) < 3:
+            return 1.0, FocusLevel.NORMAL
 
-        EAR 在基线附近得高分，过低（眨眼/疲劳）或过高（异常）得低分。
-        """
-        if ear < 0.05:
-            # 闭眼状态
-            return 0.0
-
-        # v4.3 H-05 修复: baseline_ear<=0 时返回中性分, 避免除零
         if self.baseline_ear <= 0:
-            return 50.0
+            return 0.5, FocusLevel.NORMAL
 
-        # 计算与基线的偏差
-        deviation = abs(ear - self.baseline_ear) / self.baseline_ear
+        deviated = 0
+        for ear_val in self._window_samples:
+            deviation = abs(ear_val - self.baseline_ear) / self.baseline_ear
+            if deviation > 0.15:
+                deviated += 1
 
-        if deviation <= 0.1:
-            # 偏差 10% 以内，得满分
-            return 100.0
-        elif deviation <= 0.3:
-            # 偏差 10%-30%，线性衰减
-            return 100.0 - (deviation - 0.1) / 0.2 * 50.0
-        elif deviation <= 0.5:
-            # 偏差 30%-50%，继续衰减
-            return 50.0 - (deviation - 0.3) / 0.2 * 40.0
+        total = len(self._window_samples)
+        stability = 1.0 - (deviated / total)
+
+        if deviated <= FOCUSED_MAX_DEVIATION_SECS:
+            level = FocusLevel.FOCUSED
+        elif deviated >= DISTRACTED_MIN_DEVIATION_SECS:
+            level = FocusLevel.DISTRACTED
         else:
-            # 偏差超过 50%，得低分
-            return max(0.0, 10.0 - (deviation - 0.5) * 10.0)
+            level = FocusLevel.NORMAL
 
-    def _compute_head_score(self, yaw: float, pitch: float) -> float:
-        """计算头部姿态分数
+        return stability, level
 
-        头部姿态越稳定，分数越高。
-        """
-        # 使用基线标准差作为参考计算偏离度
-        yaw_deviation = abs(yaw) / max(self.baseline_yaw_std * 3, 1.0)
-        pitch_deviation = abs(pitch) / max(self.baseline_pitch_std * 3, 1.0)
+    def _handle_face_lost(self, current_time: float) -> FocusLevel:
+        if self._face_lost_start_time is None:
+            self._face_lost_start_time = current_time
+        lost = current_time - self._face_lost_start_time
+        if lost < 2.0:
+            return self._current_level
+        elif lost < 10.0:
+            return FocusLevel.NORMAL
+        else:
+            return FocusLevel.DISTRACTED
 
-        yaw_score = max(0.0, 100.0 - yaw_deviation * 50.0)
-        pitch_score = max(0.0, 100.0 - pitch_deviation * 50.0)
+    def _get_blink_rate(self) -> float:
+        if self._blink_detector:
+            rate, _ = self._blink_detector.get_blink_rate(window_seconds=60.0)
+            return round(rate, 1)
+        return 0.0
 
-        # 使用较小的分数（最差维度决定分数）
-        return min(yaw_score, pitch_score)
+    @staticmethod
+    def _level_to_score(level: FocusLevel) -> float:
+        return {FocusLevel.FOCUSED: 85.0, FocusLevel.NORMAL: 55.0, FocusLevel.DISTRACTED: 25.0}.get(level, 50.0)
 
     def get_window_summary(self) -> Optional[FocusRecord]:
-        """获取滑动窗口内的专注度汇总
-
-        Returns:
-            FocusRecord 对象，或 None（如果窗口为空）
-        """
-        if not self._recent_data:
+        if not self._window_samples:
             return None
-
-        focus_scores = [d["focus_score"] for d in self._recent_data]
-        eye_scores = [self._compute_eye_score(d["ear"]) for d in self._recent_data]
-        head_scores = [self._compute_head_score(d["yaw"], d["pitch"]) for d in self._recent_data]
-        gaze_scores = [d["gaze_score"] for d in self._recent_data]
-
-        # 计算窗口时间范围
-        window_duration = len(self._recent_data) / self.fps
-        window_start = 0.0  # 相对时间
-        window_end = window_duration
-
-        # 获取眨眼频率
-        blink_rate = 0.0
-        if self._blink_detector:
-            blink_rate, _ = self._blink_detector.get_blink_rate(window_seconds=window_duration)
-
+        samples = list(self._window_samples)
         return FocusRecord(
-            session_id="",  # 调用者填充
-            window_start=window_start,
-            window_end=window_end,
-            focus_score=float(np.mean(focus_scores)),
-            eye_score=float(np.mean(eye_scores)),
-            head_score=float(np.mean(head_scores)),
-            gaze_score=float(np.mean(gaze_scores)),
-            blink_rate=blink_rate,
-            avg_ear=float(np.mean([d["ear"] for d in self._recent_data])),
-            avg_yaw=float(np.mean([d["yaw"] for d in self._recent_data])),
-            avg_pitch=float(np.mean([d["pitch"] for d in self._recent_data])),
+            session_id="",
+            window_start=0.0,
+            window_end=float(len(samples)),
+            focus_score=self._level_to_score(self._current_level),
+            eye_score=50.0, head_score=50.0, gaze_score=50.0,
+            blink_rate=self._get_blink_rate(),
+            avg_ear=float(np.mean(samples)),
+            avg_yaw=0.0, avg_pitch=0.0,
         )
 
     def reset(self) -> None:
-        """重置分析器状态"""
-        self._recent_data.clear()
-        if self._kalman:
-            self._kalman.reset()
-        self._last_focus_score = 0.0
+        self._window_samples.clear()
+        self._last_sample_second = -1
         self._face_lost_start_time = None
-        self._last_valid_focus_score = 0.0
+        self._current_level = FocusLevel.NORMAL
 
     def get_stats(self) -> dict:
-        """获取分析统计信息"""
         return {
             "baseline_ear": self.baseline_ear,
-            "baseline_yaw_std": self.baseline_yaw_std,
-            "baseline_pitch_std": self.baseline_pitch_std,
             "window_size": self.window_size,
-            "window_frames": self._window_frames,
-            "current_focus_score": self._last_focus_score,
-            "kalman_enabled": self.enable_kalman,
+            "window_samples": len(self._window_samples),
+            "current_level": self._current_level.value if self._current_level else "none",
         }
 
 
@@ -397,9 +257,5 @@ def create_focus_analyzer(baseline_ear: float = 0.25) -> FocusAnalyzer:
     from config import get_yaml_value
     return FocusAnalyzer(
         baseline_ear=baseline_ear,
-        eye_weight=get_yaml_value("focus", "eye_weight", default=0.35),
-        head_weight=get_yaml_value("focus", "head_weight", default=0.30),
-        gaze_weight=get_yaml_value("focus", "gaze_weight", default=0.35),
-        window_size=get_yaml_value("focus", "window_size", default=5.0),
-        enable_kalman=get_yaml_value("focus", "enable_kalman", default=True),
+        window_size=get_yaml_value("focus", "window_size", default=30.0),
     )

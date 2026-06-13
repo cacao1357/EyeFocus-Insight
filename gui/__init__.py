@@ -8,8 +8,9 @@ from gui.overlay import (
     create_focus_overlay,
 )
 from gui.video_label import FrameBuffer, VideoLabel
-from gui.qt_overlay import MinimalOverlay, TopStatusBar, FocusCircle
+from gui.qt_overlay import FocusRing, StatusCard, GradientDivider
 from gui.qt_window import EyeFocusWindow
+from gui.calibration_dialog import CalibrationDialog, run_calibration_dialog
 
 __all__ = [
     "FocusOverlay",
@@ -21,8 +22,10 @@ __all__ = [
     # Qt 组件
     "FrameBuffer",
     "VideoLabel",
-    "MinimalOverlay",
-    "TopStatusBar",
-    "FocusCircle",
+    "FocusRing",
+    "StatusCard",
+    "GradientDivider",
     "EyeFocusWindow",
+    "CalibrationDialog",
+    "run_calibration_dialog",
 ]

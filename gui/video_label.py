@@ -49,7 +49,7 @@ class VideoLabel(QLabel):
         super().__init__(parent)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setAlignment(Qt.AlignCenter)
-        self.setStyleSheet("background-color: #1a1a1a;")
+        self.setStyleSheet("background-color: #000000;")
         self._frame_size: tuple = (640, 480)
 
     def display_frame(self, frame: np.ndarray) -> None:
@@ -73,7 +73,7 @@ class VideoLabel(QLabel):
         pixmap = QPixmap.fromImage(qimg)
         scaled = pixmap.scaled(
             self.size(),
-            Qt.KeepAspectRatio,
+            Qt.KeepAspectRatioByExpanding,  # v4.5.5: 填满区域消除黑边
             Qt.SmoothTransformation,
         )
         self.setPixmap(scaled)

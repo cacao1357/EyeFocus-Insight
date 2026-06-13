@@ -134,8 +134,20 @@ class FaceMeshDetector:
 
         mp_image = Image(image_format=ImageFormat.SRGB, data=frame_rgb)
 
-        with self._lock:
+        # v4.5.2: try-lock 防止主线程阻塞卡死
+        if not self._lock.acquire(blocking=False):
+            del mp_image  # v4.6.2: 显式释放引用
+            return FaceMeshResult(
+                landmarks=None,
+                face_detected=False,
+                confidence=0.0,
+            )
+
+        try:
             result = self._detector.detect_for_video(mp_image, timestamp_ms)
+        finally:
+            self._lock.release()
+            del mp_image  # v4.6.2: 显式释放引用 MediaPipe Image
 
         return self._process_result(result, frame.shape[1], frame.shape[0])
 
@@ -161,8 +173,20 @@ class FaceMeshDetector:
 
         mp_image = Image(image_format=ImageFormat.SRGB, data=frame_rgb)
 
-        with self._lock:
+        # v4.5.2: try-lock 防止阻塞
+        if not self._lock.acquire(blocking=False):
+            del mp_image  # v4.6.2: 显式释放引用
+            return FaceMeshResult(
+                landmarks=None,
+                face_detected=False,
+                confidence=0.0,
+            )
+
+        try:
             result = self._detector.detect(mp_image)
+        finally:
+            self._lock.release()
+            del mp_image  # v4.6.2: 显式释放引用
 
         return self._process_result(result, frame.shape[1], frame.shape[0])
 

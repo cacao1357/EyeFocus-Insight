@@ -394,6 +394,30 @@ class EyeAspectDetector:
             self._current_blink_ear_nadir = float('inf')
             self._eye_closed_start_time = None
 
+    def get_closure_type(self) -> str:
+        """返回当前眼睛闭合类型 (v4.6)
+
+        基于闭眼持续时长区分快眨眼与疲劳长闭眼。
+
+        Returns:
+            "open"      — 睁眼（无闭合进行中）
+            "blink"     — 正在快眨眼 (<0.4s, 正常生理)
+            "prolonged" — 正在长闭眼 (≥0.5s, 疲劳信号)
+        """
+        if self._current_blink_start_time is None:
+            return "open"
+
+        import time
+        duration = time.time() - self._current_blink_start_time
+
+        # v4.6.1: prolonged 阈值 0.5→0.8s（排除长眨眼）
+        if duration >= 0.8:
+            return "prolonged"
+        elif duration < 0.4:
+            return "blink"
+        else:
+            return "open"  # 0.4~0.8s 灰色地带，不触发疲劳
+
     def get_blink_rate(
         self,
         window_seconds: float = 60.0,

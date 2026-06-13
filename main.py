@@ -26,6 +26,11 @@ import os
 os.environ.setdefault("GLOG_logtostderr", "0")
 os.environ.setdefault("MEDIAPIPE_DISABLE_GPU", "1")
 os.environ.setdefault("ABSL_CPP_MIN_LOG_LEVEL", "3")
+# v4.4: PyQt5 平台插件路径 (pip 安装后 Qt 目录 vs Qt5 目录不一致)
+_qt_pp = os.path.abspath(os.path.join(os.path.dirname(__file__),
+    '.venv312/Lib/site-packages/PyQt5/Qt5/plugins'))
+if os.path.isdir(_qt_pp):
+    os.environ.setdefault('QT_QPA_PLATFORM_PLUGIN_PATH', _qt_pp)
 
 import signal
 import sys
@@ -87,7 +92,8 @@ class AppConfig:
     #   "v3_x" — 旧 analyzer/user_calibration.py 路径 (5 phase 但 HEAD 只 UP, 跳过 DOWN/LEFT/RIGHT)
     calibration_mode: str = "v4_2"
     # v4.4: PyQt5 UI 模式 (替换 OpenCV cv2.imshow 主循环)
-    use_qt: bool = False
+    # v4.5.2: 默认启用 Qt 模式
+    use_qt: bool = True
 
 
 class CameraManager:
@@ -960,6 +966,12 @@ class EyeFocusApp:
         # 连接退出信号
         self._qt_window.exit_requested.connect(self._on_qt_exit)
 
+        # 连接校准信号
+        self._qt_window.calibrate_requested.connect(self._on_qt_calibrate)
+
+        # 卡死防护：帧跳过守卫
+        self._qt_frame_busy = False
+
         # 设置定时器驱动帧处理 (30fps)
         from PyQt5.QtCore import QTimer
         self._qt_timer = QTimer()
@@ -986,24 +998,43 @@ class EyeFocusApp:
         if not self._camera_manager or not self._camera_manager.is_running:
             return
 
-        ret, frame = self._camera_manager.get_frame()
-        if ret and frame is not None:
-            # 处理帧 (检测+分析)
-            self._frame_processor.process_frame(frame)
+        # 卡死防护：上一帧还在处理中 → 跳过
+        if self._qt_frame_busy:
+            return
+        self._qt_frame_busy = True
 
-            # FPS
-            self._update_fps()
+        try:
+            ret, frame = self._camera_manager.get_frame()
+            if ret and frame is not None:
+                # 处理帧 (检测+分析)
+                self._frame_processor.process_frame(frame)
 
-            # 更新 Qt 窗口的数据
-            self._qt_window.update_data_from_processor(self._frame_processor, self._fps)
+                # FPS
+                self._update_fps()
 
-            # 将原始帧写入 FrameBuffer 供 Qt 显示
-            self._frame_buffer.write(frame)
+                # 更新 Qt 窗口的数据
+                self._qt_window.update_data_from_processor(self._frame_processor, self._fps)
+
+                # 将原始帧写入 FrameBuffer 供 Qt 显示
+                self._frame_buffer.write(frame)
+        finally:
+            self._qt_frame_busy = False
 
     def _on_qt_exit(self) -> None:
         """Qt 退出信号处理"""
         logger.info("用户请求退出 (Qt)")
         self._qt_app.quit()
+
+    def _on_qt_calibrate(self) -> None:
+        """Qt 窗口校准按钮处理"""
+        logger.info("校准按钮点击 (Qt 模式)")
+        # v4.2 校准模块使用 OpenCV 窗口，暂时走现有流程
+        # Phase C 将迁移校准 UI 到 Qt
+        self._qt_window.set_paused(True)
+        try:
+            self.start_calibration_flow()
+        finally:
+            self._qt_window.set_paused(False)
 
     def _handle_keyboard(self, key: int) -> None:
         """处理键盘输入

@@ -976,22 +976,15 @@ class TestEndToEndScenarios:
         analyzer = FatigueAnalyzer()
         analyzer.start()
 
-        # 正常状态
-        result = analyzer.analyze(
-            blink_rate=15.0,
-            ear_nadir=0.18,
-            head_stability=95.0,
-            avg_ear=0.32,
-        )
+        # v4.6: 正常状态（无长闭眼）→ RESTED
+        result = analyzer.analyze(closure_type="open", blink_rate=15.0)
+        assert result.fatigue_indicator.value == "rested"
 
-        assert result.fatigue_level == FatigueLevel.LOW
-
-        # 高疲劳状态
-        result = analyzer.analyze(
-            blink_rate=35.0,
-            ear_nadir=0.08,
-            head_stability=60.0,
-            avg_ear=0.25,
-        )
-
-        assert result.fatigue_level in [FatigueLevel.MEDIUM, FatigueLevel.HIGH]
+        # v4.6.1: 模拟 3 分钟内 9 次长闭眼 → TIRED
+        import time as _time
+        now = _time.time()
+        for i in range(9):
+            analyzer._prolonged_events.append(now - i * 15)
+        result = analyzer.analyze(closure_type="open", blink_rate=15.0)
+        assert result.fatigue_indicator.value == "tired", (
+            f"9次长闭眼应判定 TIRED, 实际: {result.fatigue_indicator}")

@@ -44,6 +44,7 @@ htmlcov/
 /test_*_flow.py
 # spike 脚本自动输出（results/ 下 .json 是机器生成，.txt/.png 是手写报告）
 spike/s2_result.json
+spike/s1_result.json
 spike/results/**/*.json
 spike/results/**/*.png
 # 数据/报告输出
