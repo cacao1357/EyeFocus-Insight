@@ -562,6 +562,29 @@ class HTMLReportGenerator:
 
         return f"<ul class='insights-list'>\n" + "\n".join(items) + "\n</ul>"
 
+    def _render_insight_items(self, insights: List[Insight]) -> str:
+        """仅渲染建议列表的 <li> 项（不带 <ul> 包装），用于注入已有章节。"""
+        if not insights:
+            return ""
+        _ALLOWED_SEVERITY = {"info", "warning", "alert"}
+        items = []
+        for insight in insights:
+            severity_class = (
+                insight.severity if insight.severity in _ALLOWED_SEVERITY else "info"
+            )
+            safe_title = html_escape(insight.title)
+            safe_description = html_escape(insight.description)
+            safe_suggestion = html_escape(insight.suggestion)
+            badge_html = f'<span class="severity-badge {severity_class}">{severity_class.upper()}</span>'
+            items.append(f"""
+                <li class="insight-item {severity_class}">
+                    <div class="title">{badge_html}{safe_title}</div>
+                    <div class="description">{safe_description}</div>
+                    <div class="suggestion">💡 {safe_suggestion}</div>
+                </li>""")
+
+        return "\n".join(items)
+
     def _render_charts(self, charts: dict) -> dict:
         """将图表数据转换为 HTML。
 
@@ -639,10 +662,8 @@ class HTMLReportGenerator:
         Returns:
             HTML 字符串
         """
-        base_html = self.generate_report(session_id)
-
         if not HAS_INSIGHTS:
-            return base_html
+            return self.generate_report(session_id)
 
         if insights_result is None:
             # 自动运行 pipeline
@@ -651,7 +672,25 @@ class HTMLReportGenerator:
                 insights_result = run_pipeline(self.db, session_id)
             except Exception as e:
                 logger.warning("Insights pipeline 自动运行失败: %s", e)
-                return base_html
+                return self.generate_report(session_id)
+
+        # 先生成基础报告（规则引擎建议）
+        base_html = self.generate_report(session_id)
+
+        # ── 注入 attribution findings 到个性化建议章节 ──
+        if insights_result.attribution_findings:
+            try:
+                from reporter.insights import attribution_findings_to_insights
+                attr_insights = attribution_findings_to_insights(
+                    insights_result.attribution_findings)
+                attr_html = self._render_insight_items(attr_insights)
+                # 在 </ul> 前注入 attribution 建议项
+                base_html = base_html.replace(
+                    '</ul>\n        </div>\n\n        <!-- 会话详情 -->',
+                    attr_html + '\n</ul>\n        </div>\n\n        <!-- 会话详情 -->',
+                    1)
+            except Exception as e:
+                logger.warning("注入 attribution 建议失败: %s", e)
 
         # 生成 insights 图表
         charts = self._generate_insights_charts(insights_result)

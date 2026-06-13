@@ -386,6 +386,153 @@ class InsightsEngine:
 
         return "\n".join(lines)
 
+    def analyze_with_attributions(
+        self,
+        focus_records: List[FocusRecord],
+        fatigue_records: List[FatigueRecord],
+        avg_focus: float,
+        avg_blink_rate: float,
+        session_duration: float,
+        attribution_findings: Optional[list] = None,
+    ) -> List[Insight]:
+        """分析数据并生成建议，attribution findings 为主输入，规则引擎兜底。
+
+        Args:
+            focus_records: 专注度记录
+            fatigue_records: 疲劳记录
+            avg_focus: 平均专注度
+            avg_blink_rate: 平均眨眼频率
+            session_duration: 会话时长（秒）
+            attribution_findings: 可选，insights pipeline 的关联分析结果
+
+        Returns:
+            Insight 列表
+        """
+        # 先用规则引擎生成基础建议
+        insights = self.analyze(
+            focus_records=focus_records,
+            fatigue_records=fatigue_records,
+            avg_focus=avg_focus,
+            avg_blink_rate=avg_blink_rate,
+            session_duration=session_duration,
+        )
+
+        # 如果有 attribution findings，转换成 Insight 并追加
+        if attribution_findings:
+            attr_insights = attribution_findings_to_insights(attribution_findings)
+            # 去重：避免跟规则引擎的重复
+            existing_titles = {i.title for i in insights}
+            for ai in attr_insights:
+                if ai.title not in existing_titles:
+                    insights.append(ai)
+                    existing_titles.add(ai.title)
+
+        return insights
+
+
+def attribution_findings_to_insights(attribution_findings: list) -> List[Insight]:
+    """将 insights pipeline 的关联分析发现转换为 Insight 对象。
+
+    Args:
+        attribution_findings: pipeline result 的 attribution_findings 列表
+
+    Returns:
+        Insight 列表
+    """
+    insights = []
+    for f in attribution_findings:
+        factor = f.get("factor", "未知因子")
+        direction = f.get("direction", "")
+        summary = f.get("summary", "")
+        effect_size = f.get("effect_size", 0)
+        p_value = f.get("p_value", 1.0)
+
+        # 根据 effect size 确定严重程度
+        abs_effect = abs(effect_size)
+        if abs_effect >= 0.8:
+            severity = "alert"
+        elif abs_effect >= 0.5:
+            severity = "warning"
+        else:
+            severity = "info"
+
+        # 生成建议文案
+        suggestion = _factor_to_suggestion(factor, direction, effect_size)
+
+        insights.append(Insight(
+            category="recommendation",
+            severity=severity,
+            title=f"关联发现：{factor}",
+            description=summary,
+            suggestion=suggestion,
+            data_evidence={
+                "factor": factor,
+                "effect_size": round(effect_size, 3),
+                "p_value": round(p_value, 4),
+                "direction": direction,
+            },
+        ))
+
+    return insights
+
+
+def _factor_to_suggestion(factor: str, direction: str, effect_size: float) -> str:
+    """根据因子和方向生成可执行建议。"""
+    suggestions = {
+        "时段": {
+            "正向": "你在特定时段表现更好，建议将重要工作安排在高效率时段",
+            "负向": "当前时段可能不是你的最佳工作时间，尝试调整日程",
+        },
+        "会话时长": {
+            "正向": "长时间工作仍保持专注，注意适当休息防止疲劳",
+            "负向": "专注度随工作时间下降，建议采用番茄工作法（25分钟工作+5分钟休息）",
+        },
+        "眨眼频率比": {
+            "正向": "眨眼频率正常，眼部状态良好",
+            "负向": "眨眼频率异常，可能存在视疲劳，建议使用人工泪液并定期远眺",
+        },
+        "视线偏离比": {
+            "正向": "视线集中度高，专注状态良好",
+            "负向": "频繁视线偏离可能影响工作效率，建议减少环境干扰",
+        },
+        "PERCLOS": {
+            "正向": "眼睑开合正常，无疲劳迹象",
+            "负向": "眼睑闭合时间偏长，可能已处于疲劳状态，建议立即休息",
+        },
+        "头部运动": {
+            "正向": "头部姿态稳定，坐姿良好",
+            "负向": "头部晃动频繁，建议调整坐姿或检查 ergonomics",
+        },
+        "平均专注度": {
+            "正向": "整体专注度水平良好",
+            "负向": "专注度偏低，建议减少多任务并行，尝试单任务专注",
+        },
+        "专注度波动": {
+            "正向": "专注度稳定，工作节奏良好",
+            "负向": "专注度波动大，可能受频繁打断影响，建议使用免打扰时段",
+        },
+        "重度疲劳比": {
+            "正向": "疲劳管理良好",
+            "负向": "重度疲劳时间占比较高，建议增加休息频率",
+        },
+        "暗光比": {
+            "正向": "工作环境光照良好",
+            "负向": "暗光环境下工作增加眼疲劳风险，建议增加环境照明",
+        },
+    }
+
+    key = "正向" if effect_size > 0 else "负向"
+    factor_group = None
+    for fname, advice in suggestions.items():
+        if fname in factor:
+            factor_group = advice
+            break
+
+    if factor_group:
+        return factor_group.get(key, f"因子 {factor} 与专注度存在{direction}关联（效应量={effect_size:.2f}）")
+
+    return f"检测到 {factor} 与专注度存在{direction}关联（效应量={effect_size:.2f}），建议关注该因素对工作效率的影响"
+
 
 def create_insights_engine() -> InsightsEngine:
     """工厂函数：创建建议引擎"""
