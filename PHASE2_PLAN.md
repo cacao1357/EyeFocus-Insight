@@ -1,10 +1,12 @@
 # Phase 2 开发计划
 
-> **版本**：v1.3 | **制定日期**：2026-06-02 | **修订日期**：2026-06-06
-> **阶段目标**：calibration 模块重设计 + 报告系统 + 分心识别 + Insights 离线数据分析
+> **版本**：v1.4 | **制定日期**：2026-06-02 | **修订日期**：2026-06-13
+> **阶段目标**：calibration 模块重设计 + 报告系统 + 分心识别 + Insights 离线数据分析 + Qt 校准 v4.7 重设计
 > **负责人**：D1（主开发）、D2（辅助开发）、T1（测试验收）
 > **预计工期**：Day 14-22（约 9 天，含 calibration 重设计 4 天 + 报告/分心/insights 5 天）
 > **上游门禁**：Phase 1.6 Spike（S11-S15）全部 PASS
+>
+> **v1.4 修订 (2026-06-13)**：Phase 2 全部任务完成。新增：v4.7 Qt 校准重设计、Insights 子系统实施（7 模块 + 报告集成 + 22 单测）、main.py 集成（自动报告生成）、T207 建议引擎 attribution 升级、T208-T211 分心识别模块（20 单测 + 热力图集成）、T230 集成测试（8 测试）、T231 文档同步。测试基线 580 → 408（去重）。等待 T219 Phase 2 验收。
 >
 > **v1.2 → v1.3 修订 (2026-06-06)**：v4.4 GUI 清晰化 + 拖窗口 REC 维护记录入档（§2.8.3）；测试基线 284 → 580；删除 §三 重复标题
 >
@@ -37,19 +39,21 @@
 ### 1.1 核心交付物
 
 | 模块 | 交付内容 | 状态 |
-|------|---------|------|
-| `reporter/charts.py` | Matplotlib 图表生成（折线/柱状/热力/饼图/雷达/条形） | ⏳ 待实现 |
-| `reporter/report_html.py` | HTML 报告组装（含 v4.1 新增 4 章节） | ⏳ 待实现 |
-| `reporter/insights.py` | 个性化建议引擎（v4.1 由 attribution 驱动） | ⏳ 待实现 |
-| `analyzer/distraction.py` | 分心模式识别 + 时间轴热力图 | ⏳ 待实现 |
-| `analyzer/insights/features.py` | 【v4.1】SessionFeatures + 矩阵化 | ⏳ 待实现 |
-| `analyzer/insights/patterns.py` | 【v4.1】聚类 — KMeans + silhouette | ⏳ 待实现 |
-| `analyzer/insights/changepoint.py` | 【v4.1】变点检测 — ruptures PELT | ⏳ 待实现 |
-| `analyzer/insights/anomaly.py` | 【v4.1】异常检测 — IsolationForest + 归因 | ⏳ 待实现 |
-| `analyzer/insights/temporal.py` | 【v4.1】时序分解 — STL + histogram 降级 | ⏳ 待实现 |
-| `analyzer/insights/attribution.py` | 【v4.1】关联分析 — t-test + ANOVA + Cohen's d | ⏳ 待实现 |
-| `analyzer/insights/pipeline.py` | 【v4.1】Pipeline 编排（try/except 隔离） | ⏳ 待实现 |
-| `storage/db.py` 扩展 | 【v4.1】insights 表 + PRAGMA 迁移 | ⏳ 待实现 |
+|------|---------|:----:|
+| `reporter/charts.py` | Matplotlib 图表生成（折线/柱状/热力/饼图/雷达/条形/分心热力条） | ✅ 已完成 |
+| `reporter/report_html.py` | HTML 报告组装（含 v4.1 新增 4 章节 + v4.6 insights + 分心分析） | ✅ 已完成 |
+| `reporter/insights.py` | 个性化建议引擎（v4.1 attribution 驱动 + 规则引擎兜底） | ✅ 已完成 |
+| `analyzer/distraction.py` | 分心模式识别 + 时间轴热力图（20 单测） | ✅ 已完成 |
+| `analyzer/insights/features.py` | 【v4.1】SessionFeatures + 矩阵化 | ✅ 已完成 |
+| `analyzer/insights/patterns.py` | 【v4.1】聚类 — KMeans + silhouette | ✅ 已完成 |
+| `analyzer/insights/changepoint.py` | 【v4.1】变点检测 — ruptures PELT | ✅ 已完成 |
+| `analyzer/insights/anomaly.py` | 【v4.1】异常检测 — IsolationForest + 归因 | ✅ 已完成 |
+| `analyzer/insights/temporal.py` | 【v4.1】时序分解 — STL + histogram 降级 | ✅ 已完成 |
+| `analyzer/insights/attribution.py` | 【v4.1】关联分析 — t-test + ANOVA + Cohen's d | ✅ 已完成 |
+| `analyzer/insights/pipeline.py` | 【v4.1】Pipeline 编排（try/except 隔离） | ✅ 已完成 |
+| `storage/db.py` 扩展 | 【v4.1】insights 表 + PRAGMA 迁移 | ✅ 已完成 |
+| `gui/calibration_dialog.py` | 【v4.7】Qt 校准重设计（70/30 白底面板 + 手动步进） | ✅ 已完成 |
+| `main.py` 集成 | 会话结束自动生成含 insights 的 HTML 报告 | ✅ 已完成 |
 
 ### 1.2 验收标准
 

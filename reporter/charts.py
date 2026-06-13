@@ -477,6 +477,67 @@ class ChartGenerator:
         plt.tight_layout()
         return self._fig_to_bytes(fig)
 
+    def generate_distraction_heatmap(
+        self,
+        heatmap: list,
+        labels: list,
+        pattern_type: str = "",
+        title: str = "分心时间轴",
+    ) -> bytes:
+        """生成分心热力条（每分钟分心比例 → 彩色横条）。
+
+        Args:
+            heatmap: 每分钟分心比例 [0-1]
+            labels: 时间标签 ["+0min", "+1min", ...]
+            pattern_type: 模式分类描述
+            title: 图表标题
+
+        Returns:
+            PNG 字节数据
+        """
+        if not heatmap:
+            return self._create_empty_chart("无分心数据")
+
+        fig, ax = plt.subplots(figsize=(self.figsize[0], 1.5), dpi=self.dpi)
+
+        n = len(heatmap)
+        x = range(n)
+        colors = []
+        for v in heatmap:
+            if v < 0.2:
+                colors.append("#4CAF50")
+            elif v < 0.5:
+                colors.append("#FFC107")
+            else:
+                colors.append("#F44336")
+
+        ax.bar(x, [1] * n, width=1.0, color=colors, edgecolor="none", align="edge")
+        ax.set_xlim(0, n)
+        ax.set_ylim(0, 1)
+        ax.set_yticks([])
+        ax.set_xlabel("时间 (分钟)")
+        ax.set_title(title)
+
+        tick_step = max(1, n // 10)
+        ax.set_xticks(range(0, n, tick_step))
+        ax.set_xticklabels([labels[i] for i in range(0, n, tick_step)],
+                           rotation=45, ha="right", fontsize=8)
+
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor="#4CAF50", label="集中"),
+            Patch(facecolor="#FFC107", label="轻度分心"),
+            Patch(facecolor="#F44336", label="重度分心"),
+        ]
+        ax.legend(handles=legend_elements, loc="upper right", fontsize=7, ncol=3)
+
+        if pattern_type:
+            ax.text(0.5, -0.6, pattern_type, transform=ax.transAxes,
+                    ha="center", fontsize=9, color="#666", va="top")
+
+        plt.tight_layout()
+        return self._fig_to_bytes(fig)
+
     def _create_empty_chart(self, message: str) -> bytes:
         """创建空白占位图表"""
         fig, ax = plt.subplots(figsize=(self.figsize[0], 2), dpi=self.dpi)

@@ -695,8 +695,30 @@ class HTMLReportGenerator:
         # 生成 insights 图表
         charts = self._generate_insights_charts(insights_result)
 
-        # 渲染 insights HTML 章节
-        insights_html = self._render_insights_sections(insights_result, charts)
+        # ── 分心热力图 ──
+        distraction_result = None
+        distraction_chart_b64 = None
+        try:
+            from analyzer.distraction import analyze_distraction, DistractionResult
+            distraction_result = analyze_distraction(self.db, session_id)
+            if distraction_result.detected:
+                from reporter.charts import create_chart_generator
+                cg = create_chart_generator()
+                raw = cg.generate_distraction_heatmap(
+                    distraction_result.heatmap,
+                    distraction_result.heatmap_labels,
+                    pattern_type=distraction_result.pattern_description or "",
+                )
+                distraction_chart_b64 = self._bytes_to_base64(raw)
+        except Exception as e:
+            logger.warning("分心热力图生成失败: %s", e)
+
+        # 渲染 insights HTML 章节（含分心分析）
+        insights_html = self._render_insights_sections(
+            insights_result, charts,
+            distraction_result=distraction_result,
+            distraction_chart_b64=distraction_chart_b64,
+        )
 
         # 插入到 base_html 的 </div><!-- 个性化建议 --> 之后
         insert_marker = "<!-- 个性化建议 -->"
@@ -756,8 +778,14 @@ class HTMLReportGenerator:
 
         return charts
 
-    def _render_insights_sections(self, insights: "_InsightsResult", charts: dict) -> str:
-        """渲染 4 个 insights HTML 章节。"""
+    def _render_insights_sections(
+        self,
+        insights: "_InsightsResult",
+        charts: dict,
+        distraction_result=None,
+        distraction_chart_b64: str = "",
+    ) -> str:
+        """渲染 4+1 个 insights HTML 章节。"""
         sections = []
 
         def _chart_html(name: str, title: str, desc: str = "") -> str:
@@ -844,6 +872,23 @@ class HTMLReportGenerator:
             <ul style="list-style:none;padding:0;">
                 {findings_html}
             </ul>
+        </div>""")
+
+        # 章节 5: 分心分析（可选）
+        if distraction_result and distraction_result.detected:
+            pattern_info = distraction_result.pattern_description or "无显著模式"
+            sections.append(f"""
+        <div class="card">
+            <h2>👀 分心分析</h2>
+            <p style="color:#666;margin-bottom:10px;">
+                检测到 <span style="color:#dc3545;font-weight:bold;">{distraction_result.total_events}</span>
+                次分心事件（总分心 {distraction_result.total_distraction_seconds:.0f} 秒），
+                短分心 {distraction_result.short_events} 次、
+                中分心 {distraction_result.medium_events} 次、
+                长分心 {distraction_result.long_events} 次。
+            </p>
+            <p style="color:#666;font-size:13px;margin-bottom:10px;">📌 {pattern_info}</p>
+            {f'<div class="chart-container"><img src="data:image/png;base64,{distraction_chart_b64}" alt="分心时间轴"></div>' if distraction_chart_b64 else '<div class="no-data">无数据</div>'}
         </div>""")
 
         return "\n".join(sections)
