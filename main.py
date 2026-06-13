@@ -864,8 +864,8 @@ class EyeFocusApp:
         # 注册信号处理器
         self._register_signal_handlers()
 
-        # 自动开始校准（如果启用）- 使用新的 UserCalibrationManager 流程
-        if self.config.enable_calibration:
+        # 自动开始校准（Qt 模式下由 _start_qt_monitoring 处理）
+        if self.config.enable_calibration and not self.config.use_qt:
             self.start_calibration_flow()
 
         # 启动主循环 (Qt 或 OpenCV)
@@ -945,7 +945,7 @@ class EyeFocusApp:
                 logger.info("校准状态变化: %s -> %s", old_state, new_state)
 
     def _start_qt_monitoring(self) -> None:
-        """v4.4: 使用 PyQt5 窗口进行监测 (替代 OpenCV _main_loop)"""
+        """v4.7: 使用 PyQt5 窗口 + Qt 校准对话框"""
         import sys
         from PyQt5.QtWidgets import QApplication
         from gui.qt_window import EyeFocusWindow, FrameBuffer
@@ -958,15 +958,29 @@ class EyeFocusApp:
             logger.error("Qt 模式: 摄像头启动失败")
             return
 
-        # 创建 Qt 应用和窗口
-        # ⚠️ QApplication 只能创建一次, 但 _start_qt_monitoring 也只会被调用一次
+        # ⚠️ QApplication 只能创建一次
         self._qt_app = QApplication(sys.argv)
+
+        # ── Qt 校准对话框（替换 v4.2 OpenCV 校准）──
+        if self.config.enable_calibration:
+            self._camera_manager.release()
+            from gui.calibration_dialog import run_calibration_dialog
+            calib_result = run_calibration_dialog(
+                fd=self._face_detector, ed=self._eye_detector)
+            if calib_result:
+                self._apply_qt_calibration_result(calib_result)
+            # 重新启动摄像头
+            if not self._camera_manager.start():
+                logger.error("校准后摄像头重启失败")
+                return
+
+        # 创建主窗口
         self._qt_window = EyeFocusWindow(self._frame_buffer)
 
         # 连接退出信号
         self._qt_window.exit_requested.connect(self._on_qt_exit)
 
-        # 连接校准信号
+        # 连接校准信号（复用 Qt 对话框）
         self._qt_window.calibrate_requested.connect(self._on_qt_calibrate)
 
         # 卡死防护：帧跳过守卫
@@ -992,6 +1006,48 @@ class EyeFocusApp:
         self._qt_timer.stop()
         self._camera_manager.release()
         self._cleanup()
+
+    def _apply_qt_calibration_result(self, calib_result: dict) -> None:
+        """应用 Qt 校准对话框的结果到各 detector。"""
+        baseline_ear = calib_result.get("baseline_ear", 0.25)
+        head_yaw = calib_result.get("head_yaw_range", 0.0)
+        head_pitch = calib_result.get("head_pitch_range", 0.0)
+
+        if self._eye_detector is not None:
+            self._eye_detector.set_baseline(baseline_ear)
+            logger.info("Qt 校准 EAR 基线已应用: %.4f", baseline_ear)
+
+        if self._focus_analyzer is not None:
+            self._focus_analyzer.set_baseline(
+                ear=baseline_ear,
+                yaw_std=head_yaw / 2.0 if head_yaw > 0 else None,
+                pitch_std=head_pitch / 2.0 if head_pitch > 0 else None,
+            )
+            logger.info("Qt 校准专注度基线已应用: EAR=%.4f, yaw=%.1f, pitch=%.1f",
+                        baseline_ear, head_yaw, head_pitch)
+
+        if self._db and self._session_id:
+            self._db.update_session(
+                self._session_id,
+                baseline_ear=baseline_ear,
+                is_calibrated=True,
+            )
+
+    def _on_qt_calibrate(self) -> None:
+        """Qt 窗口校准按钮处理（使用 Qt 校准对话框）"""
+        logger.info("校准按钮点击 (Qt 模式)")
+        self._qt_window.set_paused(True)
+        try:
+            self._camera_manager.release()
+            from gui.calibration_dialog import run_calibration_dialog
+            calib_result = run_calibration_dialog(
+                fd=self._face_detector, ed=self._eye_detector)
+            if calib_result:
+                self._apply_qt_calibration_result(calib_result)
+            if not self._camera_manager.start():
+                logger.error("校准后摄像头重启失败")
+        finally:
+            self._qt_window.set_paused(False)
 
     def _qt_process_frame(self) -> None:
         """Qt 定时器回调: 处理一帧"""

@@ -102,11 +102,11 @@ class CalibrationDialog(QDialog):
         self.result_data: dict = {}
 
         # ── 字体 ──
-        self._font_title = QFont("Segoe UI", 26, QFont.Bold)
-        self._font_guide = QFont("Segoe UI", 26)
-        self._font_stat = QFont("Segoe UI", 17)
-        self._font_countdown = QFont("Segoe UI", 48, QFont.Bold)
-        self._font_dots = QFont("Segoe UI", 18)
+        self._font_title = QFont("Segoe UI", 18, QFont.Bold)
+        self._font_guide = QFont("Segoe UI", 16)
+        self._font_stat = QFont("Segoe UI", 13)
+        self._font_countdown = QFont("Segoe UI", 36, QFont.Bold)
+        self._font_dots = QFont("Segoe UI", 14)
 
         # ── 布局：视频 70% + 信息面板 30% ──
         root = QVBoxLayout(self)

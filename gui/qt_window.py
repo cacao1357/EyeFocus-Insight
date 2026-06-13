@@ -150,7 +150,7 @@ class EyeFocusWindow(QMainWindow):
         # ── 窗口设置 ──
         self.setWindowTitle("EyeFocus Insight")
         # v4.5.5: 固定窗口大小，不支持缩放（只可最小化/关闭）
-        self.setFixedSize(640, 780)
+        self.setFixedSize(720, 800)
         self.setStyleSheet("background-color: #000000;")
 
         central = QWidget()
