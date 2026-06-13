@@ -86,15 +86,15 @@ class InsightsPipeline:
             self._attribution_module = _at
 
     def run(self, session_id: str) -> InsightsResult:
-        """运行完整 pipeline（当前 session 参与分析）。
+        """运行完整 pipeline（分析所有历史 sessions，包含当前 session）。
 
         Args:
-            session_id: 当前结束的 session_id（也参与特征提取）
+            session_id: 当前结束的 session_id（参与特征提取，报告会聚焦该 session）
 
         Returns:
             InsightsResult
         """
-        return self._run(session_ids=[session_id])
+        return self._run(session_ids=None)
 
     def run_all(self) -> InsightsResult:
         """运行完整 pipeline（分析所有历史 session）。"""
@@ -206,6 +206,7 @@ class InsightsPipeline:
                 ar = self._anomaly_module.detect_anomalies(X, feature_names, all_sids)
                 if ar.detected:
                     result.anomaly_result = {
+                        "n_sessions": ar.n_sessions,
                         "anomaly_count": ar.anomaly_count,
                         "anomaly_sessions": ar.anomaly_sessions[:5],  # top 5
                         "anomaly_scores": ar.anomaly_scores[:5],

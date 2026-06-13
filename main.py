@@ -1397,8 +1397,42 @@ class EyeFocusApp:
 
         logger.info("已安全退出")
 
+    def _finalize_session(self) -> None:
+        """结束当前会话并生成含 insights 的 HTML 报告。
+
+        必须在 DB 关闭前调用。
+        """
+        if not self._db or not getattr(self, '_session_id', None):
+            return
+
+        try:
+            # 1. 更新会话结束时间
+            self._db.update_session(
+                self._session_id,
+                end_time=datetime.now(),
+                is_active=False,
+            )
+
+            # 2. 生成含 insights 的 HTML 报告
+            from reporter.report_html import create_html_generator
+            import os
+
+            generator = create_html_generator(self._db)
+            html = generator.generate_report_with_insights(self._session_id)
+
+            os.makedirs("reports", exist_ok=True)
+            report_path = f"reports/{self._session_id}.html"
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(html)
+
+            logger.info("会话报告已生成: %s", report_path)
+        except Exception as e:
+            logger.warning("生成会话报告失败: %s", e)
+
     def _cleanup(self) -> None:
         """清理资源
+
+        顺序: 结束会话+生成报告 → 关闭检测器 → 关闭数据库.
 
         M-23: db.close() 也用 try/except + logger.exception 包裹 (与 face_detector.close() 一致).
         所有 close 异常累加到 _cleanup_errors 计数.
@@ -1406,6 +1440,9 @@ class EyeFocusApp:
         # 初始化错误计数 (供 M-23 累加)
         if not hasattr(self, '_cleanup_errors'):
             self._cleanup_errors = 0
+
+        # 结束会话并生成报告（必须在 DB 关闭前）
+        self._finalize_session()
 
         # 恢复信号处理器
         if self._original_sigint:

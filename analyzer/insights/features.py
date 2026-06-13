@@ -61,7 +61,7 @@ FEATURE_NAMES = [
 
 
 def _fetch_all_sessions(db: DatabaseManager) -> list:
-    """从 DB 读取所有已结束的活跃 session 元数据。
+    """从 DB 读取所有已结束 session 元数据。
 
     Returns:
         list of sqlite3.Row: session_id, start_time, end_time,
@@ -72,7 +72,7 @@ def _fetch_all_sessions(db: DatabaseManager) -> list:
             SELECT session_id, start_time, end_time,
                    baseline_blink_rate, baseline_ear, cqs_score
             FROM sessions
-            WHERE is_active = 1 AND end_time IS NOT NULL
+            WHERE end_time IS NOT NULL
             ORDER BY start_time
         """)
         return cur.fetchall()
@@ -111,7 +111,7 @@ def _fetch_frame_summary(db: DatabaseManager, session_id: str) -> dict:
         """, (session_id,))
         dark_row = dict(cur.fetchone())
         total = row.get("total_frames", 0) or 1
-        row["light_dark_ratio"] = dark_row.get("dark_frames", 0) / total
+        row["light_dark_ratio"] = (dark_row["dark_frames"] or 0) / total
         return row
 
 
@@ -127,7 +127,7 @@ def _fetch_fatigue_summary(db: DatabaseManager, session_id: str) -> dict:
         """, (session_id,))
         row = dict(cur.fetchone())
         total = row.get("total", 0) or 1
-        row["fatigue_severe_ratio"] = row.get("severe_count", 0) / total
+        row["fatigue_severe_ratio"] = (row["severe_count"] or 0) / total
         return row
 
 
