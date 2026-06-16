@@ -174,6 +174,14 @@ class EyeFocusWindow(QMainWindow):
         self._video_label = VideoLabel()
         self._video_label.setStyleSheet("background-color: #000000;")
         video_layout.addWidget(self._video_label)
+        # v4.17: 暂停覆盖层（居中半透明文字）
+        self._pause_overlay = QLabel("⏸ 已暂停", self._video_container)
+        self._pause_overlay.setAlignment(Qt.AlignCenter)
+        self._pause_overlay.setStyleSheet(
+            "color: white; background: rgba(0,0,0,140);"
+            "font-size: 36px; font-weight: bold; border-radius: 12px;"
+        )
+        self._pause_overlay.setVisible(False)
         main_layout.addWidget(self._video_container, 6)
 
         # ── 下半：白色数据面板 (stretch 4) ──
@@ -354,11 +362,63 @@ class EyeFocusWindow(QMainWindow):
         if self._tray_icon:
             self._tray_icon.show_fatigue_notification(message)
 
+    # ── v4.17: 暂停覆盖层 ──
+
+    def _position_pause_overlay(self):
+        """将暂停覆盖层居中定位到摄像头区域"""
+        if hasattr(self, '_pause_overlay') and hasattr(self, '_video_container'):
+            vw = self._video_container.width()
+            vh = self._video_container.height()
+            ow, oh = 200, 80
+            self._pause_overlay.setGeometry(
+                (vw - ow) // 2, (vh - oh) // 2, ow, oh
+            )
+
+    def resizeEvent(self, event):
+        """窗口大小变化时重定位覆盖层"""
+        super().resizeEvent(event)
+        if hasattr(self, '_pause_overlay') and self._pause_overlay.isVisible():
+            self._position_pause_overlay()
+
+    # ── v4.17: 键盘快捷键 ──
+
+    def keyPressEvent(self, event):
+        """全局快捷键: Space=暂停, R=校准, Esc=隐藏窗口, Q=退出"""
+        from PyQt5.QtCore import Qt
+        key = event.key()
+        if key == Qt.Key_Space:
+            self._on_pause_clicked()
+        elif key == Qt.Key_R and self._show_calibrate:
+            self.calibrate_requested.emit()
+        elif key == Qt.Key_Escape:
+            self.hide()
+            self._toggle_visibility_action_text("显示窗口")
+        elif key == Qt.Key_Q and (event.modifiers() & Qt.ControlModifier):
+            self._force_exit = True
+            self.close()
+        else:
+            super().keyPressEvent(event)
+
+    def _toggle_visibility_action_text(self, text: str):
+        """更新托盘的显示/隐藏菜单文字"""
+        if self._tray_icon:
+            try:
+                acts = self._tray_icon.contextMenu().actions()
+                for a in acts:
+                    if a.text() in ("显示窗口", "隐藏窗口"):
+                        a.setText(text)
+                        break
+            except Exception:
+                pass
+
     # ── 公共 API ──
 
     def start(self) -> None:
         self._fps_last_time = time.time()
         self._timer.start()
+        # v4.17: 首次显示时定位覆盖层
+        if hasattr(self, '_pause_overlay'):
+            self._position_pause_overlay()
 
     def stop(self) -> None:
         self._timer.stop()
@@ -366,6 +426,11 @@ class EyeFocusWindow(QMainWindow):
     def set_paused(self, paused: bool) -> None:
         self._paused = paused
         self._pause_btn.setText("继续" if paused else "暂停")
+        # v4.17: 暂停覆盖层
+        if hasattr(self, '_pause_overlay'):
+            self._pause_overlay.setVisible(paused)
+            if paused:
+                self._position_pause_overlay()
         # 按钮颜色随暂停状态切换
         if paused:
             self._pause_btn._color = "#34C759"
