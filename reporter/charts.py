@@ -272,13 +272,77 @@ class ChartGenerator:
         return self._to_html(fig, height=220)
 
     # ════════════════════════════════════════════
-    # 6. Insights 图表
+    # 6. Insights 图表 (v4.17: 修复空壳)
     # ════════════════════════════════════════════
     def generate_pattern_pie_chart(self, pattern_labels, cluster_sizes, title="工作模式分布"):
-        return self._empty_html("请使用离线分析引擎查看")
+        """工作模式聚类饼图（Plotly 实现）"""
+        if not cluster_sizes or not pattern_labels:
+            return self._empty_html("无聚类数据")
+
+        # 从 labels 提取显示名称（格式如 "高效专注(5次)"）
+        labels = list(pattern_labels.values())
+        values = list(cluster_sizes)
+
+        if not labels or not values:
+            return self._empty_html("无聚类数据")
+
+        # 颜色映射
+        colors = [C_IRIS, C_SAGE, C_AMBER, C_ROSE, C_QUIET][:len(labels)]
+
+        fig = go.Figure()
+        fig.add_trace(go.Pie(
+            labels=labels,
+            values=values,
+            marker=dict(colors=colors),
+            textinfo="label+percent",
+            textposition="outside",
+            textfont=dict(size=10, color=C_INK),
+            hovertemplate="%{label}<br>%{value} 次会话 (%{percent})<extra></extra>",
+            showlegend=False,
+            hole=0.35,
+        ))
+
+        fig.update_layout(**_LAYOUT_BASE)
+        fig.update_layout(
+            title=dict(text=title, font_size=12, x=0),
+            height=280,
+            margin=dict(l=10, r=10, t=30, b=10),
+        )
+        return self._to_html(fig, height=280)
 
     def generate_anomaly_bar_chart(self, top_factors, title="异常主要特征"):
-        return self._empty_html("请使用离线分析引擎查看")
+        """异常因子水平条形图（Plotly 实现）"""
+        if not top_factors:
+            return self._empty_html("无异常特征")
+
+        # 水平柱状图：每个因子占一列，效果量递减
+        n = len(top_factors)
+        # 模拟效果量（从高到低），因为没有原始分数
+        effects = [1.0 - i * 0.2 for i in range(n)]
+        colors = [C_ROSE, C_AMBER, C_SAGE][:n]
+
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=effects[::-1],
+            y=top_factors[::-1],
+            orientation='h',
+            marker_color=colors[::-1],
+            text=[f"{e*100:.0f}%" for e in effects[::-1]],
+            textposition="outside",
+            textfont=dict(size=10, color=C_QUIET),
+            hovertemplate="%{y}<extra></extra>",
+            showlegend=False,
+        ))
+
+        fig.update_layout(**_LAYOUT_BASE)
+        fig.update_layout(
+            title=dict(text=title, font_size=12, x=0),
+            height=max(120, len(top_factors) * 35 + 40),
+            margin=dict(l=10, r=40, t=30, b=10),
+            xaxis=dict(**_LAYOUT_BASE["xaxis"], showticklabels=False, range=[0, 1.3]),
+            yaxis=dict(**_LAYOUT_BASE["yaxis"], title=None),
+        )
+        return self._to_html(fig, height=max(120, len(top_factors) * 35 + 40))
 
     def generate_temporal_line_chart(self, hourly_pattern, peak_hours, low_hours,
                                       title="日内专注度模式"):
