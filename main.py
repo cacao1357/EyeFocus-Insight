@@ -2144,7 +2144,8 @@ def _check_single_instance() -> bool:
                         alive = True
                 except Exception:
                     pass
-                if alive and (_time.time() - old_ts) < 30:
+                # v4.21: PID 存活即拒绝，时间戳仅用于 stale 锁清理
+                if alive:
                     return False
         # 写新锁
         with open(lock_file, 'w') as f:

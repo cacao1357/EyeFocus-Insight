@@ -336,6 +336,7 @@ class EyeFocusWindow(QMainWindow):
         if pomo is None:
             return
 
+        menu = QMenu(self)
         state = pomo.state
 
         if state == "IDLE":
