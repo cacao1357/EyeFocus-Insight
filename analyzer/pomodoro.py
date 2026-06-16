@@ -81,12 +81,20 @@ class PomodoroEngine:
                 self._voice(f"{label}继续")
 
     def set_duration(self, work_minutes: int, break_minutes: int) -> None:
-        """自定义工作/休息时长"""
+        """自定义工作/休息时长（运行时立即生效）"""
         self._work_minutes = max(1, min(120, work_minutes))
         self._break_minutes = max(1, min(60, break_minutes))
         logger.info("🍅 番茄时间已设置: 工作%d分, 休息%d分",
                      self._work_minutes, self._break_minutes)
-        if self._state == "IDLE":
+        if self._state == "WORKING":
+            self._duration = self._work_minutes * 60.0
+            if self._elapsed >= self._duration:
+                self._elapsed = self._duration - 1  # 防立即结束
+        elif self._state == "BREAK":
+            self._duration = self._break_minutes * 60.0
+            if self._elapsed >= self._duration:
+                self._elapsed = self._duration - 1
+        else:
             self._duration = self._work_minutes * 60.0
 
     def stop(self) -> None:

@@ -35,6 +35,7 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -212,11 +213,17 @@ class EyeFocusWindow(QMainWindow):
         self._duration_label.setStyleSheet("color: #23201E; background: transparent; border: none;")
         info_col.addWidget(self._duration_label)
 
-        # 1b. 番茄倒计时
-        self._pomodoro_label = QLabel("🍅 --")
-        self._pomodoro_label.setFont(_get_segoe_font(18))
-        self._pomodoro_label.setStyleSheet("color: #5A8A6D; background: transparent; border: none;")
-        info_col.addWidget(self._pomodoro_label)
+        # 1b. 番茄倒计时（可点击弹出菜单）
+        self._pomodoro_btn = QPushButton("🍅 --")
+        self._pomodoro_btn.setFont(_get_segoe_font(18))
+        self._pomodoro_btn.setCursor(Qt.PointingHandCursor)
+        self._pomodoro_btn.setFlat(True)
+        self._pomodoro_btn.setStyleSheet(
+            "QPushButton{color:#5A8A6D;background:transparent;border:none;text-align:left;}"
+            "QPushButton:hover{color:#4A7A5D;}"
+        )
+        self._pomodoro_btn.clicked.connect(self._show_pomodoro_menu)
+        info_col.addWidget(self._pomodoro_btn)
 
         # 1c. 识别状态
         self._status_label = QLabel("🟢 正常")
@@ -319,14 +326,82 @@ class EyeFocusWindow(QMainWindow):
 
     # ── v4.18: 番茄状态 ──
 
+    def _show_pomodoro_menu(self):
+        """显示番茄操作菜单"""
+        app = None
+        if hasattr(self, '_tray_icon') and self._tray_icon is not None:
+            app = self._tray_icon._app
+        if app is None:
+            return
+        pomo = getattr(app, '_pomodoro', None)
+        if pomo is None:
+            return
+
+        state = pomo.state
+
+        if state == "IDLE":
+            menu.addAction("▶ 开始番茄").triggered.connect(
+                lambda: self._pomodoro_action(app, "start"))
+        else:
+            if getattr(pomo, '_paused', False):
+                menu.addAction("▶ 继续").triggered.connect(
+                    lambda: self._pomodoro_action(app, "resume"))
+            else:
+                menu.addAction("⏸ 暂停").triggered.connect(
+                    lambda: self._pomodoro_action(app, "pause"))
+            menu.addAction("⏹ 停止").triggered.connect(
+                lambda: self._pomodoro_action(app, "stop"))
+
+        menu.addSeparator()
+        menu.addAction("⚙ 设置时间...").triggered.connect(
+            lambda: self._pomodoro_action(app, "settings"))
+
+        menu.exec_(self._pomodoro_btn.mapToGlobal(
+            self._pomodoro_btn.rect().bottomLeft()))
+
+    def _pomodoro_action(self, app, action: str):
+        """执行番茄操作"""
+        try:
+            pomo = getattr(app, '_pomodoro', None)
+            if pomo is None:
+                return
+            if action == "start":
+                pomo.start()
+            elif action == "pause":
+                pomo.pause()
+            elif action == "resume":
+                pomo.resume()
+            elif action == "stop":
+                pomo.stop()
+            elif action == "settings":
+                from PyQt5.QtWidgets import QInputDialog
+                work, ok = QInputDialog.getInt(
+                    None, "设置番茄", "工作分钟数 (1-120):", value=pomo._work_minutes, min=1, max=120)
+                if not ok:
+                    return
+                rest, ok = QInputDialog.getInt(
+                    None, "设置番茄", "休息分钟数 (1-60):", value=pomo._break_minutes, min=1, max=60)
+                if not ok:
+                    return
+                pomo.set_duration(work, rest)
+            # 同步托盘状态
+            if hasattr(self, '_tray_icon') and self._tray_icon is not None:
+                st = pomo.state
+                if getattr(pomo, '_paused', False):
+                    st = "PAUSED"
+                self._tray_icon.set_pomodoro_state(st, pomo.count)
+        except Exception as e:
+            logger.warning("番茄操作失败: %s", e)
+
     def update_pomodoro(self, status: dict) -> None:
         """更新番茄状态显示"""
-        if hasattr(self, '_pomodoro_label'):
+        if hasattr(self, '_pomodoro_btn'):
             s = status["state"]
             if s == "IDLE":
-                self._pomodoro_label.setText("🍅 --")
-                self._pomodoro_label.setStyleSheet(
-                    "color: #8B8680; background: transparent; border: none;")
+                self._pomodoro_btn.setText("🍅 --")
+                self._pomodoro_btn.setStyleSheet(
+                    "QPushButton{color:#8B8680;background:transparent;border:none;text-align:left;}"
+                    "QPushButton:hover{color:#6B6650;}")
             else:
                 remaining = status["remaining_sec"]
                 tm, ts = divmod(status["total_sec"], 60)
@@ -341,9 +416,10 @@ class EyeFocusWindow(QMainWindow):
                 else:
                     color = "#C9843A"
                     prefix = "☕"
-                self._pomodoro_label.setText(f"{prefix} {time_str}")
-                self._pomodoro_label.setStyleSheet(
-                    f"color: {color}; background: transparent; border: none;")
+                self._pomodoro_btn.setText(f"{prefix} {time_str}")
+                self._pomodoro_btn.setStyleSheet(
+                    f"QPushButton{{color:{color};background:transparent;border:none;text-align:left;}}"
+                    f"QPushButton:hover{{color:{color}cc;}}")
 
     # ── v4.17: 专注度波线 ──
 
