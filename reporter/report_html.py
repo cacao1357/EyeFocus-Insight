@@ -855,10 +855,54 @@ class HTMLReportGenerator:
             {insights_charts}
         """
 
+    def _calc_session_avg_focus(self, session_id: str):
+        """获取会话平均专注度"""
+        try:
+            records = self.db.get_focus_records(session_id) if self.db else []
+            if records:
+                scores = [r.focus_score for r in records if r.focus_score is not None]
+                if scores:
+                    return round(sum(scores) / len(scores), 0)
+        except Exception:
+            pass
+        return None
+
     def _render_about_tab(self, session_id: str = "") -> str:
-        """渲染关于 Tab"""
+        """渲染关于 Tab (v4.18: +最近会话)"""
         safe_sid = html_escape(session_id)
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # v4.18: 最近会话列表
+        recent_html = ""
+        try:
+            if self.db:
+                sessions = self.db.list_sessions()[:8]
+                if sessions:
+                    rows = ""
+                    for s in sessions:
+                        dur = s.duration_seconds()
+                        dur_str = f"{int(dur//60)}分钟" if dur else "--"
+                        d = s.start_time.strftime("%m-%d %H:%M")
+                        sid_short = s.session_id[:8]
+                        avg = self._calc_session_avg_focus(s.session_id)
+                        icon = "🟢" if (avg and avg >= 70) else "🟡" if (avg and avg >= 40) else "⚪"
+                        cal = "✓" if s.is_calibrated else ""
+                        rows += f"<tr><td>{icon}</td><td>{d}</td><td>{dur_str}</td><td>{avg or '--'}</td><td style='color:#ccc;font-size:10px;'>{sid_short}{cal}</td></tr>"
+                    recent_html = f"""
+            <div class="card">
+                <h2>📋 最近会话</h2>
+                <table class="detail-table">
+                    <tr><th style="text-align:left;color:var(--quiet);font-weight:500;font-size:11px;"></th>
+                        <th style="text-align:left;color:var(--quiet);font-weight:500;font-size:11px;">时间</th>
+                        <th style="text-align:left;color:var(--quiet);font-weight:500;font-size:11px;">时长</th>
+                        <th style="text-align:left;color:var(--quiet);font-weight:500;font-size:11px;">专注度</th>
+                        <th style="text-align:left;color:var(--quiet);font-weight:500;font-size:11px;">ID</th></tr>
+                    {rows}
+                </table>
+            </div>"""
+        except Exception:
+            pass
+
         return f"""
             <div class="card">
                 <h2>EyeFocus Insight</h2>
@@ -891,6 +935,8 @@ class HTMLReportGenerator:
                     </div>
                 </div>
             </div>
+
+            {recent_html}
 
             <div class="card">
                 <h2>技术栈</h2>

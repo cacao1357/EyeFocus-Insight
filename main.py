@@ -1404,7 +1404,7 @@ class EyeFocusApp:
                         if hasattr(self, '_qt_window') and self._qt_window is not None:
                             self._qt_window.update_pomodoro(self._pomodoro.get_status())
                             if hasattr(self._qt_window, '_tray_icon') and self._qt_window._tray_icon is not None:
-                                self._qt_window._tray_icon.set_pomodoro_state(self._pomodoro.state)
+                                self._qt_window._tray_icon.set_pomodoro_state(self._pomodoro.state, self._pomodoro.count)
 
                 # 游戏化（每 60s）
                 gamify_update = getattr(self, '_gamify_update_time', 0)

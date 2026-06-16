@@ -143,16 +143,32 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             label = f"{focus_score:.0f} (分心)"
 
         self.setIcon(self._create_icon(color))
-        self.setToolTip(f"EyeFocus Insight\n专注度: {label}")
+        # v4.18: tooltip 加入番茄状态
+        pomo_info = ""
+        try:
+            if hasattr(self._app, '_pomodoro') and self._app._pomodoro is not None:
+                s = self._app._pomodoro.state
+                c = self._app._pomodoro.count
+                if s == "WORKING":
+                    pomo_info = f"\n🍅 番茄工作中 ×{c}"
+                elif s == "BREAK":
+                    pomo_info = "\n☕ 休息中"
+        except Exception:
+            pass
+        self.setToolTip(f"EyeFocus Insight\n专注度: {label}{pomo_info}")
         self._status_action.setText(f"专注度: {label}")
 
     def set_paused_state(self, paused: bool):
         """同步暂停状态到菜单项"""
         self._pause_action.setText("继续监测" if paused else "暂停监测")
 
-    def set_pomodoro_state(self, state: str):
+    def set_pomodoro_state(self, state: str, count: int = 0):
         """同步番茄状态到菜单项"""
-        labels = {"IDLE": "开始番茄", "WORKING": "番茄工作中...", "BREAK": "休息中..."}
+        labels = {
+            "IDLE": "开始番茄",
+            "WORKING": f"🍅 ×{count} 工作中..." if count else "番茄工作中...",
+            "BREAK": "☕ 休息中...",
+        }
         self._pomodoro_action.setText(labels.get(state, "开始番茄"))
 
     def set_voice_enabled(self, enabled: bool):
@@ -247,9 +263,15 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
                 start = sess.start_time.strftime("%m-%d %H:%M")
                 dur = sess.duration_seconds()
                 dur_str = f"{int(dur//60)}分钟" if dur else "--"
-                # 获取会话平均专注度
                 avg = self._get_session_avg(sess.session_id)
-                label = f"{start}  {dur_str}  {avg}分"
+                # 质量图标
+                try:
+                    avg_f = float(avg)
+                    icon = "🟢" if avg_f >= 70 else "🟡" if avg_f >= 40 else "🔴"
+                except (ValueError, TypeError):
+                    icon = "⚪"
+                cal_badge = "✓" if sess.is_calibrated else ""
+                label = f"{icon} {start}  {dur_str}  {avg}分 {cal_badge}"
                 action = self._recent_menu.addAction(label)
                 sid = sess.session_id
                 action.triggered.connect(lambda checked, s=sid: self._open_report(s))
