@@ -1099,13 +1099,18 @@ class EyeFocusApp:
         if self.config.enable_calibration:
             self._camera_manager.release()
             import time as _wt; _wt.sleep(2.0)  # 等待驱动完全释放
-            from gui.calibration_dialog import run_calibration_dialog
-            calib_result = run_calibration_dialog(
-                fd=self._face_detector, ed=self._eye_detector)
-            if calib_result:
-                self._apply_qt_calibration_result(calib_result)
-            else:
-                logger.info("校准被取消或失败，使用默认参数")
+            try:
+                from gui.calibration_dialog import run_calibration_dialog
+                calib_result = run_calibration_dialog(
+                    fd=self._face_detector, ed=self._eye_detector)
+                if calib_result:
+                    self._apply_qt_calibration_result(calib_result)
+                else:
+                    logger.info("校准被取消或失败，使用默认参数")
+            except Exception as e:
+                logger.warning("校准对话框异常: %s，使用默认参数", e)
+                import traceback
+                traceback.print_exc()
             # 重新启动摄像头
             if not self._camera_manager.start():
                 logger.error("校准后摄像头重启失败")
@@ -1336,52 +1341,54 @@ class EyeFocusApp:
                             self._qt_window.show_fatigue_notification(
                                 f"累积疲劳分数 {cumulative:.0f}，建议休息10-15分钟")
 
-            # v4.17: 语音反馈 + 智能提醒
-            fr = self._frame_processor.latest_focus_result
-            fa = self._frame_processor.latest_fatigue_result
-            focus_score = fr.focus_score if fr else 50.0
-            focus_level = fr.focus_level.value if (fr and fr.focus_level) else None
-            fatigue_level = None
-            session_min = 0.0
-            if fa is not None:
-                fl = fa.fatigue_level
-                fatigue_level = fl.value.upper() if hasattr(fl, 'value') else str(fl)
-            if hasattr(self, '_session_start_time') and self._session_start_time:
-                session_min = (time.time() - self._session_start_time) / 60.0
+            # v4.17: 语音反馈 + 智能提醒 + 波线 + 游戏化
+            try:
+                fr = self._frame_processor.latest_focus_result
+                fa = self._frame_processor.latest_fatigue_result
+                focus_score = fr.focus_score if fr else 50.0
+                focus_level = fr.focus_level.value if (fr and fr.focus_level) else None
+                fatigue_level = None
+                session_min = 0.0
+                if fa is not None:
+                    fl = fa.fatigue_level
+                    fatigue_level = fl.value.upper() if hasattr(fl, 'value') else str(fl)
+                if hasattr(self, '_session_start_time') and self._session_start_time:
+                    session_min = (time.time() - self._session_start_time) / 60.0
 
-            if hasattr(self, '_voice_asst') and self._voice_asst is not None:
-                self._voice_asst.on_tick(
-                    focus_score=focus_score,
-                    fatigue_level=fatigue_level,
-                    session_minutes=session_min,
-                    face_detected=self._frame_processor.latest_face_detected,
-                )
+                # 语音
+                if hasattr(self, '_voice_asst') and self._voice_asst is not None:
+                    self._voice_asst.on_tick(
+                        focus_score=focus_score, fatigue_level=fatigue_level,
+                        session_minutes=session_min,
+                        face_detected=self._frame_processor.latest_face_detected,
+                    )
 
-            if hasattr(self, '_reminder_engine') and self._reminder_engine is not None:
-                self._reminder_engine.check(
-                    focus_score=focus_score,
-                    focus_level=focus_level,
-                    fatigue_level=fatigue_level,
-                    session_minutes=session_min,
-                    face_detected=self._frame_processor.latest_face_detected,
-                )
+                # 提醒
+                if hasattr(self, '_reminder_engine') and self._reminder_engine is not None:
+                    self._reminder_engine.check(
+                        focus_score=focus_score, focus_level=focus_level,
+                        fatigue_level=fatigue_level, session_minutes=session_min,
+                        face_detected=self._frame_processor.latest_face_detected,
+                    )
 
-            # v4.17: 专注度波线更新（每秒一次）
-            spark_time = getattr(self, '_spark_update_time', 0)
-            if time.time() - spark_time >= 1.0:
-                self._spark_update_time = time.time()
-                if hasattr(self, '_qt_window') and self._qt_window is not None:
-                    self._qt_window.update_sparkline(focus_score)
+                # 波线（每秒一次）
+                spark_time = getattr(self, '_spark_update_time', 0)
+                if time.time() - spark_time >= 1.0:
+                    self._spark_update_time = time.time()
+                    if hasattr(self, '_qt_window') and self._qt_window is not None:
+                        self._qt_window.update_sparkline(focus_score)
 
-            # v4.17: 游戏化状态更新（每 60s 一次，避免频繁 DB 查询）
-            gamify_update = getattr(self, '_gamify_update_time', 0)
-            if time.time() - gamify_update >= 60:
-                self._gamify_update_time = time.time()
-                if (hasattr(self, '_gamification') and self._gamification is not None
-                        and hasattr(self, '_qt_window') and self._qt_window is not None):
-                    streak = self._gamification.get_streak_days()
-                    today_min = self._gamification.get_today_minutes()
-                    self._qt_window.update_gamification(streak, today_min)
+                # 游戏化（每 60s）
+                gamify_update = getattr(self, '_gamify_update_time', 0)
+                if time.time() - gamify_update >= 60:
+                    self._gamify_update_time = time.time()
+                    if (hasattr(self, '_gamification') and self._gamification is not None
+                            and hasattr(self, '_qt_window') and self._qt_window is not None):
+                        streak = self._gamification.get_streak_days()
+                        today_min = self._gamification.get_today_minutes()
+                        self._qt_window.update_gamification(streak, today_min)
+            except Exception:
+                pass
         finally:
             self._qt_frame_busy = False
 

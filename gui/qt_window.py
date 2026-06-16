@@ -389,8 +389,11 @@ class EyeFocusWindow(QMainWindow):
     def resizeEvent(self, event):
         """窗口大小变化时重定位覆盖层"""
         super().resizeEvent(event)
-        if hasattr(self, '_pause_overlay') and self._pause_overlay.isVisible():
-            self._position_pause_overlay()
+        try:
+            if hasattr(self, '_pause_overlay') and self._pause_overlay.isVisible():
+                self._position_pause_overlay()
+        except Exception:
+            pass  # 布局未就绪时忽略
 
     # ── v4.17: 键盘快捷键 ──
 
