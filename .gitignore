@@ -1,64 +1,70 @@
+# ── Python ──
 .venv/
 .venv*/
 __pycache__/
 *.pyc
 *.pyo
-data/*.db
-data/*.db-shm
-data/*.db-wal
-reports/*.html
-reports/*.png
 *.egg-info/
 dist/
 build/
 *.spec
-.vscode/
-.idea/
-# 本地配置文件（仅本地知道，不同步给其他成员）
-CLAUDE.md
-MEMORY.md
-.claude/
-*.local.yaml
-*.local.json
-.DS_Store
-Thumbs.db
-Session.vim
-*.swp
-*.swo
-*~
-# MediaPipe 模型（首次运行自动下载）
-*.task
-# 临时测试输出
-tmp_*/
-*.bak
-# 临时数据
-*.tmp
-*.log
-# 覆盖率报告
-.coverage
-htmlcov/
-.coverage.*
-# 根目录一次性脚本/调试脚本
-/debug_*.py
-/test_*_temp.py
-/test_*_flow.py
-# spike 脚本自动输出（results/ 下 .json 是机器生成，.txt/.png 是手写报告）
-spike/s2_result.json
-spike/s1_result.json
-spike/results/**/*.json
-spike/results/**/*.png
-# 数据/报告输出
-/data/
-/reports/
-
-# brainstorm visual companion session dirs (do not track)
-.superpowers/
-
-# Python 工具链缓存（pytest / mypy / ruff / coverage XML）
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 coverage.xml
 
-# 跨平台行尾符锁定
+# ── IDE / 编辑器 ──
+.vscode/
+.idea/
+Session.vim
+*.swp
+*.swo
+*~
+
+# ── 本地配置（不入仓）──
+CLAUDE.md
+MEMORY.md
+.claude/
+*.local.yaml
+*.local.json
+
+# ── OS 产物 ──
+.DS_Store
+Thumbs.db
+
+# ── MediaPipe 模型（首次运行自动下载）──
+*.task
+
+# ── 可执行文件（启动器 exe 独立维护）──
+*.exe
+
+# ── 测试产物 ──
+tmp_*/
+*.bak
+*.log
+*.tmp
+/test_*_temp.py
+/test_*_flow.py
+
+# ── 覆盖率 ──
+.coverage
+htmlcov/
+.coverage.*
+
+# ── 数据/归档（运行时生成，不入仓）──
+/data/
+/reports/
+docs/archive/
+*.csv
+
+# ── spike 自动输出 ──
+spike/s2_result.json
+spike/s1_result.json
+spike/results/**/*.json
+spike/results/**/*.png
+
+# ── brainstorm ──
+.superpowers/
+
+# ── 跨平台行尾符锁定 ──
 .gitattributes tracked in repo
