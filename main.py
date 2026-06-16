@@ -78,6 +78,13 @@ from storage.models import (
 
 logger = logging.getLogger("eyefocus.main")
 
+# v4.17: 全局异常捕获（防止未处理异常静默崩溃）
+def _global_excepthook(exc_type, exc_value, exc_traceback):
+    logger.critical("未捕获异常: %s: %s", exc_type.__name__, exc_value)
+    import traceback
+    traceback.print_exception(exc_type, exc_value, exc_traceback)
+sys.excepthook = _global_excepthook
+
 
 @dataclass
 class AppConfig:
@@ -1154,10 +1161,11 @@ class EyeFocusApp:
         # 显示窗口并启动事件循环
         self._qt_window.show()
         self._qt_window.start()
-        self._qt_app.exec_()
+        logger.debug("Qt 事件循环启动 (timer_active=%s)", self._qt_timer.isActive())
+        exit_code = self._qt_app.exec_()
 
         # 事件循环结束后清理
-        logger.info("Qt 事件循环结束")
+        logger.info("Qt 事件循环结束 exit_code=%s", exit_code)
         self._running = False
         self._qt_timer.stop()
         self._camera_manager.release()
@@ -1252,6 +1260,11 @@ class EyeFocusApp:
 
     def _qt_process_frame(self) -> None:
         """Qt 定时器回调: 处理一帧"""
+        # v4.17: 调试日志 — 首次帧
+        if not getattr(self, '_qt_frame_first_logged', False):
+            self._qt_frame_first_logged = True
+            logger.debug("_qt_process_frame 首次调用")
+
         if not self._camera_manager or not self._camera_manager.is_running:
             return
 
