@@ -568,13 +568,21 @@ def compute_distraction_causes(focus_result: FocusResult) -> dict:
         {"眨眼异常": float%, "头部偏移": float%, "视线偏离": float%}
         总分高时返回 None（不分心则无原因）
     """
-    if focus_result is None or focus_result.focus_score >= 70:
+    if focus_result is None:
+        return {}
+    # v4.18: None 安全
+    fs = focus_result.focus_score or 0.0
+    if fs >= 70:
         return {}
 
+    eye_s = focus_result.eye_score or 50.0
+    head_s = focus_result.head_score or 50.0
+    gaze_s = focus_result.gaze_score or 50.0
+
     # 期望值：正常专注时眼≈90, 头≈100, 视线≈100
-    eye_drop = max(0.0, 90.0 - focus_result.eye_score)
-    head_drop = max(0.0, 100.0 - focus_result.head_score)
-    gaze_drop = max(0.0, 100.0 - focus_result.gaze_score)
+    eye_drop = max(0.0, 90.0 - eye_s)
+    head_drop = max(0.0, 100.0 - head_s)
+    gaze_drop = max(0.0, 100.0 - gaze_s)
 
     total = eye_drop + head_drop + gaze_drop
     if total < 1.0:

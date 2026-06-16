@@ -41,7 +41,7 @@ class PomodoroEngine:
         self._duration: float = self.WORK_MINUTES * 60.0
         self._count: int = 0        # 今日番茄数
         self._session_count: int = 0  # 连续番茄数
-        self._last_tick: float = 0.0
+        self._last_tick: Optional[float] = None
         self._started: bool = False
 
     def start(self) -> None:
@@ -72,10 +72,12 @@ class PomodoroEngine:
     def tick(self) -> None:
         """每秒调用一次，更新时间并检查状态切换"""
         now = time.time()
-        if self._last_tick == 0:
+        # 首次调用或时钟回跳保护
+        if self._last_tick is None:
             self._last_tick = now
             return
         dt = now - self._last_tick
+        dt = max(0.0, min(dt, 60.0))  # 防护：最多按 60s 计算（防时钟回跳/大跳跃）
         self._last_tick = now
 
         if self._state == "IDLE":

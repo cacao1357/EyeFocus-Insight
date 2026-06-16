@@ -104,10 +104,16 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
 
         menu.addSeparator()
 
-        # v4.17: 语音反馈开关
+        # v4.17: 语音反馈开关（默认值从 config.yaml 读取）
+        voice_enabled = True
+        try:
+            from config import get_yaml_value
+            voice_enabled = get_yaml_value("voice", "enabled", default=True)
+        except Exception:
+            pass
         self._voice_action = menu.addAction("启用语音反馈")
         self._voice_action.setCheckable(True)
-        self._voice_action.setChecked(True)
+        self._voice_action.setChecked(voice_enabled)
         self._voice_action.triggered.connect(self._toggle_voice)
 
         # 免打扰模式

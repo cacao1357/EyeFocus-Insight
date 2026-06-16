@@ -31,6 +31,7 @@ class VoiceAssistant:
 
     def __init__(self, enabled: bool = True, tts_rate: int = 160):
         self._enabled = enabled
+        self._tts_rate = tts_rate  # v4.18: 保存以重用
         self._tts = None
         self._last_announce: float = 0.0
         self._last_alert: float = 0.0
@@ -47,7 +48,7 @@ class VoiceAssistant:
                 logger.warning("语音助手初始化失败，将静默运行: %s", e)
                 self._tts = None
 
-    def on_tick(self, focus_score: float, fatigue_level: Optional[str] = None,
+    def on_tick(self, focus_score: float = 50.0, fatigue_level: Optional[str] = None,
                 session_minutes: float = 0.0, face_detected: bool = True) -> None:
         """每帧调用，内部按条件门控发音
 
@@ -57,14 +58,22 @@ class VoiceAssistant:
             session_minutes: 会话已进行分钟数
             face_detected: 是否检测到人脸
         """
+        # v4.18: 安全处理 None/invalid
+        if focus_score is None:
+            focus_score = 50.0
+        if session_minutes is None:
+            session_minutes = 0.0
+
         if not self._enabled or self._tts is None:
             self._prev_score = focus_score
             return
 
-        if not face_detected:
-            return
-
         now = time.time()
+
+        # 人脸丢失时不触发预警，但继续更新 prev_score 避免恢复后误报
+        if not face_detected:
+            self._prev_score = focus_score
+            return
 
         # 1. 专注度骤降预警（一次下降 > 20 分）
         if self._prev_score is not None:
@@ -83,11 +92,12 @@ class VoiceAssistant:
                 self._last_alert = now
                 self._say("检测到疲劳，建议休息十分钟")
 
-        # 3. 专注里程碑（仅首次到达时）
-        for ms in (30, 60, 90, 120):
+        # 3. 专注里程碑（仅首次到达时，一次只播一个防连击）
+        for ms in sorted((30, 60, 90, 120)):
             if session_minutes >= ms and ms not in self._milestone_announced:
                 self._milestone_announced.add(ms)
                 self._say(f"您已专注{ms}分钟，继续保持")
+                break  # 一次只播一个
 
         # 4. 定期播报（每 120s）
         if now - self._last_announce >= 120:
@@ -115,7 +125,7 @@ class VoiceAssistant:
         if enabled and self._tts is None:
             try:
                 from calibration.audio.tts import TTS
-                self._tts = TTS(rate=160)
+                self._tts = TTS(rate=self._tts_rate)
             except Exception:
                 self._tts = None
         self._enabled = enabled

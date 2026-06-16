@@ -42,8 +42,11 @@ class GamificationEngine:
 
     def __init__(self, db):
         self._db = db
-        self._today = datetime.now().strftime("%Y-%m-%d")
         self._logged_achievements: set = set()  # 防重复通知
+
+    def _today_str(self) -> str:
+        """获取当前日期字符串（v4.18: 每次调用实时计算，防跨午夜）"""
+        return datetime.now().strftime("%Y-%m-%d")
 
     def on_session_end(self, session: Session, avg_focus: float) -> List[Achievement]:
         """会话结束时更新统计并检查成就
@@ -60,9 +63,14 @@ class GamificationEngine:
 
         duration_min = session.duration_seconds() / 60.0 if session.duration_seconds() else 0.0
 
-        # 更新当日统计
-        today = self._today
-        existing = self._db.get_daily_stats(today)
+        # v4.18: 实时计算日期，防跨午夜错误归日
+        today = self._today_str()
+        try:
+            existing = self._db.get_daily_stats(today)
+        except Exception as e:
+            logger.warning("获取每日统计失败: %s", e)
+            existing = None
+
         if existing:
             stats = DailyStats(
                 date=today,
@@ -81,7 +89,12 @@ class GamificationEngine:
                 best_focus_score=avg_focus,
                 longest_session_minutes=duration_min,
             )
-        self._db.save_daily_stats(stats)
+
+        try:
+            self._db.save_daily_stats(stats)
+        except Exception as e:
+            logger.warning("保存每日统计失败: %s", e)
+            return []
 
         # 检查成就解锁（去重：仅首次通知）
         new_achievements = self._check_achievements(session, avg_focus, duration_min)
@@ -98,7 +111,10 @@ class GamificationEngine:
         从今天往前数，连续有记录的"天"的数量。
         今天的记录也会被计入。
         """
-        all_stats = self._db.get_all_daily_stats()
+        try:
+            all_stats = self._db.get_all_daily_stats()
+        except Exception:
+            return 0
         if not all_stats:
             return 0
 
@@ -115,26 +131,31 @@ class GamificationEngine:
             if stat_date == check_date:
                 streak += 1
                 check_date -= timedelta(days=1)
-            elif stat_date == check_date:
-                # 中间跳了一天
+            elif stat_date < check_date:
+                # 日期不连续或跳过，终止
                 break
-            else:
-                # 日期不连续
-                break
+            # stat_date > check_date 表示未来数据，也终止
 
         return streak
 
     def get_today_minutes(self) -> float:
         """获取今日累计专注分钟数"""
-        stats = self._db.get_daily_stats(self._today)
-        return stats.total_focus_minutes if stats else 0.0
+        try:
+            stats = self._db.get_daily_stats(self._today_str())
+            return stats.total_focus_minutes if stats else 0.0
+        except Exception:
+            return 0.0
 
     def get_achievements(self) -> List[Achievement]:
         """获取所有成就及其解锁状态
 
-        成就解锁记录存储在成就 ID 列表的占位机制中。
+        根据 _logged_achievements 标记已解锁状态。
         """
-        return ALL_ACHIEVEMENTS
+        return [
+            Achievement(a.id, a.name, a.description, a.icon,
+                        unlocked=(a.id in self._logged_achievements))
+            for a in ALL_ACHIEVEMENTS
+        ]
 
     def _check_achievements(self, session: Session, avg_focus: float,
                             duration_min: float) -> List[Achievement]:
