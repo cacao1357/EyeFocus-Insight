@@ -44,10 +44,8 @@ from PyQt5.QtWidgets import (
 from gui.qt_overlay import (
     FocusRing,
     GradientDivider,
-    StatusCard,
     DistractionLabel,
     FocusSparkline,
-    FATIGUE_EMOJI,
     _get_segoe_font,
 )
 from gui.video_label import FrameBuffer, VideoLabel
@@ -173,7 +171,7 @@ class EyeFocusWindow(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # ── 上半：摄像头画面 (stretch 7) ──
+        # ── 上半：摄像头画面 (stretch 5) ──
         self._video_container = QWidget()
         self._video_container.setStyleSheet("background-color: #000000;")
         video_layout = QVBoxLayout(self._video_container)
@@ -181,7 +179,6 @@ class EyeFocusWindow(QMainWindow):
         self._video_label = VideoLabel()
         self._video_label.setStyleSheet("background-color: #000000;")
         video_layout.addWidget(self._video_label)
-        # v4.17: 暂停覆盖层（居中半透明文字）
         self._pause_overlay = QLabel("⏸ 已暂停", self._video_container)
         self._pause_overlay.setAlignment(Qt.AlignCenter)
         self._pause_overlay.setStyleSheet(
@@ -189,116 +186,111 @@ class EyeFocusWindow(QMainWindow):
             "font-size: 36px; font-weight: bold; border-radius: 12px;"
         )
         self._pause_overlay.setVisible(False)
-        main_layout.addWidget(self._video_container, 7)
+        main_layout.addWidget(self._video_container, 5)
 
-        # ── 下半：白色数据面板 (stretch 3) ──
+        # ── 下半：白色数据面板 (stretch 5) ──
         self._data_panel = DataPanel()
         panel_layout = QVBoxLayout(self._data_panel)
-        panel_layout.setContentsMargins(0, 6, 0, 2)
-        panel_layout.setSpacing(0)
-        panel_layout.setAlignment(Qt.AlignCenter)
+        panel_layout.setContentsMargins(12, 10, 12, 6)
+        panel_layout.setSpacing(4)
 
-        # v4.19 新布局：左列[专注时长+番茄] | 圆环 | 右列[识别状态]
-        content = QHBoxLayout()
-        content.setSpacing(16)
-        content.setAlignment(Qt.AlignCenter)
+        # ── 第1行：专注度圆环(左) + 信息区(右) ──
+        info_row = QHBoxLayout()
+        info_row.setSpacing(16)
 
-        # v4.20 新布局：圆环在左 | 三卡片在右
-        # 左：专注度圆环
         self._focus_ring = FocusRing()
-        self._focus_ring.setMinimumSize(160, 160)
-        content.addWidget(self._focus_ring)
+        self._focus_ring.setMinimumSize(130, 130)
+        info_row.addWidget(self._focus_ring)
 
-        # 右：三卡片垂直排列 + 番茄按钮
-        right_col = QVBoxLayout()
-        right_col.setSpacing(4)
-        right_col.setAlignment(Qt.AlignCenter)
+        # 右侧信息列
+        info_col = QVBoxLayout()
+        info_col.setSpacing(6)
 
-        self._duration_card = StatusCard(
-            emoji="⏱", main_text="--", label_text="", size=80)
-        right_col.addWidget(self._duration_card)
+        # 1a. 专注时长
+        self._duration_label = QLabel("--")
+        self._duration_label.setFont(_get_segoe_font(22, QFont.Bold))
+        self._duration_label.setStyleSheet("color: #23201E; background: transparent; border: none;")
+        info_col.addWidget(self._duration_label)
 
-        self._pomodoro_card = StatusCard(
-            emoji="🍅", main_text="--", label_text="", size=80)
-        right_col.addWidget(self._pomodoro_card)
+        # 1b. 番茄倒计时
+        self._pomodoro_label = QLabel("🍅 --")
+        self._pomodoro_label.setFont(_get_segoe_font(18))
+        self._pomodoro_label.setStyleSheet("color: #5A8A6D; background: transparent; border: none;")
+        info_col.addWidget(self._pomodoro_label)
 
-        self._status_card = StatusCard(
-            emoji="🟢", main_text="正常", label_text="", size=80)
-        right_col.addWidget(self._status_card)
+        # 1c. 识别状态
+        self._status_label = QLabel("🟢 正常")
+        self._status_label.setFont(_get_segoe_font(16))
+        self._status_label.setStyleSheet("color: #5A8A6D; background: transparent; border: none;")
+        info_col.addWidget(self._status_label)
 
-        content.addLayout(right_col)
+        info_row.addLayout(info_col)
+        panel_layout.addLayout(info_row)
 
-        panel_layout.addLayout(content)
-
-        # ── v4.17: 专注度波线 ──
+        # ── 专注度波线 ──
         self._sparkline = FocusSparkline()
         panel_layout.addWidget(self._sparkline)
 
-        # ── 光照警告标签（默认隐藏） ──
+        # ── 游戏化 + 警告标签区 ──
+        # 光照警告
         self._light_warning = QLabel("⚠ 光照不足 · 检测精度可能下降")
         self._light_warning.setAlignment(Qt.AlignCenter)
         self._light_warning.setStyleSheet(
             "color: #FF9500; background: #FFF3E0; border: 1px solid #FF9500;"
-            "border-radius: 4px; padding: 4px 0; font-size: 12px;"
-            "font-weight: 600; margin: 0 16px;"
+            "border-radius: 6px; padding: 4px 0; font-size: 12px;"
+            "font-weight: 600; margin: 0;"
         )
         self._light_warning.setVisible(False)
         panel_layout.addWidget(self._light_warning)
 
-        # ── v4.17: 分心原因分解标签（默认隐藏） ──
+        # 分心原因
         self._distraction_label = DistractionLabel()
         panel_layout.addWidget(self._distraction_label)
 
-        # ── 人脸丢失警告标签（默认隐藏） ──
+        # 人脸丢失
         self._face_lost_warning = QLabel("⚠ 人脸丢失 · 监测已暂停")
         self._face_lost_warning.setAlignment(Qt.AlignCenter)
         self._face_lost_warning.setStyleSheet(
             "color: #FF3B30; background: #FFEBEE; border: 1px solid #FF3B30;"
-            "border-radius: 4px; padding: 4px 0; font-size: 12px;"
-            "font-weight: 600; margin: 0 16px;"
+            "border-radius: 6px; padding: 4px 0; font-size: 12px;"
+            "font-weight: 600; margin: 0;"
         )
         self._face_lost_warning.setVisible(False)
         panel_layout.addWidget(self._face_lost_warning)
 
-        # ── v4.17: 游戏化状态栏（专注天数 + 今日时长）──
+        # 游戏化
         self._gamification_bar = QLabel("")
         self._gamification_bar.setAlignment(Qt.AlignCenter)
         self._gamification_bar.setStyleSheet(
             "color: #5B4A8C; background: transparent;"
-            "border: none; font-size: 13px; padding: 2px 0; font-weight: 500;"
+            "border: none; font-size: 14px; padding: 1px 0; font-weight: 500;"
         )
         self._gamification_bar.setVisible(False)
         panel_layout.addWidget(self._gamification_bar)
 
-        # ── v4.13: 校准提示标签（未校准时显示，校准后自动隐藏）──
-        self._calib_prompt = QLabel("🟡 尚未校准 · 评分仅供参考 — 点击\"校准\"建立个人基线")
+        # 校准提示
+        self._calib_prompt = QLabel("🟡 尚未校准 · 评分仅供参考")
         self._calib_prompt.setAlignment(Qt.AlignCenter)
         self._calib_prompt.setStyleSheet(
             "color: #B8860B; background: #FFFDE7; border: 1px solid #FFD54F;"
-            "border-radius: 4px; padding: 6px 0; font-size: 12px;"
-            "font-weight: 500; margin: 0 16px;"
+            "border-radius: 6px; padding: 4px 0; font-size: 12px;"
+            "font-weight: 500; margin: 0;"
         )
-        self._calib_prompt.setVisible(True)  # 默认显示（未校准状态）
+        self._calib_prompt.setVisible(True)
         panel_layout.addWidget(self._calib_prompt)
 
-        # ── 按钮栏（面板底部） ──
+        # ── 按钮栏 ──
         btn_bar = QHBoxLayout()
-        btn_bar.setContentsMargins(8, 4, 8, 8)
+        btn_bar.setContentsMargins(0, 4, 0, 0)
+        btn_bar.setSpacing(12)
         btn_bar.setAlignment(Qt.AlignCenter)
 
-        # 暂停按钮
-        self._pause_btn = ControlButton("暂停", "#8E8E93")
+        self._pause_btn = ControlButton("⏸ 暂停", "#8E8E93")
         self._pause_btn.clicked.connect(self._on_pause_clicked)
         btn_bar.addWidget(self._pause_btn)
 
-        # 分隔符 + 校准按钮（可选）
         if self._show_calibrate:
-            sep = QLabel("·")
-            sep.setStyleSheet("color: #D1D1D6; border: none; background: transparent;")
-            sep.setFont(_get_segoe_font(11))
-            btn_bar.addWidget(sep)
-
-            self._calib_btn = ControlButton("校准", "#007AFF")
+            self._calib_btn = ControlButton("⚙ 校准", "#007AFF")
             self._calib_btn.clicked.connect(lambda: self.calibrate_requested.emit())
             btn_bar.addWidget(self._calib_btn)
         else:
@@ -329,21 +321,29 @@ class EyeFocusWindow(QMainWindow):
 
     def update_pomodoro(self, status: dict) -> None:
         """更新番茄状态显示"""
-        if hasattr(self, '_pomodoro_card'):
+        if hasattr(self, '_pomodoro_label'):
             s = status["state"]
             if s == "IDLE":
-                self._pomodoro_card.update_data(
-                    main_text="--", label_text="", emoji="🍅", status="ok")
+                self._pomodoro_label.setText("🍅 --")
+                self._pomodoro_label.setStyleSheet(
+                    "color: #8B8680; background: transparent; border: none;")
             else:
                 remaining = status["remaining_sec"]
+                tm, ts = divmod(status["total_sec"], 60)
                 rm, rs = divmod(remaining, 60)
-                time_str = f"{rm:02d}:{rs:02d}"
+                time_str = f"{rm:02d}:{rs:02d} / {tm:02d}:{ts:02d}"
                 paused = status.get("paused", False)
                 if paused:
                     time_str = "⏸ " + time_str
-                self._pomodoro_card.update_data(
-                    main_text=time_str, label_text="",
-                    emoji="🍅" if s == "WORKING" else "☕", status="ok")
+                if s == "WORKING":
+                    color = "#5A8A6D"
+                    prefix = "🍅"
+                else:
+                    color = "#C9843A"
+                    prefix = "☕"
+                self._pomodoro_label.setText(f"{prefix} {time_str}")
+                self._pomodoro_label.setStyleSheet(
+                    f"color: {color}; background: transparent; border: none;")
 
     # ── v4.17: 专注度波线 ──
 
@@ -460,7 +460,7 @@ class EyeFocusWindow(QMainWindow):
 
     def set_paused(self, paused: bool) -> None:
         self._paused = paused
-        self._pause_btn.setText("继续" if paused else "暂停")
+        self._pause_btn.setText("▶ 继续" if paused else "⏸ 暂停")
         # v4.17: 暂停覆盖层
         if hasattr(self, '_pause_overlay'):
             self._pause_overlay.setVisible(paused)
@@ -523,39 +523,28 @@ class EyeFocusWindow(QMainWindow):
             fatigue_level=fatigue_level,   # 向后兼容
         )
 
-        # v4.19: 疲劳信息已整合到 FocusRing 圆点中，不再单独卡片
-
-        # 专注时长卡片
+        # v4.21: 专注时长 (QLabel)
         if focus_duration_minutes is not None:
             if focus_duration_minutes >= 60:
                 h = int(focus_duration_minutes / 60)
                 m = int(focus_duration_minutes % 60)
-                dur_text = f"{h}h{m}m"
+                dur_text = f"⏱ {h}h{m}m"
             else:
-                dur_text = f"{int(focus_duration_minutes)}m"
+                dur_text = f"⏱ {int(focus_duration_minutes)}m"
         else:
-            dur_text = "--"
-        self._duration_card.update_data(
-            main_text=dur_text, label_text="", status="ok",
-        )
+            dur_text = "⏱ --"
+        self._duration_label.setText(dur_text)
 
-        # v4.19: 识别状态卡片（合并眼+脸）
+        # v4.21: 识别状态 (QLabel)
         if not face_detected:
-            status_text = "丢失"
-            status_emoji = "🔴"
-            status_st = "error"
+            self._status_label.setText("🔴 人脸丢失")
+            self._status_label.setStyleSheet("color: #B55C5C; background: transparent; border: none;")
         elif not eye_detected:
-            status_text = "闭眼"
-            status_emoji = "🟡"
-            status_st = "warn"
+            self._status_label.setText("🟡 闭眼中")
+            self._status_label.setStyleSheet("color: #C9843A; background: transparent; border: none;")
         else:
-            status_text = "正常"
-            status_emoji = "🟢"
-            status_st = "ok"
-        self._status_card.update_data(
-            main_text=status_text, label_text="",
-            emoji=status_emoji, status=status_st,
-        )
+            self._status_label.setText("🟢 正常")
+            self._status_label.setStyleSheet("color: #5A8A6D; background: transparent; border: none;")
 
         # v4.17: 分心原因分解
         if hasattr(self, '_distraction_label'):

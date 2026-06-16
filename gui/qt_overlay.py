@@ -125,7 +125,7 @@ class FocusRing(QWidget):
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.setMinimumSize(180, 180)
+        self.setMinimumSize(140, 140)
         self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
 
         self._focus_level: Optional[str] = None      # v4.6: FOCUSED/NORMAL/DISTRACTED
@@ -134,7 +134,7 @@ class FocusRing(QWidget):
         self._focus_score: Optional[float] = None
         self._fatigue_level: Optional[str] = None
 
-        self._text_font = _get_segoe_font(28, QFont.Bold)  # v4.19: 20→28
+        self._text_font = _get_segoe_font(32, QFont.Bold)  # v4.21: 28→32
         self._label_font = _get_segoe_font(12)  # v4.19: 11→12
         self._dot_font = _get_segoe_font(10)  # v4.19: 9→10
 
@@ -161,10 +161,10 @@ class FocusRing(QWidget):
         self.update()
 
     def _ring_rect(self, w: int, h: int) -> QRectF:
-        side = min(w, h) * 0.70
-        side = max(side, 120)
+        side = min(w, h) * 0.75
+        side = max(side, 100)
         x = (w - side) / 2
-        y = (h - side) / 2 - 10
+        y = (h - side) / 2 - 6
         return QRectF(x, y, side, side)
 
     def paintEvent(self, event):
