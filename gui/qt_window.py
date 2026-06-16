@@ -47,6 +47,7 @@ from gui.qt_overlay import (
     StatusCard,
     DistractionLabel,
     FocusSparkline,
+    PomodoroStatus,
     FATIGUE_EMOJI,
     _get_segoe_font,
 )
@@ -234,6 +235,10 @@ class EyeFocusWindow(QMainWindow):
         self._sparkline = FocusSparkline()
         panel_layout.addWidget(self._sparkline)
 
+        # ── v4.18: 番茄状态 ──
+        self._pomodoro_status = PomodoroStatus()
+        panel_layout.addWidget(self._pomodoro_status)
+
         # ── 光照警告标签（默认隐藏） ──
         self._light_warning = QLabel("⚠ 光照不足 · 检测精度可能下降")
         self._light_warning.setAlignment(Qt.AlignCenter)
@@ -324,6 +329,13 @@ class EyeFocusWindow(QMainWindow):
             from gui.tray import EyeFocusTrayIcon
             self._tray_icon = EyeFocusTrayIcon(parent_window=self, app_ref=app_ref)
             self._tray_icon.show()
+
+    # ── v4.18: 番茄状态 ──
+
+    def update_pomodoro(self, status: dict) -> None:
+        """更新番茄状态显示"""
+        if hasattr(self, '_pomodoro_status'):
+            self._pomodoro_status.update_status(status)
 
     # ── v4.17: 专注度波线 ──
 

@@ -449,6 +449,67 @@ class FocusSparkline(QWidget):
 
 
 # ═══════════════════════════════════════════════════════════════════
+# PomodoroStatus — 番茄状态显示 (v4.18)
+# ═══════════════════════════════════════════════════════════════════
+
+class PomodoroStatus(QWidget):
+    """番茄工作法状态显示
+
+    样式：🍅 ×3  工作 18:32 / 25:00
+    简洁文字标签，嵌入在数据面板中。
+    """
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._status = {"state": "IDLE", "count": 0,
+                         "remaining_sec": 0, "elapsed_sec": 0,
+                         "total_sec": 1500, "progress": 0}
+        self._label = QLabel("", self)
+        self._label.setAlignment(Qt.AlignCenter)
+        self._label.setStyleSheet(
+            "color: #8B8680; background: #F9F8F6;"
+            "border: 1px solid #E6E2DC; border-radius: 4px;"
+            "padding: 2px 8px; font-size: 11px;"
+        )
+        self.setVisible(False)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 1, 16, 1)
+        layout.addWidget(self._label)
+
+    def update_status(self, status: dict) -> None:
+        """更新番茄状态"""
+        self._status = status
+        s = status["state"]
+        c = status["count"]
+        remaining = status["remaining_sec"]
+        total = status["total_sec"]
+
+        if s == "IDLE":
+            self.setVisible(False)
+            return
+
+        rm, rs = divmod(remaining, 60)
+        tm, ts = divmod(total, 60)
+
+        if s == "WORKING":
+            icon = "🍅"
+            color = "#5A8A6D"
+            label = f"{icon}×{c}  工作 {rm:02d}:{rs:02d} / {tm:02d}:{ts:02d}"
+        else:
+            icon = "☕"
+            color = "#C9843A"
+            label = f"{icon} 休息 {rm:02d}:{rs:02d} / {tm:02d}:{ts:02d}"
+
+        self._label.setText(label)
+        self._label.setStyleSheet(
+            f"color: {color}; background: #F9F8F6;"
+            f"border: 1px solid #E6E2DC; border-radius: 4px;"
+            f"padding: 2px 8px; font-size: 11px;"
+        )
+        self.setVisible(True)
+
+
+# ═══════════════════════════════════════════════════════════════════
 # GradientDivider — 垂直渐变过渡带
 # ═══════════════════════════════════════════════════════════════════
 

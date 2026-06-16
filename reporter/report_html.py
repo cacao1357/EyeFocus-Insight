@@ -1029,6 +1029,112 @@ class HTMLReportGenerator:
 
     # ── v4.1 Insights 集成 ──────────────────────────────────
 
+    # ════════════════════════════════════════════
+    # v4.18: 周报
+    # ════════════════════════════════════════════
+    def generate_weekly_report(self) -> str:
+        """生成最近 7 天的周报
+
+        Returns:
+            HTML 字符串
+        """
+        if not self.db:
+            return self._error_html("数据库未初始化")
+
+        from datetime import datetime, timedelta
+        today = datetime.now()
+        week_ago = (today - timedelta(days=7)).strftime("%Y-%m-%d")
+        today_str = today.strftime("%Y-%m-%d")
+
+        sessions = self.db.get_sessions_by_date_range(week_ago, today_str)
+        if len(sessions) < 2:
+            return self._error_html("本周数据不足（至少需要 2 个会话才能生成周报）")
+
+        # 聚合统计
+        total_minutes = 0.0
+        total_score = 0.0
+        score_count = 0
+        session_list = []
+
+        for sess in sessions:
+            dur = sess.duration_seconds() or 0.0
+            total_minutes += dur / 60.0
+            records = self.db.get_focus_records(sess.session_id)
+            if records:
+                avg = sum(r.focus_score for r in records if r.focus_score) / max(1, len(records))
+                total_score += avg
+                score_count += 1
+                session_list.append({"date": sess.start_time.strftime("%m-%d"),
+                                     "duration": dur / 60.0, "score": avg})
+            else:
+                session_list.append({"date": sess.start_time.strftime("%m-%d"),
+                                     "duration": dur / 60.0, "score": 0})
+
+        avg_score = total_score / max(1, score_count) if score_count > 0 else 0
+        days_active = len(set(s.start_time.strftime("%Y-%m-%d") for s in sessions))
+
+        # 日历热力图数据
+        all_stats = self.db.get_all_daily_stats()
+        daily_list = [
+            {"date": s.date, "minutes": s.total_focus_minutes}
+            for s in all_stats
+        ]
+
+        # 生成日历热力图
+        cal_html = ""
+        try:
+            cal_html = self.chart_gen.generate_calendar_heatmap(daily_list)
+        except Exception as e:
+            logger.warning("周报日历图失败: %s", e)
+
+        # 构建 HTML
+        rows = "".join(
+            f'<tr><td>{s["date"]}</td>'
+            f'<td>{s["duration"]:.0f}分钟</td>'
+            f'<td>{s["score"]:.0f}分</td></tr>'
+            for s in session_list[:7]
+        )
+
+        html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>专注周报 - {week_ago} ~ {today_str}</title>
+<style>
+    :root {{ --bg: #FEFDFB; --ink: #23201E; --quiet: #8B8680; --line: #E6E2DC;
+             --iris: #5B4A8C; --sage: #5A8A6D; --amber: #C9843A; --rose: #B55C5C; }}
+    body {{ font-family: "Microsoft YaHei","Segoe UI",sans-serif; background: var(--bg);
+           color: var(--ink); max-width: 720px; margin: 0 auto; padding: 32px 20px; }}
+    h1 {{ font-family: Georgia,serif; font-size: 28px; font-weight: 400;
+          margin-bottom: 4px; color: var(--ink); }}
+    .subtitle {{ color: var(--quiet); font-size: 13px; margin-bottom: 28px; }}
+    .hero {{ display: flex; gap: 24px; margin-bottom: 28px; flex-wrap: wrap; }}
+    .hero-item {{ text-align: center; flex: 1; min-width: 80px; }}
+    .hero-item .num {{ font-family: Georgia,serif; font-size: 36px; color: var(--iris); }}
+    .hero-item .lbl {{ font-size: 11px; color: var(--quiet); margin-top: 2px; }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 13px; margin: 16px 0; }}
+    th, td {{ padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--line); }}
+    th {{ color: var(--quiet); font-size: 11px; font-weight: 500; }}
+    .footer {{ text-align: center; color: #ccc; font-size: 11px; margin-top: 36px; }}
+</style></head><body>
+    <h1>📊 专注周报</h1>
+    <p class="subtitle">{week_ago} ~ {today_str}</p>
+
+    <div class="hero">
+        <div class="hero-item"><div class="num">{total_minutes:.0f}</div><div class="lbl">总专注(分钟)</div></div>
+        <div class="hero-item"><div class="num">{avg_score:.0f}</div><div class="lbl">平均专注度</div></div>
+        <div class="hero-item"><div class="num">{len(sessions)}</div><div class="lbl">会话数</div></div>
+        <div class="hero-item"><div class="num">{days_active}</div><div class="lbl">活跃天数</div></div>
+    </div>
+
+    <h2 style="font-size:16px;font-weight:400;border-bottom:1px solid var(--line);padding-bottom:8px;">📅 专注日历</h2>
+    <div style="margin:12px 0;">{cal_html}</div>
+
+    <h2 style="font-size:16px;font-weight:400;border-bottom:1px solid var(--line);padding-bottom:8px;">📋 会话明细</h2>
+    <table><tr><th>日期</th><th>时长</th><th>平均专注度</th></tr>{rows}</table>
+
+    <div class="footer">EyeFocus Insight · 自动生成</div>
+</body></html>"""
+        return html
+
     def generate_report_with_insights(
         self,
         session_id: str,

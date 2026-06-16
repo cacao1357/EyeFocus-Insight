@@ -52,6 +52,7 @@ from analyzer.focus import FocusAnalyzer, create_focus_analyzer
 from analyzer.voice_assistant import create_voice_assistant
 from analyzer.reminder_engine import create_reminder_engine
 from analyzer.gamification import create_gamification_engine
+from analyzer.pomodoro import create_pomodoro_engine
 from analyzer.glasses import GlassesDetector, create_glasses_detector
 from analyzer.fatigue import FatigueAnalyzer, create_fatigue_analyzer
 from detector.face_mesh import FaceMeshDetector, create_face_mesh_detector
@@ -938,6 +939,13 @@ class EyeFocusApp:
             # v4.17: 游戏化引擎
             self._gamification = create_gamification_engine(db=self._db)
 
+            # v4.18: 番茄工作法（回调延迟绑定）
+            self._pomodoro = create_pomodoro_engine(
+                voice_callback=lambda text: self._voice_asst.say(text) if self._voice_asst else None,
+                pause_callback=lambda: self._pomodoro_pause(),
+                resume_callback=lambda: self._pomodoro_resume(),
+            )
+
             # 初始化校准管理器
             self._calib_callbacks = CalibrationFlowCallbacks(self)
             self._calib_manager = create_user_calibration_manager(
@@ -1384,12 +1392,19 @@ class EyeFocusApp:
                         face_detected=self._frame_processor.latest_face_detected,
                     )
 
-                # 波线（每秒一次）
+                # 波线 + 番茄（每秒一次）
                 spark_time = getattr(self, '_spark_update_time', 0)
                 if time.time() - spark_time >= 1.0:
                     self._spark_update_time = time.time()
                     if hasattr(self, '_qt_window') and self._qt_window is not None:
                         self._qt_window.update_sparkline(focus_score)
+                    # 番茄 tick + UI 更新 + 托盘同步
+                    if hasattr(self, '_pomodoro') and self._pomodoro is not None:
+                        self._pomodoro.tick()
+                        if hasattr(self, '_qt_window') and self._qt_window is not None:
+                            self._qt_window.update_pomodoro(self._pomodoro.get_status())
+                            if hasattr(self._qt_window, '_tray_icon') and self._qt_window._tray_icon is not None:
+                                self._qt_window._tray_icon.set_pomodoro_state(self._pomodoro.state)
 
                 # 游戏化（每 60s）
                 gamify_update = getattr(self, '_gamify_update_time', 0)
@@ -1787,6 +1802,28 @@ class EyeFocusApp:
 
         logger.info("已安全退出")
 
+    # ── v4.18: 番茄工作法 ──
+
+    def _pomodoro_pause(self) -> None:
+        """番茄休息时暂停监测"""
+        try:
+            if hasattr(self, '_qt_window') and self._qt_window is not None:
+                self._qt_window.set_paused(True)
+                if hasattr(self, '_qt_window') and hasattr(self._qt_window, '_tray_icon'):
+                    self._qt_window._tray_icon.set_paused_state(True)
+        except Exception:
+            pass
+
+    def _pomodoro_resume(self) -> None:
+        """番茄工作时恢复监测"""
+        try:
+            if hasattr(self, '_qt_window') and self._qt_window is not None:
+                self._qt_window.set_paused(False)
+                if hasattr(self, '_qt_window') and hasattr(self._qt_window, '_tray_icon'):
+                    self._qt_window._tray_icon.set_paused_state(False)
+        except Exception:
+            pass
+
     # ── v4.17: 提醒引擎托盘回调 ──
 
     def _reminder_tray_notify(self, title: str, message: str) -> None:
@@ -1801,6 +1838,25 @@ class EyeFocusApp:
                     )
         except Exception:
             pass
+
+    # ── v4.18: 周报 ──
+
+    def _generate_weekly_report(self) -> None:
+        """生成周报并在浏览器中打开"""
+        try:
+            from reporter.report_html import create_html_generator
+            generator = create_html_generator(self._db)
+            html = generator.generate_weekly_report()
+            import os
+            os.makedirs("reports", exist_ok=True)
+            from datetime import datetime
+            path = f"reports/weekly_{datetime.now().strftime('%Y%m%d')}.html"
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(html)
+            os.startfile(os.path.abspath(path))
+            logger.info("周报已生成: %s", path)
+        except Exception as e:
+            logger.warning("生成周报失败: %s", e)
 
     def _finalize_session(self) -> None:
         """结束当前会话并生成含 insights 的 HTML 报告。

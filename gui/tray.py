@@ -78,9 +78,25 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
 
         menu.addSeparator()
 
+        # v4.18: 最近会话子菜单
+        self._recent_menu = menu.addMenu("最近会话")
+        self._recent_menu.aboutToShow.connect(self._refresh_recent_sessions)
+
         # 打开报告（自动生成）
         generate_action = menu.addAction("打开报告")
         generate_action.triggered.connect(self._generate_report)
+
+        # v4.18: 生成周报
+        weekly_action = menu.addAction("生成周报")
+        weekly_action.triggered.connect(self._generate_weekly_report)
+
+        # v4.18: 导出数据
+        export_action = menu.addAction("导出数据")
+        export_action.triggered.connect(self._export_data)
+
+        # v4.18: 番茄工作法
+        self._pomodoro_action = menu.addAction("开始番茄")
+        self._pomodoro_action.triggered.connect(self._toggle_pomodoro)
 
         # 重新校准
         calibrate_action = menu.addAction("重新校准")
@@ -133,6 +149,11 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
     def set_paused_state(self, paused: bool):
         """同步暂停状态到菜单项"""
         self._pause_action.setText("继续监测" if paused else "暂停监测")
+
+    def set_pomodoro_state(self, state: str):
+        """同步番茄状态到菜单项"""
+        labels = {"IDLE": "开始番茄", "WORKING": "番茄工作中...", "BREAK": "休息中..."}
+        self._pomodoro_action.setText(labels.get(state, "开始番茄"))
 
     def set_voice_enabled(self, enabled: bool):
         """同步语音状态到菜单项"""
@@ -206,6 +227,115 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
                     logger.info("报告已打开: %s", report_path)
                 except Exception as e:
                     logger.warning("打开报告失败: %s", e)
+
+    # ── v4.18: 最近会话 ──
+
+    def _refresh_recent_sessions(self):
+        """刷新最近会话子菜单（aboutToShow 时调用）"""
+        self._recent_menu.clear()
+        try:
+            if not hasattr(self._app, '_db') or self._app._db is None:
+                self._recent_menu.addAction("数据库未就绪").setEnabled(False)
+                return
+
+            sessions = self._app._db.list_sessions()[:10]  # 最近 10 条
+            if not sessions:
+                self._recent_menu.addAction("无历史记录").setEnabled(False)
+                return
+
+            for sess in sessions:
+                start = sess.start_time.strftime("%m-%d %H:%M")
+                dur = sess.duration_seconds()
+                dur_str = f"{int(dur//60)}分钟" if dur else "--"
+                # 获取会话平均专注度
+                avg = self._get_session_avg(sess.session_id)
+                label = f"{start}  {dur_str}  {avg}分"
+                action = self._recent_menu.addAction(label)
+                sid = sess.session_id
+                action.triggered.connect(lambda checked, s=sid: self._open_report(s))
+        except Exception as e:
+            logger.warning("刷新最近会话失败: %s", e)
+            self._recent_menu.addAction("加载失败").setEnabled(False)
+
+    def _get_session_avg(self, session_id: str) -> str:
+        """获取会话平均专注度"""
+        try:
+            records = self._app._db.get_focus_records(session_id)
+            if records:
+                scores = [r.focus_score for r in records if r.focus_score is not None]
+                if scores:
+                    return f"{sum(scores)/len(scores):.0f}"
+            return "--"
+        except Exception:
+            return "--"
+
+    def _open_report(self, session_id: str) -> None:
+        """打开指定会话的报告"""
+        try:
+            report_path = os.path.abspath(f"reports/{session_id}.html")
+            if os.path.exists(report_path):
+                os.startfile(report_path)
+                logger.info("已打开报告: %s", report_path)
+            else:
+                # 尝试先生成报告再打开
+                if hasattr(self._app, '_finalize_session'):
+                    # 切换到指定会话（如果当前会话不同需要先加载）
+                    pass
+                logger.warning("报告文件不存在: %s", report_path)
+        except Exception as e:
+            logger.warning("打开报告失败: %s", e)
+
+    # ── v4.18: 导出数据 ──
+
+    def _generate_weekly_report(self) -> None:
+        """生成周报"""
+        try:
+            if hasattr(self._app, '_generate_weekly_report'):
+                self._app._generate_weekly_report()
+        except Exception as e:
+            logger.warning("生成周报失败: %s", e)
+
+    def _export_data(self) -> None:
+        """导出当前会话数据为 CSV"""
+        try:
+            sid = getattr(self._app, '_session_id', None)
+            if not sid:
+                return
+            import os
+            out_dir = os.path.abspath("reports/exports")
+            self._app._db.export_csv(sid, out_dir)
+            self.showMessage(
+                "EyeFocus Insight - 导出完成",
+                f"数据已导出到 reports/exports/",
+                QSystemTrayIcon.Information,
+                3000,
+            )
+            logger.info("CSV 导出完成: %s", out_dir)
+        except Exception as e:
+            logger.warning("导出数据失败: %s", e)
+            self.showMessage(
+                "EyeFocus Insight - 导出失败",
+                str(e),
+                QSystemTrayIcon.Critical,
+                3000,
+            )
+
+    # ── v4.18: 番茄工作法 ──
+
+    def _toggle_pomodoro(self) -> None:
+        """切换番茄工作法状态"""
+        try:
+            pomo = getattr(self._app, '_pomodoro', None)
+            if pomo is None:
+                return
+            if pomo.state == "IDLE":
+                pomo.start()
+                self._pomodoro_action.setText("停止番茄")
+            else:
+                pomo.stop()
+                self._pomodoro_action.setText("开始番茄")
+        except Exception as e:
+            logger.warning("番茄切换失败: %s", e)
 
     def _start_calibration(self):
         """启动重新校准（v4.16: try/except 保护，防止异常导致程序退出）"""
