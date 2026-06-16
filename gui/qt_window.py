@@ -236,6 +236,7 @@ class EyeFocusWindow(QMainWindow):
         panel_layout.addWidget(self._sparkline)
 
         # ── 光照警告标签（默认隐藏） ──
+        self._light_warning = QLabel("⚠ 光照不足 · 检测精度可能下降")
         self._light_warning.setAlignment(Qt.AlignCenter)
         self._light_warning.setStyleSheet(
             "color: #FF9500; background: #FFF3E0; border: 1px solid #FF9500;"
