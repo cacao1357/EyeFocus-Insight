@@ -235,7 +235,7 @@ class DatabaseManager:
             self._conn = sqlite3.connect(
                 self.config.db_path,
                 check_same_thread=False,
-                timeout=30.0,
+                timeout=5.0,
             )
             self._conn.row_factory = sqlite3.Row
 

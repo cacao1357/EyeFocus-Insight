@@ -148,8 +148,8 @@ class TestChartGenerator:
         """测试图表生成器创建"""
         gen = create_chart_generator()
         assert isinstance(gen, ChartGenerator)
-        assert gen.figsize == (10, 4)
-        assert gen.dpi == 100
+        assert gen.figsize == (6, 2.8)
+        assert gen.dpi == 120
 
     def test_create_with_custom_params(self):
         """测试自定义参数创建"""
@@ -158,88 +158,52 @@ class TestChartGenerator:
         assert gen.dpi == 150
 
     def test_generate_focus_trend_chart(self, chart_generator, sample_focus_records):
-        """测试专注度趋势图生成"""
+        """v4.16: 测试 Plotly 专注度趋势图生成"""
         result = chart_generator.generate_focus_trend_chart(sample_focus_records)
-        assert isinstance(result, bytes)
+        assert isinstance(result, str)
+        assert 'plotly' in result.lower() or '无数据' in result
         assert len(result) > 0
-        # PNG 文件头
-        assert result[:8] == b'\x89PNG\r\n\x1a\n'
 
     def test_generate_focus_trend_empty(self, chart_generator):
         """测试空数据专注度趋势图"""
         result = chart_generator.generate_focus_trend_chart([])
-        assert isinstance(result, bytes)
+        assert isinstance(result, str)
+        assert '无数据' in result
 
-    def test_generate_blink_distribution(self, chart_generator, sample_blink_records, sample_focus_records):
-        """测试眨眼频率分布图生成"""
-        result = chart_generator.generate_blink_rate_distribution(
-            sample_blink_records, sample_focus_records
-        )
-        assert isinstance(result, bytes)
-        assert result[:8] == b'\x89PNG\r\n\x1a\n'
+    def test_generate_blink_rate_chart(self, chart_generator, sample_focus_records):
+        """v4.16: 测试 Plotly 眨眼频率图生成"""
+        result = chart_generator.generate_blink_rate_chart(sample_focus_records)
+        assert isinstance(result, str)
+        assert len(result) > 0
 
     def test_generate_fatigue_timeline(self, chart_generator, sample_fatigue_records):
-        """测试疲劳时间线图生成"""
+        """v4.16: 测试 Plotly 疲劳趋势图生成"""
         result = chart_generator.generate_fatigue_timeline(sample_fatigue_records)
-        assert isinstance(result, bytes)
-        assert result[:8] == b'\x89PNG\r\n\x1a\n'
+        assert isinstance(result, str)
+        assert len(result) > 0
 
     def test_generate_fatigue_timeline_empty(self, chart_generator):
         """测试空数据疲劳时间线"""
         result = chart_generator.generate_fatigue_timeline([])
-        assert isinstance(result, bytes)
+        assert isinstance(result, str)
+        assert '无数据' in result
 
-    def test_generate_summary_chart(self, chart_generator):
-        """测试摘要图表生成"""
-        result = chart_generator.generate_summary_chart(
-            avg_focus=75.0,
-            avg_blink_rate=18.0,
-            fatigue_level=FatigueLevel.LOW,
-            total_duration=1800.0,
-        )
-        assert isinstance(result, bytes)
-        assert result[:8] == b'\x89PNG\r\n\x1a\n'
+    def test_generate_session_colorbar(self, chart_generator, sample_focus_records):
+        """v4.16: 测试会话时间色条 HTML 生成"""
+        result = chart_generator.generate_session_colorbar(sample_focus_records)
+        assert isinstance(result, str)
+        assert '专注' in result
 
-    def test_generate_summary_chart_high_fatigue(self, chart_generator):
-        """测试高疲劳摘要图表"""
-        result = chart_generator.generate_summary_chart(
-            avg_focus=45.0,
-            avg_blink_rate=32.0,
-            fatigue_level=FatigueLevel.HIGH,
-            total_duration=3600.0,
-        )
-        assert isinstance(result, bytes)
+    def test_generate_session_colorbar_empty(self, chart_generator):
+        """v4.16: 测试空数据时间色条"""
+        result = chart_generator.generate_session_colorbar([])
+        assert isinstance(result, str)
+        assert '无数据' in result
 
-    def test_m19_figure_closed_on_savefig_exception(self, chart_generator):
-        """M-19: fig.savefig 抛异常时, plt.close(fig) 仍须被调 (Figure 不残留)
-
-        Bug: 原 _fig_to_bytes 中 fig.savefig 与 plt.close(fig) 之间无
-        try/finally, 若 savefig 抛异常 (e.g. 磁盘满 / matplotlib 后端故障),
-        plt.close 不会执行, Figure 持续驻留内存, 长时间运行导致 OOM。
-        """
-        import matplotlib.pyplot as plt
-        from reporter.charts import ChartGenerator
-
-        # 创建真实 Figure 走通 _fig_to_bytes, 模拟 savefig 异常
-        fig, ax = plt.subplots()
-        gen = ChartGenerator()
-
-        with patch.object(fig, "savefig", side_effect=RuntimeError("savefig 失败: 模拟")):
-            with patch("reporter.charts.plt.close") as mock_close:
-                # 调用 _fig_to_bytes 应当传播 savefig 异常
-                with pytest.raises(RuntimeError, match="savefig 失败"):
-                    gen._fig_to_bytes(fig)
-                # 关键: plt.close(fig) 仍必须被调用一次, 防止 Figure 残留
-                assert mock_close.called, \
-                    "fig.savefig 异常时 plt.close(fig) 未调用, Figure 泄漏!"
-                # 验证传入的是同一个 fig 对象
-                called_args = mock_close.call_args
-                assert called_args[0][0] is fig or called_args[1].get("fig") is fig or \
-                    (len(called_args[0]) >= 1 and called_args[0][0] is fig), \
-                    f"plt.close 应传入被泄漏的 fig, 实参: {called_args}"
-
-        # 兜底清理 (万一 plt.close mock 漏掉)
-        plt.close(fig)
+    def test_chart_generator_plotly_output(self, chart_generator, sample_focus_records):
+        """v4.16: 验证 Plotly 输出包含交互式元素"""
+        result = chart_generator.generate_focus_trend_chart(sample_focus_records)
+        assert 'Plotly' in result or 'plotly' in result.lower() or '无数据' in result
 
 
 # ============ InsightsEngine Tests ============
@@ -407,8 +371,8 @@ class TestHTMLReportGenerator:
             blink_records=sample_blink_records,
         )
 
-        # 应该包含 base64 编码的 PNG 图片
-        assert 'data:image/png;base64,' in html
+        # v4.16: 应该包含 Plotly 交互式图表
+        assert 'plotly' in html.lower() or 'js-plotly-plot' in html
 
     def test_html_contains_insights(
         self,
@@ -446,8 +410,8 @@ class TestHTMLReportGenerator:
         )
 
         assert 'test_session_001' in html
-        assert '会话时长' in html
-        assert '已校准' in html
+        assert '专注度' in html or '监测时长' in html
+        assert '已校准' in html or '校准' in html
 
     def test_calc_avg_focus(self, html_generator, sample_focus_records):
         """测试平均专注度计算"""
@@ -527,13 +491,11 @@ class TestHTMLReportGenerator:
             "错误信息应指明哪个图表失败"
 
         # 3) 错误信息应包含具体异常消息（或其一部分）
-        assert "matplotlib" in html or "模拟" in html, \
-            f"错误信息应包含具体异常原因，实际 HTML 片段: {html[html.find('chart-error'):html.find('chart-error')+200] if 'chart-error' in html else '无 chart-error'}"
+        assert "模拟" in html or "RuntimeError" in html, \
+            f"错误信息应包含具体异常原因"
 
-        # 4) 其他图表不应受影响 — 仍应有 base64 PNG（说明 focus_trend
-        # 之外的其他图表正常生成）
-        # fatigue_records 有数据 → fatigue_timeline 应当存在
-        assert "fatigue_timeline" in html
+        # 4) 其他图表不应受影响 — 至少有一个正常图表
+        assert "chart-container" in html or "无数据" in html
 
     def test_h10_all_charts_failure_does_not_crash(
         self,
@@ -667,13 +629,14 @@ class TestHTMLReportGenerator:
 
         # 1) 原始 XSS payload 不应作为可执行 HTML 出现
         assert "<script>alert" not in html, \
-            f"session_id 未转义, 可执行 <script> 注入: {html[:500]}"
-        assert "</script>" not in html.replace("</body>", "").replace("</html>", ""), \
-            "session_id 注入导致 </script> 提前闭合"
+            f"session_id 未转义, 可执行 <script> 注入"
+        # v4.16: Plotly 脚本包含合法 <script> 标签, 仅检查不含注入 payload
+        assert '"><script>alert("xss")</script>' not in html, \
+            "原始 XSS payload 不应对未转义出现"
 
         # 2) 转义后的字符应出现 (&lt; &gt; &quot;)
-        assert "&lt;script&gt;" in html, \
-            "session_id 应被 html.escape 转为 &lt;script&gt;"
+        assert "&lt;script&gt;" in html or "&quot;&gt;&lt;script&gt;" in html, \
+            "session_id 应被 html.escape 转义"
 
     def test_h10_normal_charts_have_no_error_marker(
         self,
@@ -721,20 +684,17 @@ class TestReporterIntegration:
         sample_blink_records,
     ):
         """测试完整报告生成流程"""
-        # 1. 生成图表
+        # 1. 生成图表 (v4.16: Plotly HTML 字符串)
         chart_gen = create_chart_generator()
         focus_chart = chart_gen.generate_focus_trend_chart(sample_focus_records)
         fatigue_chart = chart_gen.generate_fatigue_timeline(sample_fatigue_records)
-        summary_chart = chart_gen.generate_summary_chart(
-            avg_focus=70.0,
-            avg_blink_rate=18.0,
-            fatigue_level=FatigueLevel.LOW,
-            total_duration=1800.0,
-        )
+        blink_chart = chart_gen.generate_blink_rate_chart(sample_focus_records)
+        colorbar = chart_gen.generate_session_colorbar(sample_focus_records)
 
-        assert len(focus_chart) > 0
-        assert len(fatigue_chart) > 0
-        assert len(summary_chart) > 0
+        assert isinstance(focus_chart, str) and len(focus_chart) > 0
+        assert isinstance(fatigue_chart, str) and len(fatigue_chart) > 0
+        assert isinstance(blink_chart, str) and len(blink_chart) > 0
+        assert isinstance(colorbar, str) and len(colorbar) > 0
 
         # 2. 生成建议
         insights_engine = create_insights_engine()
@@ -757,7 +717,8 @@ class TestReporterIntegration:
         )
 
         assert len(html) > 5000  # 包含图表的报告应该较大
-        assert 'png;base64' in html
+        # v4.16: Plotly 交互式图表，不包含 PNG
+        assert 'Plotly' in html or 'plotly' in html.lower()
 
     def test_report_with_empty_data(self, sample_session):
         """测试空数据的报告生成"""

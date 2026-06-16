@@ -204,11 +204,19 @@ class EyeAspectDetector:
             return self._baseline_ear * 0.90
         return self.ear_threshold * 1.15  # fallback: 固定阈值的 ~1.15 倍
 
-    def compute(self, landmarks: np.ndarray) -> EyeAspectResult:
-        """计算单帧 EAR 值
+    def compute(
+        self,
+        landmarks: np.ndarray,
+        blendshapes: Optional[dict] = None,
+    ) -> EyeAspectResult:
+        """计算单帧 EAR 值并检测眨眼
+
+        v4.8: blendshape (`eyeBlinkLeft/Right`) 作为主眨眼检测信号，
+        EAR 作为 fallback。Blendshape 对头位变化不敏感，比纯 EAR 更可靠。
 
         Args:
             landmarks: MediaPipe 人脸关键点 (478, 2) 像素坐标
+            blendshapes: 可选，MediaPipe blendshape 字典，含 eyeBlinkLeft/Right
 
         Returns:
             EyeAspectResult 对象
@@ -219,7 +227,7 @@ class EyeAspectDetector:
         left_eye = np.array([landmarks[i] for i in self.LEFT_EYE_INDICES])
         right_eye = np.array([landmarks[i] for i in self.RIGHT_EYE_INDICES])
 
-        # 计算 EAR
+        # 计算 EAR (始终计算，用于 fallback 和报告)
         ear_left = self._calculate_ear(left_eye)
         ear_right = self._calculate_ear(right_eye)
         ear_avg = (ear_left + ear_right) / 2.0
@@ -228,10 +236,25 @@ class EyeAspectDetector:
         self._recent_ears.append(ear_avg)
         self._current_ear = ear_avg  # 保存当前 EAR 值供回调使用
 
-        # 检测眨眼（使用动态阈值）
-        is_blink = ear_avg < self.ear_threshold
-        left_open = ear_left >= self.ear_min
-        right_open = ear_right >= self.ear_min
+        # ── v4.8: blendshape 主信号 + EAR fallback ──
+        bs_blink_score = 0.0
+        if blendshapes:
+            bs_left = blendshapes.get("eyeBlinkLeft", 0.0)
+            bs_right = blendshapes.get("eyeBlinkRight", 0.0)
+            bs_blink_score = max(bs_left, bs_right)
+
+        # 眨眼判定: blendshape > 0.5 (=闭眼) 或 EAR < 阈值
+        is_blink = bs_blink_score > 0.5 or ear_avg < self.ear_threshold
+
+        # 睁眼判定: 两个信号综合
+        if blendshapes:
+            # blendshape 可用时：两个信号都提示睁才算睁
+            left_open = (bs_left < 0.5) and (ear_left >= self.ear_min)
+            right_open = (bs_right < 0.5) and (ear_right >= self.ear_min)
+        else:
+            # fallback: 纯 EAR
+            left_open = ear_left >= self.ear_min
+            right_open = ear_right >= self.ear_min
 
         # 更新眨眼检测状态机
         self._update_blink_state(is_blink, ear_avg)

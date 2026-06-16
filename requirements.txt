@@ -2,6 +2,7 @@ opencv-python>=4.8.0
 mediapipe>=0.10.30
 numpy>=1.24.0
 matplotlib>=3.7.0
+plotly>=6.0.0
 pyyaml>=6.0
 pillow>=10.0.0
 pytest>=7.0.0
@@ -14,3 +15,6 @@ ruptures>=1.1.0
 # R6 审查发现 (2026-06-05): spike/insights/ 用了 pandas 但未声明
 # 来源: spike/insights/_common.py:14 + spike/insights/s15_attribution.py:13
 pandas>=2.0.0
+# Phase 3: 生产环境依赖
+PyQt5>=5.15.0
+absl-py>=2.0.0

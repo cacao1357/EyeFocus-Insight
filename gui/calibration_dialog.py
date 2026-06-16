@@ -10,11 +10,14 @@ v4.7 设计规范：
   - 头部姿态每方向独立预告
   - 全宽结果页 2×2 网格展示 4 项数据
 """
+import logging
 import time
 import statistics
 from typing import Optional
 
 import cv2
+
+logger = logging.getLogger("eyefocus.gui.qt")
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont, QImage, QPixmap
 from PyQt5.QtWidgets import (
@@ -93,13 +96,14 @@ class CalibrationDialog(QDialog):
         ("向右看", "转头看右边"),
     ]
 
-    def __init__(self, parent=None, fd=None, ed=None):
+    def __init__(self, parent=None, fd=None, ed=None, get_frame=None):
         super().__init__(parent)
         self.setWindowTitle("EyeFocus 用户校准")
         self.resize(960, 750)
         self.setMinimumSize(800, 650)
         self.setStyleSheet("background-color: #000000;")
         self.result_data: dict = {}
+        self._get_frame = get_frame  # 可选: 外部帧源，替代自有摄像头
 
         # ── 字体 ──
         self._font_title = QFont("Segoe UI", 18, QFont.Bold)
@@ -257,15 +261,22 @@ class CalibrationDialog(QDialog):
     # ══════════════════════════════════════════════════════════════
 
     def _open_camera(self) -> bool:
+        # 使用外部帧源时不需要自有摄像头
+        if self._get_frame is not None:
+            self._own_cam = False
+            logger.info("校准: 使用外部帧源")
+            return True
         if self._cam is not None:
             return True
-        self._cam = cv2.VideoCapture(0)
+        self._cam = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         if not self._cam.isOpened():
+            logger.error("校准: 无法打开摄像头 (index 0)")
             self._cam = None
             return False
         self._cam.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self._cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         self._own_cam = True
+        logger.info("校准: 摄像头已打开 (640×480)")
         return True
 
     def _start_preview(self):
@@ -464,11 +475,19 @@ class CalibrationDialog(QDialog):
     # ══════════════════════════════════════════════════════════════
 
     def _tick(self):
-        if self._cam is None:
+        if self._cam is None and self._get_frame is None:
             return
-        ret, frame = self._cam.read()
-        if not ret:
+        # 优先使用外部帧源，其次自有摄像头
+        if self._get_frame is not None:
+            ret, frame = self._get_frame()
+        else:
+            ret, frame = self._cam.read()
+        if not ret or frame is None:
+            if not getattr(self, '_no_frame_warned', False):
+                self._no_frame_warned = True
+                logger.warning("校准: 等待首帧...")
             return
+        self._no_frame_warned = False
 
         # 显示摄像头画面
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -852,20 +871,23 @@ class CalibrationDialog(QDialog):
 #  公共 API
 # ═══════════════════════════════════════════════════════════════════
 
-def run_calibration_dialog(parent=None, fd=None, ed=None) -> Optional[dict]:
+def run_calibration_dialog(parent=None, fd=None, ed=None,
+                           get_frame=None) -> Optional[dict]:
     """运行校准对话框（共享检测器模式）
 
     Args:
         parent: 父窗口（可选）
         fd: FaceMeshDetector 实例（共享，为 None 则自动创建）
         ed: EyeAspectDetector 实例（共享，为 None 则自动创建）
+        get_frame: 可选外部帧源回调 () -> (bool, np.ndarray)
 
     Returns:
         dict with baseline_ear/closed_ear/head_yaw_range/head_pitch_range，或 None（取消）
     """
-    dialog = CalibrationDialog(parent, fd=fd, ed=ed)
+    dialog = CalibrationDialog(parent, fd=fd, ed=ed, get_frame=get_frame)
     dialog._ensure_detectors()
-    dialog._open_camera()
+    if not dialog._open_camera():
+        return None
     dialog._start_preview()
     if dialog.exec_() == QDialog.Accepted:
         return dialog.result_data

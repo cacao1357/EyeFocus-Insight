@@ -94,6 +94,8 @@ class AppConfig:
     # v4.4: PyQt5 UI 模式 (替换 OpenCV cv2.imshow 主循环)
     # v4.5.2: 默认启用 Qt 模式
     use_qt: bool = True
+    # v4.10: 系统托盘 (仅 Qt 模式)
+    enable_tray: bool = True
 
 
 class CameraManager:
@@ -126,7 +128,7 @@ class CameraManager:
                     "CameraManager.start(): 残留 read 线程未在 3s 内退出, 继续启动"
                 )
 
-        self._cap = cv2.VideoCapture(self._camera_index)
+        self._cap = cv2.VideoCapture(self._camera_index, cv2.CAP_DSHOW)
 
         if not self._cap.isOpened():
             logger.error("无法打开摄像头 (index %d)", self._camera_index)
@@ -238,13 +240,19 @@ class FrameProcessor:
         # 数据库写入节流
         self._last_frame_write_time: float = 0.0
         self._last_fatigue_write_time: float = 0.0
+        self._last_focus_write_time: float = 0.0
         self._frame_write_interval: float = 1.0 / 15.0  # 最多 15 FPS 写入帧数据
         self._fatigue_write_interval: float = 1.0  # 最多每秒写入疲劳记录
+        self._focus_write_interval: float = 30.0  # 每 30s 写入一次专注度记录
 
         # 多信号融合：头部姿态历史（用于检测晃动）
         self._yaw_history: Deque[float] = deque(maxlen=30)  # ~1秒历史
         self._pitch_history: Deque[float] = deque(maxlen=30)
         self._prev_landmarks: Optional[np.ndarray] = None  # 上一帧 landmarks（用于检测面部晃动）
+
+        # 头部姿态平滑滤波（滑动窗口均值，窗口大小 5 帧 ≈ 0.17s @30fps）
+        self._smooth_yaw: Deque[float] = deque(maxlen=5)
+        self._smooth_pitch: Deque[float] = deque(maxlen=5)
 
         # 最新分析结果（用于渲染）
         self._latest_focus_result = None
@@ -255,6 +263,18 @@ class FrameProcessor:
         self._latest_yaw: float = 0.0  # 最新头部偏航角
         self._latest_pitch: float = 0.0  # 最新头部俯仰角
         self._latest_face_detected: bool = False  # 人脸是否检测到
+        self._latest_ear: float = 0.0  # v4.12: 最新 EAR 值
+
+        # 低光照自适应标志
+        self._low_light_active: bool = False
+        self._saved_adjustment_factor: float = 1.0
+
+        # 头部离屏检测（v4.8: 头位偏离超过阈值时暂停分析）
+        self._head_away_threshold_yaw: float = 20.0   # 横向偏离 > 20° → 离屏
+        self._head_away_threshold_pitch: float = 25.0  # 低头 > 25° → 离屏
+        self._head_away_start_time: Optional[float] = None
+        self._cumulative_away_seconds: float = 0.0
+        self._is_head_away: bool = False
 
         # 校准回调
         self._ear_callback: Optional[Callable[[], float]] = None
@@ -274,7 +294,14 @@ class FrameProcessor:
         self._latest_face_detected = face_result.face_detected
 
         if not face_result.face_detected:
-            # 人脸丢失
+            # v4.13: 人脸丢失 — 仍调用 analyze(face_detected=False) 获取冻结分数
+            if self._focus_analyzer is not None:
+                frozen = self._focus_analyzer.analyze(
+                    ear=0.0, yaw=0.0, pitch=0.0,
+                    gaze_score=self._latest_gaze_score,
+                    face_detected=False,
+                )
+                self._latest_focus_result = frozen
             return
 
         landmarks = face_result.landmarks
@@ -285,12 +312,40 @@ class FrameProcessor:
         self._yaw_history.append(current_yaw)
         self._pitch_history.append(current_pitch)
 
+        # 滑动窗口平滑滤波（抑制帧间跳变）
+        self._smooth_yaw.append(current_yaw)
+        self._smooth_pitch.append(current_pitch)
+        smoothed_yaw = float(np.mean(self._smooth_yaw))
+        smoothed_pitch = float(np.mean(self._smooth_pitch))
+
+        # ── v4.8: 头部离屏检测 ──
+        is_away = False
+        if face_result.face_detected:
+            if (abs(smoothed_yaw) > self._head_away_threshold_yaw or
+                    abs(smoothed_pitch) > self._head_away_threshold_pitch):
+                is_away = True
+
+        if is_away:
+            if not self._is_head_away:
+                self._is_head_away = True
+                self._head_away_start_time = time.time()
+                logger.info("头部离屏: yaw=%.1f, pitch=%.1f（暂停分析）",
+                            smoothed_yaw, smoothed_pitch)
+            # 离屏计数器累加（每帧一次，用于总计时）
+        else:
+            if self._is_head_away:
+                away_dur = time.time() - self._head_away_start_time
+                self._cumulative_away_seconds += away_dur
+                logger.info("头部回屏: 离线 %.1fs, 累计 %.1fs",
+                            away_dur, self._cumulative_away_seconds)
+                self._is_head_away = False
+                self._head_away_start_time = None
+
         # 头部姿态晃动检测：yaw/pitch 变化剧烈时降低 head_pose_weight
         head_pose_weight = 1.0
         if len(self._yaw_history) >= 10:
             yaw_std = float(np.std(self._yaw_history))
             pitch_std = float(np.std(self._pitch_history))
-            # yaw_std > 3.0 或 pitch_std > 3.0 表示明显晃动（与校准基线阈值一致）
             if yaw_std > 3.0 or pitch_std > 3.0:
                 max_std = max(yaw_std, pitch_std, 3.0)
                 head_pose_weight = max(0.5, 1.0 - (max_std - 3.0) / 10.0)
@@ -302,36 +357,49 @@ class FrameProcessor:
         if self._prev_landmarks is not None and self._prev_landmarks.shape == landmarks.shape:
             landmark_movement = float(np.linalg.norm(landmarks - self._prev_landmarks))
             if landmark_movement > 10.0:
-                # 位移越大，权重越低（最低 0.3）
                 face_stability_weight = max(0.3, 1.0 - (landmark_movement - 10.0) / 50.0)
             else:
                 face_stability_weight = 1.0
         self._prev_landmarks = landmarks.copy()
 
-        # 保存头部姿态供校准回调使用
-        self._latest_yaw = face_result.yaw or 0.0
-        self._latest_pitch = face_result.pitch or 0.0
+        # 保存头部姿态（平滑后）供校准回调使用
+        self._latest_yaw = smoothed_yaw
+        self._latest_pitch = smoothed_pitch
 
         # EAR 计算
-        # 激活多信号融合：根据头部姿态和面部稳定性设置置信度权重
         self._eye_detector.set_head_pose_weight(head_pose_weight)
         self._eye_detector.set_face_stability_weight(face_stability_weight)
-        eye_result = self._eye_detector.compute(landmarks)
+        eye_result = self._eye_detector.compute(landmarks, blendshapes=face_result.blendshapes)
+        self._latest_ear = eye_result.ear_avg  # v4.12: 记录最新 EAR
 
         # Per-frame calibration data collection (T155)
-        # 在 AUTO_CALIB 阶段，每帧将 EAR/yaw/pitch 推送给校准管理器，
-        # 让其累积数据。完成时由 tick() 触发 _finalize_auto_calib()。
         if self._is_calibration_active is not None and self._is_calibration_active():
             if self._calib_manager is not None and self._calib_manager.state == CalibrationState.AUTO_CALIB:
                 self._calib_manager.add_frame(
                     ear=eye_result.ear_avg,
-                    yaw=self._latest_yaw,
-                    pitch=self._latest_pitch,
+                    yaw=smoothed_yaw,
+                    pitch=smoothed_pitch,
                 )
 
         # 光照检测
         light_result = self._light_detector.analyze_frame(frame)
         self._latest_light_result = light_result
+
+        # 低光照自适应
+        if light_result.condition.value == "dark":
+            if not getattr(self, '_low_light_active', False):
+                self._low_light_active = True
+                self._saved_adjustment_factor = self._eye_detector._adjustment_factor
+                adj = max(0.7, self._saved_adjustment_factor * 0.9)
+                self._eye_detector.set_adjustment_factor(adj)
+                logger.info("低光照模式激活: adjustment_factor %.3f → %.3f",
+                            self._saved_adjustment_factor, adj)
+        else:
+            if getattr(self, '_low_light_active', False):
+                self._low_light_active = False
+                saved = getattr(self, '_saved_adjustment_factor', 1.0)
+                self._eye_detector.set_adjustment_factor(saved)
+                logger.info("低光照模式解除: adjustment_factor 恢复 %.3f", saved)
 
         # 眼镜检测
         glasses_result = self._glasses_detector.detect(
@@ -343,16 +411,21 @@ class FrameProcessor:
         # 视线检测
         gaze_result = self._gaze_detector.detect(
             landmarks=landmarks,
-            head_pose_yaw=face_result.yaw or 0.0,
-            head_pose_pitch=face_result.pitch or 0.0,
+            head_pose_yaw=smoothed_yaw,
+            head_pose_pitch=smoothed_pitch,
         )
         self._latest_gaze_score = gaze_result.gaze_concentration if gaze_result else 100.0
+
+        # ── v4.8: 离屏时跳过专注度/疲劳分析 ──
+        if self._is_head_away:
+            # 保持最新结果不变（不更新），不写入记录
+            return
 
         # 专注度分析
         focus_result = self._focus_analyzer.analyze(
             ear=eye_result.ear_avg,
-            yaw=face_result.yaw or 0.0,
-            pitch=face_result.pitch or 0.0,
+            yaw=smoothed_yaw,
+            pitch=smoothed_pitch,
             gaze_score=self._latest_gaze_score,
             brightness=light_result.brightness,
             face_detected=face_result.face_detected,
@@ -362,7 +435,7 @@ class FrameProcessor:
         # 疲劳分析 - 获取最近眨眼的 ear_nadir
         ear_nadir = None
         recent_blinks = self._eye_detector.get_blink_events(
-            since_time=time.time() - 30.0  # 只取最近 30 秒内的眨眼
+            since_time=time.time() - 30.0
         )
         if recent_blinks:
             ear_nadir = recent_blinks[-1].ear_nadir
@@ -385,8 +458,8 @@ class FrameProcessor:
                 ear_left=eye_result.ear_left,
                 ear_right=eye_result.ear_right,
                 ear_avg=eye_result.ear_avg,
-                yaw=face_result.yaw or 0.0,
-                pitch=face_result.pitch or 0.0,
+                yaw=smoothed_yaw,
+                pitch=smoothed_pitch,
                 roll=face_result.roll or 0.0,
                 gaze_score=focus_result.gaze_score,
                 brightness=light_result.brightness,
@@ -430,11 +503,40 @@ class FrameProcessor:
             self._db.write_fatigue_record(self._session_id, fatigue_record)
             self._last_fatigue_write_time = current_time
 
+        # 存储专注度记录（节流：每 30s 一次，供 insights pipeline 使用）
+        if (self._db and self._session_id
+                and self._latest_focus_result is not None
+                and (current_time - self._last_focus_write_time) >= self._focus_write_interval):
+            from storage.models import FocusRecord
+            fr = self._latest_focus_result
+            focus_record = FocusRecord(
+                session_id=self._session_id,
+                window_start=current_time - 30.0,
+                window_end=current_time,
+                focus_score=fr.focus_score,
+                eye_score=fr.eye_score,
+                head_score=fr.head_score,
+                gaze_score=fr.gaze_score,
+                blink_rate=fr.blink_rate,
+                avg_ear=self._latest_ear,
+                avg_yaw=0.0,
+                avg_pitch=0.0,
+            )
+            self._db.write_focus_record(self._session_id, focus_record)
+            self._last_focus_write_time = current_time
+
     def get_current_ear(self) -> float:
         """获取当前 EAR 值（供校准回调使用）"""
         if self._eye_detector:
             return self._eye_detector.get_current_ear()
         return 0.0
+
+    @property
+    def away_seconds(self) -> float:
+        """获取累计离屏时间（秒）"""
+        if self._is_head_away and self._head_away_start_time is not None:
+            return self._cumulative_away_seconds + (time.time() - self._head_away_start_time)
+        return self._cumulative_away_seconds
 
     def get_head_pose(self) -> tuple:
         """获取当前头部姿态（供校准回调使用）"""
@@ -716,6 +818,10 @@ class EyeFocusApp:
         self._paused: bool = False
         # v4.4: 追踪最后检测到人脸的时间, 用于无脸检测红底白字横条
         self._last_face_time: Optional[float] = None
+        # 人脸丢失自动暂停标志
+        self._auto_paused_for_face_loss: bool = False
+        # v4.13: 历史校准加载状态
+        self._calib_loaded: bool = False
 
         # 子组件（保持与测试兼容的属性名）
         self._camera_manager: Optional[CameraManager] = None
@@ -794,6 +900,10 @@ class EyeFocusApp:
 
             # 初始化分析器
             self._focus_analyzer = create_focus_analyzer()
+            # v4.13: 尝试加载历史校准（避免每次启动都提示未校准）
+            self._load_last_calibration()
+            # v4.14: 设置会话开始时间（用于衰减因子）
+            self._focus_analyzer.set_session_start(time.time())
             self._glasses_detector = create_glasses_detector()
             self._fatigue_analyzer = create_fatigue_analyzer()
 
@@ -958,24 +1068,44 @@ class EyeFocusApp:
             logger.error("Qt 模式: 摄像头启动失败")
             return
 
+        # 帧健康计时
+        self._last_valid_frame_time = time.time()
+        self._first_frame_logged = False
+
         # ⚠️ QApplication 只能创建一次
         self._qt_app = QApplication(sys.argv)
 
-        # ── Qt 校准对话框（替换 v4.2 OpenCV 校准）──
+        # ── Qt 校准对话框（自有摄像头，释放后等待足够时间）──
         if self.config.enable_calibration:
             self._camera_manager.release()
+            import time as _wt; _wt.sleep(2.0)  # 等待驱动完全释放
             from gui.calibration_dialog import run_calibration_dialog
             calib_result = run_calibration_dialog(
                 fd=self._face_detector, ed=self._eye_detector)
             if calib_result:
                 self._apply_qt_calibration_result(calib_result)
+            else:
+                logger.info("校准被取消或失败，使用默认参数")
             # 重新启动摄像头
             if not self._camera_manager.start():
                 logger.error("校准后摄像头重启失败")
                 return
+            # 重置帧健康计时
+            self._last_valid_frame_time = time.time()
+            self._first_frame_logged = False
 
-        # 创建主窗口
-        self._qt_window = EyeFocusWindow(self._frame_buffer)
+        # 创建主窗口 (v4.10: 传入 enable_tray + app_ref 支持系统托盘)
+        self._qt_window = EyeFocusWindow(
+            self._frame_buffer,
+            enable_tray=self.config.enable_tray,
+            app_ref=self,
+        )
+        # v4.13: 已加载历史校准 → 隐藏未校准提示
+        if getattr(self, '_calib_loaded', False):
+            self._qt_window.set_calibration_prompt(False)
+
+        # 初始化人脸丢失计时（Qt 模式下也需要跟踪）
+        self._last_face_time = time.time()
 
         # 连接退出信号
         self._qt_window.exit_requested.connect(self._on_qt_exit)
@@ -1008,6 +1138,33 @@ class EyeFocusApp:
         self._camera_manager.release()
         self._cleanup()
 
+    def _load_last_calibration(self) -> None:
+        """v4.13: 从数据库加载最近一次校准数据，避免每次启动提示未校准。"""
+        if self._db is None:
+            return
+        try:
+            with self._db._get_cursor() as cur:
+                cur.execute(
+                    "SELECT baseline_ear, baseline_yaw_std, baseline_pitch_std "
+                    "FROM sessions WHERE is_calibrated=1 AND baseline_ear IS NOT NULL "
+                    "ORDER BY start_time DESC LIMIT 1"
+                )
+                row = cur.fetchone()
+                if row and row[0] is not None and row[0] > 0:
+                    ear = float(row[0])
+                    yaw_std = float(row[1]) if row[1] else None
+                    pitch_std = float(row[2]) if row[2] else None
+                    if self._focus_analyzer is not None:
+                        self._focus_analyzer.set_baseline(ear, yaw_std, pitch_std)
+                    if self._eye_detector is not None:
+                        self._eye_detector.set_baseline(ear)
+                    self._calib_loaded = True
+                    logger.info("已加载历史校准: EAR=%.4f", ear)
+                    return
+        except Exception as e:
+            logger.debug("加载历史校准失败（可能无历史数据）: %s", e)
+        self._calib_loaded = False
+
     def _apply_qt_calibration_result(self, calib_result: dict) -> None:
         """应用 Qt 校准对话框的结果到各 detector。"""
         baseline_ear = calib_result.get("baseline_ear", 0.25)
@@ -1034,12 +1191,25 @@ class EyeFocusApp:
                 is_calibrated=True,
             )
 
+        # v4.13: 校准完成后标记已校准 + 隐藏提示
+        self._calib_loaded = True
+        if self._qt_window is not None:
+            self._qt_window.set_calibration_prompt(False)
+
     def _on_qt_calibrate(self) -> None:
-        """Qt 窗口校准按钮处理（使用 Qt 校准对话框）"""
+        """Qt 窗口校准按钮处理"""
         logger.info("校准按钮点击 (Qt 模式)")
+
+        # v4.16: 防止重复进入校准
+        if getattr(self, '_calibrating', False):
+            logger.warning("校准已在进行中，忽略重复请求")
+            return
+        self._calibrating = True
+
         self._qt_window.set_paused(True)
         try:
             self._camera_manager.release()
+            import time as _wt; _wt.sleep(2.0)
             from gui.calibration_dialog import run_calibration_dialog
             calib_result = run_calibration_dialog(
                 fd=self._face_detector, ed=self._eye_detector)
@@ -1047,12 +1217,23 @@ class EyeFocusApp:
                 self._apply_qt_calibration_result(calib_result)
             if not self._camera_manager.start():
                 logger.error("校准后摄像头重启失败")
+        except Exception as e:
+            logger.error("校准过程异常: %s", e)
+            import traceback
+            traceback.print_exc()
         finally:
+            self._calibrating = False
             self._qt_window.set_paused(False)
 
     def _qt_process_frame(self) -> None:
         """Qt 定时器回调: 处理一帧"""
         if not self._camera_manager or not self._camera_manager.is_running:
+            return
+
+        # 信号退出检测（Qt事件循环中 Ctrl+C 不生效，通过此途径检测 _running 标志）
+        if not self._running:
+            logger.info("Qt 模式检测到退出信号，退出事件循环")
+            self._qt_app.quit()
             return
 
         # 卡死防护：上一帧还在处理中 → 跳过
@@ -1062,36 +1243,98 @@ class EyeFocusApp:
 
         try:
             ret, frame = self._camera_manager.get_frame()
-            if ret and frame is not None:
-                # 处理帧 (检测+分析)
-                self._frame_processor.process_frame(frame)
 
-                # FPS
-                self._update_fps()
+            # 帧健康检测：无帧超过 5s 时只打日志（不重启，避免干扰摄像头初始化）
+            if not ret or frame is None:
+                now = time.time()
+                last = getattr(self, '_last_valid_frame_time', 0)
+                if last > 0 and now - last > 5.0 and not getattr(self, '_cam_health_warned', False):
+                    self._cam_health_warned = True
+                    logger.warning("Qt 模式: 摄像头已 %ds 无有效帧", int(now - last))
+                return
+            self._cam_health_warned = False
 
-                # 更新 Qt 窗口的数据
+            # 有效帧到达
+            self._last_valid_frame_time = time.time()
+
+            # 第一帧日志
+            if not getattr(self, '_first_frame_logged', False):
+                self._first_frame_logged = True
+                logger.info("Qt 模式: 首帧到达 (%d×%d)", frame.shape[1], frame.shape[0])
+
+            # 处理帧 (检测+分析)
+            self._frame_processor.process_frame(frame)
+
+            # 直接推送帧到窗口显示（绕过 FrameBuffer timer 时序依赖）
+            if hasattr(self, '_qt_window') and self._qt_window is not None:
+                self._qt_window.show_frame(frame)
+
+            # 更新 Qt 窗口的数据面板（圆环 + 卡片）
+            if hasattr(self, '_qt_window') and self._qt_window is not None:
                 self._qt_window.update_data_from_processor(self._frame_processor, self._fps)
 
-                # 将原始帧写入 FrameBuffer 供 Qt 显示
-                self._frame_buffer.write(frame)
+            # FPS
+            self._update_fps()
+
+            # 追踪最后检测到人脸的时间
+            if self._frame_processor.latest_face_detected:
+                self._last_face_time = time.time()
+
+            # 人脸丢失 > 10s 自动暂停
+            if not self._frame_processor.latest_face_detected and self._last_face_time is not None:
+                lost_duration = time.time() - self._last_face_time
+                if lost_duration > 10.0 and not self._qt_window.is_paused():
+                    logger.info("人脸丢失 %.1fs → 自动暂停监测", lost_duration)
+                    self._qt_window.set_paused(True)
+                    self._qt_window.set_face_lost_warning(True)
+                    self._auto_paused_for_face_loss = True
+            # 人脸恢复 → 自动继续（仅限因丢失自动暂停的情况）
+            elif self._frame_processor.latest_face_detected:
+                if getattr(self, '_auto_paused_for_face_loss', False):
+                    self._auto_paused_for_face_loss = False
+                    self._qt_window.set_paused(False)
+                    self._qt_window.set_face_lost_warning(False)
+                    logger.info("人脸恢复 → 自动继续监测")
+
+            # v4.10: 疲劳通知 (仅当启用托盘且非免打扰)
+            if (hasattr(self, '_qt_window') and self._qt_window is not None
+                    and getattr(self, '_frame_processor', None) is not None):
+                fa = self._frame_processor.latest_fatigue_result
+                if fa is not None:
+                    level = fa.fatigue_level
+                    level_str = level.value.upper() if hasattr(level, 'value') else str(level)
+                    if level_str == 'HIGH':
+                        # 每 60s 最多提醒一次，避免刷屏
+                        now = time.time()
+                        last = getattr(self, '_last_fatigue_notify_time', 0)
+                        if now - last >= 60:
+                            self._last_fatigue_notify_time = now
+                            cumulative = getattr(fa, 'cumulative_fatigue_score', 0)
+                            self._qt_window.show_fatigue_notification(
+                                f"累积疲劳分数 {cumulative:.0f}，建议休息10-15分钟")
         finally:
             self._qt_frame_busy = False
+
+    def _tray_cleanup(self) -> None:
+        """v4.16: 强制清理托盘图标（应对程序异常退出时图标残留）"""
+        try:
+            if hasattr(self, '_qt_window') and self._qt_window is not None:
+                if hasattr(self._qt_window, '_tray_icon') and self._qt_window._tray_icon is not None:
+                    self._qt_window._tray_icon.hide()
+                    self._qt_window._tray_icon = None
+                    logger.debug("托盘图标已强制移除")
+        except Exception as e:
+            logger.debug("托盘图标移除异常 (忽略): %s", e)
 
     def _on_qt_exit(self) -> None:
         """Qt 退出信号处理"""
         logger.info("用户请求退出 (Qt)")
+        # 先移除托盘图标，避免残留在系统托盘中
+        if hasattr(self, '_qt_window') and self._qt_window is not None:
+            if hasattr(self._qt_window, '_tray_icon') and self._qt_window._tray_icon is not None:
+                self._qt_window._tray_icon.hide()
+                logger.info("托盘图标已移除")
         self._qt_app.quit()
-
-    def _on_qt_calibrate(self) -> None:
-        """Qt 窗口校准按钮处理"""
-        logger.info("校准按钮点击 (Qt 模式)")
-        # v4.2 校准模块使用 OpenCV 窗口，暂时走现有流程
-        # Phase C 将迁移校准 UI 到 Qt
-        self._qt_window.set_paused(True)
-        try:
-            self.start_calibration_flow()
-        finally:
-            self._qt_window.set_paused(False)
 
     def _handle_keyboard(self, key: int) -> None:
         """处理键盘输入
@@ -1463,6 +1706,12 @@ class EyeFocusApp:
             return
 
         try:
+            # 0. 打印离屏统计
+            if getattr(self, '_frame_processor', None) is not None:
+                away = self._frame_processor.away_seconds
+                if away > 0:
+                    logger.info("会话离屏统计: 共 %.1f 秒", away)
+
             # 1. 更新会话结束时间
             self._db.update_session(
                 self._session_id,
@@ -1500,6 +1749,9 @@ class EyeFocusApp:
 
         # 结束会话并生成报告（必须在 DB 关闭前）
         self._finalize_session()
+
+        # v4.16: 强制移除托盘图标
+        self._tray_cleanup()
 
         # 恢复信号处理器
         if self._original_sigint:
@@ -1652,6 +1904,11 @@ class EyeFocusApp:
                 is_calibrated=True,
             )
 
+        # v4.13: 校准完成后标记已校准 + 隐藏提示
+        self._calib_loaded = True
+        if self._qt_window is not None:
+            self._qt_window.set_calibration_prompt(False)
+
         logger.info(
             "v4.2 校准结果已应用: EAR=%.4f, 眨眼阈值=%.4f, adjustment=%.3f",
             result.signal.ear_mean,
@@ -1660,8 +1917,54 @@ class EyeFocusApp:
         )
 
 
+def _check_single_instance() -> bool:
+    """v4.16: 单实例锁 — PID + 时间戳双重验证。
+
+    锁文件格式: "PID TIMESTAMP"
+    1) PID 仍存活 → 拒绝
+    2) 锁文件超过 30 秒且 PID 已死 → 视为残留锁，覆盖
+    3) 任一检查失败 → 允许启动（不阻塞）
+    """
+    import atexit
+    import ctypes
+    import time as _time
+    tmp = os.environ.get('TEMP', os.path.expanduser('~'))
+    lock_file = os.path.join(tmp, 'eyefocus_instance.lock')
+    try:
+        if os.path.exists(lock_file):
+            with open(lock_file, 'r') as f:
+                content = f.read().strip()
+            parts = content.split()
+            old_pid = int(parts[0]) if parts else None
+            old_ts = float(parts[1]) if len(parts) > 1 else 0
+            if old_pid:
+                alive = False
+                try:
+                    kernel32 = ctypes.windll.kernel32
+                    h = kernel32.OpenProcess(0x0400, False, old_pid)
+                    if h:
+                        kernel32.CloseHandle(h)
+                        alive = True
+                except Exception:
+                    pass
+                if alive and (_time.time() - old_ts) < 30:
+                    return False
+        # 写新锁
+        with open(lock_file, 'w') as f:
+            f.write(f"{os.getpid()} {_time.time()}")
+        atexit.register(lambda: os.path.exists(lock_file) and os.remove(lock_file))
+        return True
+    except Exception:
+        return True
+
+
 def main() -> None:
     """主函数"""
+    # v4.16: 单实例检查
+    if not _check_single_instance():
+        print("EyeFocus Insight 已在运行中，请查看系统托盘。")
+        sys.exit(0)
+
     # v4.0.2 修复 B4+B6: 屏蔽 MediaPipe Google telemetry 上报 + 统一 absl 日志风格
     # 1) 禁用 mediapipe 上报 (clearcut_uploader)
     os.environ.setdefault("GLOG_logtostderr", "0")

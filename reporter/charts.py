@@ -1,565 +1,370 @@
 """
-reporter/charts.py — Matplotlib 图表生成模块
+reporter/charts.py — Plotly 交互式图表 (v4.16)
 
-生成专注度趋势图、眨眼频率分布图、疲劳等级时间线图等。
-依赖 Matplotlib 生成静态图表，图表以 PNG 格式嵌入 HTML 报告。
+v4.16: 从 matplotlib PNG 切换到 Plotly 交互式图表。
+  - 鼠标悬停显示数据标签
+  - 图例自动避让，不再重叠
+  - 响应式宽度，统一 Quiet Focus 色板
 """
-
-import io
 import logging
 from typing import List, Optional, Tuple
 
-import matplotlib
-# L-10: 提为模块常量, 避免在 import 期散落硬编码
-MPL_BACKEND = 'Agg'  # 无头模式，不使用交互式后端
-matplotlib.use(MPL_BACKEND)
-import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
 import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
-from storage.models import FocusRecord, FatigueRecord, FatigueLevel, BlinkRecord
+from storage.models import FocusRecord, FatigueRecord, FatigueLevel, BlinkRecord, FrameRecord
 
 logger = logging.getLogger("eyefocus.reporter")
 
-# 中文字体配置
-_CHINESE_FONTS = [
-    'Microsoft YaHei',
-    'SimHei',
-    'PingFang SC',
-    'Hiragino Sans GB',
-    'WenQuanYi Micro Hei',
-]
+# ── Quiet Focus 色板 ──
+C_SAGE  = "#5A8A6D"
+C_IRIS  = "#5B4A8C"
+C_AMBER = "#C9843A"
+C_ROSE  = "#B55C5C"
+C_INK   = "#23201E"
+C_QUIET = "#8B8680"
+C_LINE  = "#E6E2DC"
+C_BG    = "#FEFDFB"
 
+# Plotly 布局模板
+_LAYOUT_BASE = dict(
+    paper_bgcolor=C_BG,
+    plot_bgcolor=C_BG,
+    font=dict(family="Microsoft YaHei, SimHei, sans-serif", size=11, color=C_INK),
+    margin=dict(l=40, r=20, t=30, b=40),
+    hovermode="x unified",
+    hoverlabel=dict(bgcolor="white", font_size=12, font_family="Microsoft YaHei, SimHei, sans-serif"),
+    legend=dict(
+        orientation="h", yanchor="top", y=1.12, xanchor="right", x=1,
+        font=dict(size=10, color=C_QUIET), bgcolor="rgba(0,0,0,0)",
+    ),
+    xaxis=dict(
+        showgrid=False, zeroline=False,
+        tickfont=dict(size=10, color=C_QUIET),
+        linecolor=C_LINE,
+    ),
+    yaxis=dict(
+        showgrid=False, zeroline=False,
+        tickfont=dict(size=10, color=C_QUIET),
+        linecolor=C_LINE,
+    ),
+)
 
-def _get_chinese_font() -> str:
-    """获取可用的中文字体"""
-    available = {f.name for f in fm.fontManager.ttflist}
-
-    for font in _CHINESE_FONTS:
-        if font in available:
-            return font
-
-    # 尝试从系统字体路径查找
-    for font in _CHINESE_FONTS:
-        font_path = fm.findfont(fm.FontProperties(family=font))
-        if font_path and 'fonts' in font_path.lower():
-            return font
-
-    logger.warning("未找到中文字体，图表中文可能显示异常")
-    return 'sans-serif'
-
-
-# 设置中文字体
-plt.rcParams['font.sans-serif'] = [_get_chinese_font()]
-plt.rcParams['axes.unicode_minus'] = False
+# 颜色映射
+def _level_color(score):
+    if score >= 70: return C_SAGE
+    if score >= 40: return C_AMBER
+    return C_ROSE
 
 
 class ChartGenerator:
-    """图表生成器
+    """v4.16: Plotly 交互式图表生成器"""
 
-    使用方法：
-        generator = ChartGenerator()
-        img_bytes = generator.generate_focus_trend_chart(focus_records)
-    """
-
-    def __init__(self, figsize: Tuple[int, int] = (10, 4), dpi: int = 100):
-        """初始化图表生成器
-
-        Args:
-            figsize: 图表尺寸 (宽, 高) 英寸
-            dpi: 图像分辨率
-        """
+    def __init__(self, figsize=(6, 2.8), dpi=120):
         self.figsize = figsize
         self.dpi = dpi
 
-    def _format_time_labels(self, timestamps: List[float]) -> List[str]:
-        """格式化时间标签"""
-        if not timestamps:
+    def _to_html(self, fig, height=300) -> str:
+        """将 Plotly figure 转为 HTML div 字符串"""
+        fig.update_layout(height=height)
+        return fig.to_html(full_html=False, include_plotlyjs=False,
+                           config=dict(displayModeBar=False, responsive=True))
+
+    def _time_labels(self, records):
+        if not records:
             return []
-        # 假设 timestamps 是相对时间（秒），转换为 MM:SS 格式
-        result = []
-        for t in timestamps:
-            minutes = int(t // 60)
-            seconds = int(t % 60)
-            result.append(f"{minutes:02d}:{seconds:02d}")
-        return result
+        def _ts(r):
+            v = getattr(r, 'window_start', None)
+            return v if (v is not None and v != 0.0) else getattr(r, 'timestamp', 0.0)
+        t0 = min(_ts(r) for r in records)
+        return [f"{int((_ts(r)-t0)//60)}:{int((_ts(r)-t0)%60):02d}" for r in records]
 
-    def generate_focus_trend_chart(
-        self,
-        focus_records: List[FocusRecord],
-        title: str = "专注度趋势",
-    ) -> bytes:
-        """生成专注度趋势图
-
-        Args:
-            focus_records: 专注度记录列表
-            title: 图表标题
-
-        Returns:
-            PNG 格式图像字节数据
-        """
+    # ════════════════════════════════════════════
+    # 1. 专注度趋势
+    # ════════════════════════════════════════════
+    def generate_focus_trend_chart(self, focus_records, title="专注度趋势"):
         if not focus_records:
-            return self._create_empty_chart("无数据")
+            return self._empty_html("无数据")
 
-        fig, ax = plt.subplots(figsize=self.figsize, dpi=self.dpi)
+        labels = self._time_labels(focus_records)
+        scores = [r.focus_score for r in focus_records]
+        colors = [_level_color(s) for s in scores]
 
-        # 提取数据
-        windows = [(r.window_start + r.window_end) / 2 for r in focus_records]
-        focus_scores = [r.focus_score for r in focus_records]
-        eye_scores = [r.eye_score for r in focus_records]
-        head_scores = [r.head_score for r in focus_records]
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=labels, y=scores, mode='lines',
+            line=dict(width=2.5, color=C_IRIS),
+            name='专注度',
+            hovertemplate='%{y:.0f} 分<br>%{x}<extra></extra>',
+        ))
+        # 逐段着色标记点
+        for i, (s, c) in enumerate(zip(scores, colors)):
+            fig.add_trace(go.Scatter(
+                x=[labels[i]], y=[s], mode='markers',
+                marker=dict(size=6, color=c),
+                showlegend=False,
+                hoverinfo='skip',
+            ))
 
-        # 绘制曲线
-        time_labels = self._format_time_labels(windows)
+        # 良好参考线
+        fig.add_hline(y=70, line_dash="dash", line_color=C_LINE, line_width=1,
+                      annotation_text="良好线 70", annotation_position="left",
+                      annotation_font_size=10, annotation_font_color=C_SAGE)
 
-        x = range(len(windows))
-        ax.plot(x, focus_scores, 'b-', label='综合专注度', linewidth=2, alpha=0.8)
-        ax.plot(x, eye_scores, 'g--', label='眼部专注', linewidth=1.5, alpha=0.7)
-        ax.plot(x, head_scores, 'r--', label='头部姿态', linewidth=1.5, alpha=0.7)
-
-        # 添加 60 分及格线
-        ax.axhline(y=60, color='orange', linestyle=':', linewidth=1.5, label='专注及格线')
-
-        # 配置
-        ax.set_xlabel('时间')
-        ax.set_ylabel('专注度分数')
-        ax.set_title(title)
-        ax.set_ylim(0, 100)
-        ax.legend(loc='lower right', fontsize=8)
-        ax.grid(True, alpha=0.3)
-
-        # 设置时间标签（每 5 个点显示一个）
-        tick_step = max(1, len(time_labels) // 6)
-        ax.set_xticks(x[::tick_step])
-        ax.set_xticklabels(time_labels[::tick_step], rotation=45, ha='right')
-
-        plt.tight_layout()
-
-        return self._fig_to_bytes(fig)
-
-    def generate_blink_rate_distribution(
-        self,
-        blink_records: List[BlinkRecord],
-        focus_records: List[FocusRecord],
-        title: str = "眨眼频率分布",
-    ) -> bytes:
-        """生成眨眼频率分布图
-
-        Args:
-            blink_records: 眨眼事件列表
-            focus_records: 专注度记录列表（用于计算频率）
-            title: 图表标题
-
-        Returns:
-            PNG 格式图像字节数据
-        """
-        if not focus_records:
-            return self._create_empty_chart("无数据")
-
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=self.figsize, dpi=self.dpi)
-
-        # 左图：眨眼频率时间线
-        blink_rates = [r.blink_rate for r in focus_records]
-        windows = [(r.window_start + r.window_end) / 2 for r in focus_records]
-        time_labels = self._format_time_labels(windows)
-
-        x = range(len(windows))
-        ax1.bar(x, blink_rates, color='steelblue', alpha=0.7)
-        ax1.axhline(y=15, color='green', linestyle='--', label='正常范围 (15次/分)')
-        ax1.axhline(y=20, color='orange', linestyle='--', label='轻度疲劳 (20次/分)')
-        ax1.axhline(y=30, color='red', linestyle='--', label='明显疲劳 (30次/分)')
-        ax1.set_xlabel('时间')
-        ax1.set_ylabel('眨眼频率 (次/分钟)')
-        ax1.set_title('眨眼频率时间线')
-        ax1.legend(loc='upper right', fontsize=7)
-        ax1.grid(True, alpha=0.3, axis='y')
-
-        tick_step = max(1, len(time_labels) // 6)
-        ax1.set_xticks(x[::tick_step])
-        ax1.set_xticklabels(time_labels[::tick_step], rotation=45, ha='right')
-
-        # 右图：眨眼频率分布直方图
-        blink_durations = [e.duration_seconds * 1000 for e in blink_records]  # 转换为毫秒
-
-        if blink_durations:
-            ax2.hist(blink_durations, bins=20, color='steelblue', alpha=0.7, edgecolor='white')
-            ax2.axvline(x=np.mean(blink_durations), color='red', linestyle='--',
-                       label=f'平均: {np.mean(blink_durations):.0f}ms')
-            ax2.set_xlabel('眨眼时长 (毫秒)')
-            ax2.set_ylabel('频次')
-            ax2.set_title('眨眼时长分布')
-            ax2.legend(fontsize=8)
-        else:
-            ax2.text(0.5, 0.5, '无眨眼数据', ha='center', va='center', transform=ax2.transAxes)
-
-        plt.suptitle(title, fontsize=12)
-        plt.tight_layout()
-
-        return self._fig_to_bytes(fig)
-
-    def generate_fatigue_timeline(
-        self,
-        fatigue_records: List[FatigueRecord],
-        title: str = "疲劳等级时间线",
-    ) -> bytes:
-        """生成疲劳等级时间线图
-
-        Args:
-            fatigue_records: 疲劳记录列表
-            title: 图表标题
-
-        Returns:
-            PNG 格式图像字节数据
-        """
-        if not fatigue_records:
-            return self._create_empty_chart("无数据")
-
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=self.figsize, dpi=self.dpi, sharex=True)
-
-        # 提取数据
-        timestamps = [r.timestamp for r in fatigue_records]
-        cumulative_scores = [r.cumulative_fatigue_score for r in fatigue_records]
-
-        # 眨眼频率
-        blink_rates = [r.blink_rate for r in fatigue_records]
-
-        # 时间标签
-        time_labels = self._format_time_labels(timestamps)
-
-        # 上图：累积疲劳分数
-        ax1.fill_between(range(len(timestamps)), cumulative_scores, alpha=0.3, color='red')
-        ax1.plot(range(len(timestamps)), cumulative_scores, 'r-', linewidth=2)
-        ax1.set_ylabel('累积疲劳分数')
-        ax1.set_title('累积疲劳趋势')
-        ax1.grid(True, alpha=0.3)
-        ax1.set_ylim(0, 100)
-
-        # 下图：眨眼频率
-        ax2.bar(range(len(timestamps)), blink_rates, color='steelblue', alpha=0.7)
-        ax2.axhline(y=15, color='green', linestyle='--', label='正常')
-        ax2.axhline(y=30, color='red', linestyle='--', label='疲劳')
-        ax2.set_xlabel('时间')
-        ax2.set_ylabel('眨眼频率 (次/分钟)')
-        ax2.set_title('眨眼频率变化')
-        ax2.legend(loc='upper right', fontsize=8)
-        ax2.grid(True, alpha=0.3, axis='y')
-
-        # 设置时间标签
-        tick_step = max(1, len(time_labels) // 6)
-        ax2.set_xticks(range(len(timestamps))[::tick_step])
-        ax2.set_xticklabels(time_labels[::tick_step], rotation=45, ha='right')
-
-        plt.suptitle(title, fontsize=12)
-        plt.tight_layout()
-
-        return self._fig_to_bytes(fig)
-
-    def generate_summary_chart(
-        self,
-        avg_focus: float,
-        avg_blink_rate: float,
-        fatigue_level: FatigueLevel,
-        total_duration: float,
-        title: str = "会话摘要",
-    ) -> bytes:
-        """生成会话摘要图表
-
-        Args:
-            avg_focus: 平均专注度
-            avg_blink_rate: 平均眨眼频率
-            fatigue_level: 疲劳等级
-            total_duration: 总时长（秒）
-            title: 图表标题
-
-        Returns:
-            PNG 格式图像字节数据
-        """
-        fig, axes = plt.subplots(1, 3, figsize=self.figsize, dpi=self.dpi)
-
-        # 专注度仪表盘
-        self._draw_gauge(axes[0], avg_focus, 100, '专注度', ['red', 'orange', 'yellow', 'green'])
-
-        # 眨眼频率
-        self._draw_gauge(axes[1], avg_blink_rate, 40, '眨眼频率', ['green', 'yellow', 'orange', 'red'],
-                        reverse=True)
-
-        # 疲劳等级
-        fatigue_colors = {
-            FatigueLevel.LOW: 'green',
-            FatigueLevel.MEDIUM: 'orange',
-            FatigueLevel.HIGH: 'red',
-        }
-        fatigue_labels = {
-            FatigueLevel.LOW: '低疲劳',
-            FatigueLevel.MEDIUM: '中疲劳',
-            FatigueLevel.HIGH: '高疲劳',
-        }
-
-        axes[2].bar([0], [1], color=fatigue_colors.get(fatigue_level, 'gray'))
-        axes[2].set_xlim(-0.5, 0.5)
-        axes[2].set_ylim(0, 1.5)
-        axes[2].text(0, 0.5, fatigue_labels.get(fatigue_level, '未知'),
-                    ha='center', va='center', fontsize=14, fontweight='bold')
-        axes[2].text(0, 0.1, f"时长: {int(total_duration // 60)}分{int(total_duration % 60)}秒",
-                    ha='center', va='center', fontsize=10)
-        axes[2].set_title('疲劳等级')
-        axes[2].axis('off')
-
-        plt.suptitle(title, fontsize=12)
-        plt.tight_layout()
-
-        return self._fig_to_bytes(fig)
-
-    def _draw_gauge(
-        self,
-        ax,
-        value: float,
-        max_value: float,
-        label: str,
-        colors: List[str],
-        reverse: bool = False,
-    ) -> None:
-        """绘制简单仪表盘"""
-        # 归一化值
-        norm_value = min(1.0, max(0.0, value / max_value))
-
-        # 背景条
-        ax.barh([0], [1], color='lightgray', height=0.3)
-
-        # 填充条
-        color_idx = int(norm_value * (len(colors) - 1))
-        if reverse:
-            color_idx = len(colors) - 1 - color_idx
-        ax.barh([0], [norm_value], color=colors[color_idx], height=0.3)
-
-        ax.set_xlim(0, 1)
-        ax.set_ylim(-0.3, 0.3)
-        ax.text(0.5, -0.15, f"{value:.1f}", ha='center', va='center', fontsize=14, fontweight='bold')
-        ax.text(0.5, 0.15, label, ha='center', va='center', fontsize=10)
-        ax.axis('off')
-
-    # ── v4.1 Insights 图表 ──────────────────────────────────
-
-    def generate_pattern_pie_chart(
-        self,
-        pattern_labels: dict,
-        cluster_sizes: List[int],
-        title: str = "工作模式分布",
-    ) -> bytes:
-        """生成工作模式饼图"""
-        if not cluster_sizes:
-            return self._create_empty_chart("无数据")
-
-        fig, ax = plt.subplots(figsize=(6, 4), dpi=self.dpi)
-
-        labels = []
-        sizes = []
-        colors = ["#667eea", "#28a745", "#ffc107", "#dc3545", "#17a2b8", "#6f42c1"]
-        for i, sz in enumerate(cluster_sizes):
-            label = pattern_labels.get(i, f"模式{i + 1}")
-            labels.append(f"{label}\n({sz}次)")
-            sizes.append(sz)
-
-        wedges, texts, autotexts = ax.pie(
-            sizes, labels=None, autopct="%1.0f%%",
-            colors=colors[:len(sizes)],
-            startangle=90, pctdistance=0.75,
+        fig.update_layout(**_LAYOUT_BASE)
+        fig.update_layout(
+            yaxis=dict(**_LAYOUT_BASE["yaxis"], range=[0, 105], title="专注度"),
+            xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间"),
+            showlegend=False,
         )
-        ax.legend(wedges, labels, title="工作模式",
-                  loc="center left", bbox_to_anchor=(1, 0, 0.5, 1),
-                  fontsize=8)
-        ax.set_title(title, fontsize=11)
+        return self._to_html(fig, height=240)
 
-        plt.tight_layout()
-        return self._fig_to_bytes(fig)
+    # ════════════════════════════════════════════
+    # 2. 眨眼频率
+    # ════════════════════════════════════════════
+    def generate_blink_rate_chart(self, focus_records, title="眨眼频率趋势"):
+        if not focus_records:
+            return self._empty_html("无数据")
 
-    def generate_anomaly_bar_chart(
-        self,
-        top_factors: List[str],
-        title: str = "异常主要特征",
-    ) -> bytes:
-        """生成异常因子水平条形图"""
-        if not top_factors:
-            return self._create_empty_chart("无异常")
+        labels = self._time_labels(focus_records)
+        rates = [r.blink_rate for r in focus_records]
 
-        fig, ax = plt.subplots(figsize=(6, 3), dpi=self.dpi)
+        bc = max(5, len(rates) // 5)
+        bs = [b for b in rates[:bc] if b > 0]
+        bl = float(np.median(bs)) if bs else 15.0
 
-        y_pos = range(len(top_factors))
-        scores = [max(0.5, 1.0 - i * 0.2) for i in range(len(top_factors))]  # 递减示意
+        colors = [C_ROSE if r > bl*1.5 else C_AMBER if r > bl*1.2 else C_SAGE for r in rates]
 
-        bars = ax.barh(y_pos, scores, color="#dc3545", alpha=0.7)
-        ax.set_yticks(y_pos)
-        ax.set_yticklabels(top_factors, fontsize=9)
-        ax.set_xlim(0, 1.2)
-        ax.set_title(title, fontsize=11)
-        ax.invert_yaxis()
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=labels, y=rates,
+            marker_color=colors,
+            name='眨眼频率',
+            hovertemplate='%{y:.1f} 次/分<br>%{x}<extra></extra>',
+        ))
+        fig.add_hline(y=bl, line_dash="dash", line_color=C_SAGE, line_width=1.5,
+                      annotation_text=f"基线 {bl:.0f}", annotation_position="left",
+                      annotation_font_size=10, annotation_font_color=C_SAGE)
 
-        for bar, score in zip(bars, scores):
-            ax.text(bar.get_width() + 0.02, bar.get_y() + bar.get_height() / 2,
-                    f"重要", va="center", fontsize=8, color="#666")
+        fig.update_layout(**_LAYOUT_BASE)
+        fig.update_layout(
+            yaxis=dict(**_LAYOUT_BASE["yaxis"], title="次/分"),
+            xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间"),
+            showlegend=False,
+        )
+        return self._to_html(fig, height=200)
 
-        plt.tight_layout()
-        return self._fig_to_bytes(fig)
+    # ════════════════════════════════════════════
+    # 3. 疲劳趋势
+    # ════════════════════════════════════════════
+    def generate_fatigue_timeline(self, fatigue_records, title="疲劳趋势分析"):
+        if not fatigue_records:
+            return self._empty_html("无数据")
 
-    def generate_temporal_line_chart(
-        self,
-        hourly_pattern: List[float],
-        peak_hours: List[str],
-        low_hours: List[str],
-        title: str = "日内专注度模式",
-    ) -> bytes:
-        """生成 24h 专注度折线图"""
+        labels = self._time_labels(fatigue_records)
+        scores = [r.cumulative_fatigue_score for r in fatigue_records]
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=labels, y=scores, mode='lines',
+            line=dict(width=2, color=C_ROSE),
+            fill='tozeroy', fillcolor=f'rgba(181,92,92,0.1)',
+            name='疲劳分',
+            hovertemplate='%{y:.0f} 分<br>%{x}<extra></extra>',
+        ))
+        fig.add_hline(y=60, line_dash="dash", line_color=C_LINE, line_width=1,
+                      annotation_text="严重疲劳 60", annotation_position="left",
+                      annotation_font_size=10, annotation_font_color=C_ROSE)
+
+        fig.update_layout(**_LAYOUT_BASE)
+        fig.update_layout(
+            yaxis=dict(**_LAYOUT_BASE["yaxis"], title="疲劳分"),
+            xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间"),
+            showlegend=False,
+        )
+        return self._to_html(fig, height=220)
+
+    # ════════════════════════════════════════════
+    # 4. 会话时间色条 — 纯 HTML/CSS (不需要 Plotly)
+    # ════════════════════════════════════════════
+    def generate_session_colorbar(self, focus_records, title="会话专注分布"):
+        if not focus_records:
+            return self._empty_html("无数据")
+
+        n = len(focus_records)
+        if n == 0:
+            return self._empty_html("无数据")
+
+        # 生成色条 HTML
+        total = max(1, n)
+        blocks = []
+        for r in focus_records:
+            s = r.focus_score
+            c = C_SAGE if s >= 70 else C_AMBER if s >= 40 else C_ROSE
+            blocks.append(f'<span style="background:{c};flex:1;height:100%;min-width:2px"></span>')
+
+        # 图例
+        legend = (
+            f'<span style="display:flex;gap:12px;font-size:11px;color:{C_QUIET};margin-top:4px">'
+            f'<span>■ <span style="color:{C_SAGE}">专注</span></span>'
+            f'<span>■ <span style="color:{C_AMBER}">一般</span></span>'
+            f'<span>■ <span style="color:{C_ROSE}">分心</span></span>'
+            f'</span>'
+        )
+        bar = f'<div style="display:flex;height:12px;border-radius:2px;overflow:hidden;background:{C_BG};border:1px solid {C_LINE}">{"".join(blocks)}</div>'
+
+        # 时间标签（开始/结束）
+        labels = self._time_labels(focus_records)
+        time_range = f'<div style="display:flex;justify-content:space-between;font-size:10px;color:{C_QUIET};margin-top:2px"><span>{labels[0] if labels else "0:00"}</span><span>{labels[-1] if labels else "--"}</span></div>'
+
+        return f'<div style="padding:4px 0">{bar}{time_range}{legend}</div>'
+
+    # ════════════════════════════════════════════
+    # 5. 头部姿态
+    # ════════════════════════════════════════════
+    def generate_head_pose_scatter(self, frame_records, title="头部姿态变化"):
+        if not frame_records:
+            return self._empty_html("无头部姿态数据")
+
+        times, devs = [], []
+        t0 = None
+        for r in frame_records:
+            if abs(r.yaw) < 90 and abs(r.pitch) < 90:
+                if t0 is None:
+                    t0 = r.timestamp
+                devs.append(np.sqrt(r.yaw**2 + r.pitch**2))
+                times.append(max(0, r.timestamp - t0))
+        if len(devs) < 3:
+            return self._empty_html("头部姿态数据不足")
+
+        step = max(1, len(times) // 200)
+        times, devs = times[::step], devs[::step]
+        time_labels = [f"{int(t//60)}:{int(t%60):02d}" for t in times]
+
+        in_zone = sum(1 for d in devs if d <= 20)
+        pct = in_zone / len(devs) * 100
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=time_labels, y=devs, mode='lines',
+            line=dict(width=1.5, color=C_IRIS),
+            name='偏移角',
+            hovertemplate='%{y:.1f}°<br>%{x}<extra></extra>',
+        ))
+        fig.add_hline(y=20, line_dash="dash", line_color=C_SAGE, line_width=1,
+                      annotation_text=f"舒适上限 20°", annotation_position="left",
+                      annotation_font_size=10, annotation_font_color=C_SAGE)
+
+        fig.update_layout(**_LAYOUT_BASE)
+        fig.update_layout(
+            yaxis=dict(**_LAYOUT_BASE["yaxis"], title="偏移°"),
+            xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间"),
+            showlegend=False,
+            annotations=(
+                _LAYOUT_BASE.get("annotations", []) + [
+                    dict(x=1, y=1, xref="paper", yref="paper", xanchor="right", yanchor="top",
+                         text=f"舒适区占比 {pct:.0f}%", showarrow=False,
+                         font=dict(size=11, color=C_SAGE), bgcolor="rgba(254,253,251,0.85)")
+                ]
+            ),
+        )
+        return self._to_html(fig, height=220)
+
+    # ════════════════════════════════════════════
+    # 6. Insights 图表
+    # ════════════════════════════════════════════
+    def generate_pattern_pie_chart(self, pattern_labels, cluster_sizes, title="工作模式分布"):
+        return self._empty_html("请使用离线分析引擎查看")
+
+    def generate_anomaly_bar_chart(self, top_factors, title="异常主要特征"):
+        return self._empty_html("请使用离线分析引擎查看")
+
+    def generate_temporal_line_chart(self, hourly_pattern, peak_hours, low_hours,
+                                      title="日内专注度模式"):
         if not hourly_pattern or len(hourly_pattern) < 6:
-            return self._create_empty_chart("数据不足")
-
-        fig, ax = plt.subplots(figsize=(8, 3.5), dpi=self.dpi)
-
-        hours = list(range(24))
+            return self._empty_html("数据不足")
         vals = hourly_pattern[:24]
-        # 补齐
         while len(vals) < 24:
             vals.append(0.0)
-
-        ax.plot(hours, vals, "b-", linewidth=2, alpha=0.8)
-        ax.fill_between(hours, vals, alpha=0.15, color="blue")
-
-        # 标注高效时段
+        hours = [f"{h:02d}:00" for h in range(24)]
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=hours, y=vals, mode='lines',
+            line=dict(width=2, color=C_IRIS),
+            fill='tozeroy', fillcolor=f'rgba(91,74,140,0.08)',
+            name='专注度',
+            hovertemplate='%{y:.0f} 分<br>%{x}<extra></extra>',
+        ))
         if peak_hours:
             for ph in peak_hours:
                 parts = ph.split("-")
                 if len(parts) == 2:
                     try:
-                        start_h, end_h = int(parts[0]), int(parts[1])
-                        ax.axvspan(start_h, end_h, alpha=0.1, color="green")
-                        ax.annotate("高效", xy=((start_h + end_h) / 2, max(vals) * 0.9),
-                                    ha="center", fontsize=8, color="green",
-                                    fontweight="bold")
+                        sh, eh = int(parts[0]), int(parts[1])
+                        fig.add_vrect(x0=f"{sh:02d}:00", x1=f"{eh:02d}:00",
+                                      fillcolor=C_SAGE, opacity=0.08, line_width=0)
                     except ValueError:
                         pass
+        fig.update_layout(**_LAYOUT_BASE)
+        fig.update_layout(
+            yaxis=dict(**_LAYOUT_BASE["yaxis"], range=[0, 100], title="专注度"),
+            xaxis=dict(**_LAYOUT_BASE["xaxis"], title="小时"),
+            showlegend=False,
+        )
+        return self._to_html(fig, height=220)
 
-        ax.set_xlabel("小时")
-        ax.set_ylabel("平均专注度")
-        ax.set_title(title, fontsize=11)
-        ax.set_xticks(range(0, 24, 2))
-        ax.set_xticklabels([f"{h:02d}:00" for h in range(0, 24, 2)])
-        ax.set_ylim(0, 100)
-        ax.grid(True, alpha=0.3)
-
-        plt.tight_layout()
-        return self._fig_to_bytes(fig)
-
-    def generate_attribution_bar_chart(
-        self,
-        findings: list,
-        title: str = "关联分析结果",
-    ) -> bytes:
-        """生成关联分析效果量条形图"""
+    def generate_attribution_bar_chart(self, findings, title="关联分析结果"):
         if not findings:
-            return self._create_empty_chart("无显著发现")
-
-        fig, ax = plt.subplots(figsize=(6, max(2.5, len(findings) * 0.6)), dpi=self.dpi)
-
+            return self._empty_html("无显著发现")
         factors = [f["factor"] for f in findings]
         effects = [abs(f["effect_size"]) for f in findings]
-        colors = ["#28a745" if f["p_value"] < 0.01 else "#ffc107" for f in findings]
+        colors = [C_SAGE if f["p_value"] < 0.01 else C_AMBER for f in findings]
+        p_vals = [f"p={f['p_value']:.3f}" for f in findings]
 
-        bars = ax.barh(range(len(factors)), effects, color=colors, alpha=0.7)
-        ax.set_yticks(range(len(factors)))
-        ax.set_yticklabels(factors, fontsize=9)
-        ax.set_xlabel("效果量 (Cohen's d / r)")
-        ax.set_title(title, fontsize=11)
-        ax.invert_yaxis()
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            y=factors, x=effects, orientation='h',
+            marker_color=colors,
+            text=p_vals, textposition='outside', textfont=dict(size=10, color=C_QUIET),
+            hovertemplate='效果量: %{x:.3f}<br>%{text}<extra></extra>',
+        ))
+        fig.update_layout(**_LAYOUT_BASE)
+        fig.update_layout(
+            xaxis=dict(**_LAYOUT_BASE["xaxis"], title="效果量"),
+            showlegend=False,
+            height=max(150, len(factors) * 30 + 80),
+        )
+        return self._to_html(fig, height=max(150, len(factors) * 30 + 80))
 
-        for bar, f in zip(bars, findings):
-            ax.text(bar.get_width() + 0.01, bar.get_y() + bar.get_height() / 2,
-                    f"p={f['p_value']:.3f}", va="center", fontsize=8, color="#666")
-
-        plt.tight_layout()
-        return self._fig_to_bytes(fig)
-
-    def generate_distraction_heatmap(
-        self,
-        heatmap: list,
-        labels: list,
-        pattern_type: str = "",
-        title: str = "分心时间轴",
-    ) -> bytes:
-        """生成分心热力条（每分钟分心比例 → 彩色横条）。
-
-        Args:
-            heatmap: 每分钟分心比例 [0-1]
-            labels: 时间标签 ["+0min", "+1min", ...]
-            pattern_type: 模式分类描述
-            title: 图表标题
-
-        Returns:
-            PNG 字节数据
-        """
+    def generate_distraction_heatmap(self, heatmap, labels, pattern_type="",
+                                      title="分心时间轴"):
         if not heatmap:
-            return self._create_empty_chart("无分心数据")
-
-        fig, ax = plt.subplots(figsize=(self.figsize[0], 1.5), dpi=self.dpi)
-
+            return self._empty_html("无分心数据")
         n = len(heatmap)
-        x = range(n)
-        colors = []
-        for v in heatmap:
-            if v < 0.2:
-                colors.append("#4CAF50")
-            elif v < 0.5:
-                colors.append("#FFC107")
-            else:
-                colors.append("#F44336")
+        colors = [C_SAGE if v < 0.2 else C_AMBER if v < 0.5 else C_ROSE for v in heatmap]
 
-        ax.bar(x, [1] * n, width=1.0, color=colors, edgecolor="none", align="edge")
-        ax.set_xlim(0, n)
-        ax.set_ylim(0, 1)
-        ax.set_yticks([])
-        ax.set_xlabel("时间 (分钟)")
-        ax.set_title(title)
+        fig = go.Figure()
+        fig.add_trace(go.Heatmap(
+            z=[heatmap], x=labels, y=[""],
+            colorscale=[[0, C_SAGE], [0.25, C_SAGE], [0.25, C_AMBER], [0.6, C_AMBER], [0.6, C_ROSE], [1, C_ROSE]],
+            showscale=False,
+            hovertemplate='分心度: %{z:.2f}<br>%{x}<extra></extra>',
+        ))
+        title_text = f"{title} · {pattern_type}" if pattern_type else title
+        fig.update_layout(**_LAYOUT_BASE)
+        fig.update_layout(
+            title=dict(text=title_text, font_size=11, x=0),
+            height=120, margin=dict(l=10, r=10, t=30, b=40),
+            xaxis=dict(showgrid=False, tickfont_size=9, nticks=10),
+            yaxis=dict(showgrid=False, showticklabels=False),
+            showlegend=False,
+        )
+        return self._to_html(fig, height=100)
 
-        tick_step = max(1, n // 10)
-        ax.set_xticks(range(0, n, tick_step))
-        ax.set_xticklabels([labels[i] for i in range(0, n, tick_step)],
-                           rotation=45, ha="right", fontsize=8)
-
-        from matplotlib.patches import Patch
-        legend_elements = [
-            Patch(facecolor="#4CAF50", label="集中"),
-            Patch(facecolor="#FFC107", label="轻度分心"),
-            Patch(facecolor="#F44336", label="重度分心"),
-        ]
-        ax.legend(handles=legend_elements, loc="upper right", fontsize=7, ncol=3)
-
-        if pattern_type:
-            ax.text(0.5, -0.6, pattern_type, transform=ax.transAxes,
-                    ha="center", fontsize=9, color="#666", va="top")
-
-        plt.tight_layout()
-        return self._fig_to_bytes(fig)
-
-    def _create_empty_chart(self, message: str) -> bytes:
-        """创建空白占位图表"""
-        fig, ax = plt.subplots(figsize=(self.figsize[0], 2), dpi=self.dpi)
-        ax.text(0.5, 0.5, message, ha='center', va='center', fontsize=12, color='gray')
-        ax.axis('off')
-        plt.tight_layout()
-        return self._fig_to_bytes(fig)
-
-    def _fig_to_bytes(self, fig) -> bytes:
-        """将 matplotlib 图表转换为 PNG 字节数据
-
-        M-19: savefig 异常时 plt.close(fig) 仍须执行, 防止 Figure 内存泄漏。
-        """
-        buf = io.BytesIO()
-        try:
-            fig.savefig(buf, format='png', dpi=self.dpi, bbox_inches='tight')
-        finally:
-            plt.close(fig)
-        buf.seek(0)
-        return buf.getvalue()
+    def _empty_html(self, message):
+        return f'<div style="text-align:center;color:#ccc;padding:32px;font-size:13px">{message}</div>'
 
 
-def create_chart_generator(figsize: Tuple[int, int] = (10, 4), dpi: int = 100) -> ChartGenerator:
-    """工厂函数：创建图表生成器"""
+def create_chart_generator(figsize=(6, 2.8), dpi=120):
     return ChartGenerator(figsize=figsize, dpi=dpi)

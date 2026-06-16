@@ -39,11 +39,12 @@ logger = logging.getLogger("eyefocus.reporter")
 
 @dataclass
 class ReportData:
-    """报告数据容器"""
+    """报告数据容器 (v4.13: +frame_records)"""
     session: Session
     focus_records: List[FocusRecord]
     fatigue_records: List[FatigueRecord]
     blink_records: List[BlinkRecord]
+    frame_records: List  # v4.13: FrameRecord 列表（头姿散点图用）
     avg_focus: float
     avg_blink_rate: float
     total_duration: float
@@ -58,163 +59,269 @@ class HTMLReportGenerator:
         html_content = generator.generate_report(session_id)
     """
 
-    # CSS 样式
+    # CSS 样式 (v4.8: 多 Tab 布局)
     CSS_STYLE = """
         <style>
-            * {
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
+            /* ═══════════════════════════════════════
+               Quiet Focus · 精密仪器美学
+               Palette: Warm Ink · Stone · Iris · Sage
+               ═══════════════════════════════════════ */
+            :root {
+                --ink: #23201E;
+                --stone: #F4F2EE;
+                --card: #FEFDFB;
+                --iris: #5B4A8C;
+                --sage: #5A8A6D;
+                --amber: #C9843A;
+                --rose: #B55C5C;
+                --quiet: #8B8680;
+                --line: #E6E2DC;
+                --line-light: #F0EDE8;
             }
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+
             body {
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
-                line-height: 1.6;
-                color: #333;
-                background: #f5f7fa;
-                padding: 20px;
+                line-height: 1.55; color: var(--ink); background: var(--stone);
+                padding: 32px 20px; -webkit-font-smoothing: antialiased;
             }
-            .container {
-                max-width: 1200px;
-                margin: 0 auto;
-            }
+            .container { max-width: 780px; margin: 0 auto; }
+
+            /* ── Header · 顶部 Iris accent 条 ── */
             .header {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white;
-                padding: 30px;
-                border-radius: 10px;
-                margin-bottom: 20px;
+                padding: 0 0 28px 0; margin-bottom: 0;
+                border-bottom: 1px solid var(--line);
+                position: relative;
+            }
+            .header::before {
+                content: ''; display: block; width: 100%; height: 3px;
+                background: var(--iris); margin-bottom: 24px;
             }
             .header h1 {
-                font-size: 28px;
-                margin-bottom: 10px;
+                font-family: Georgia, 'Times New Roman', 'SimSun', serif;
+                font-size: 22px; font-weight: 400; color: var(--ink);
+                letter-spacing: -0.3px; margin-bottom: 4px;
             }
             .header .subtitle {
-                opacity: 0.9;
-                font-size: 14px;
+                font-size: 12px; color: var(--quiet); font-weight: 400;
             }
-            .card {
-                background: white;
-                border-radius: 10px;
-                padding: 20px;
-                margin-bottom: 20px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+
+            /* ── Tab 导航 · 文字+下划线 ── */
+            .tab-bar {
+                display: flex; gap: 28px; padding: 14px 0; margin-bottom: 24px;
+                border-bottom: 1px solid var(--line); overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
             }
-            .card h2 {
-                font-size: 18px;
-                color: #444;
-                border-bottom: 2px solid #667eea;
-                padding-bottom: 10px;
-                margin-bottom: 15px;
+            .tab-btn {
+                padding: 4px 0; border: none; background: none; cursor: pointer;
+                font-size: 13px; color: var(--quiet); font-weight: 500;
+                font-family: inherit; position: relative; transition: color 0.15s;
+                white-space: nowrap; letter-spacing: 0.1px;
             }
+            .tab-btn:hover { color: var(--ink); }
+            .tab-btn.active { color: var(--iris); }
+            .tab-btn.active::after {
+                content: ''; position: absolute; bottom: -15px; left: 0; right: 0;
+                height: 2px; background: var(--iris); border-radius: 1px;
+            }
+            .tab-content { display: none; }
+            .tab-content.active { display: block; }
+
+            /* ── Hero 数字 · Iris 环形装饰 ── */
+            .focus-hero {
+                text-align: center; padding: 40px 0 32px; position: relative;
+            }
+            .focus-hero .hero-ring {
+                width: 140px; height: 140px; border-radius: 50%;
+                border: 1px solid var(--line);
+                position: absolute; top: 50%; left: 50%;
+                transform: translate(-50%, -50%);
+                pointer-events: none;
+            }
+            .focus-hero .hero-ring::after {
+                content: ''; width: 152px; height: 152px; border-radius: 50%;
+                border: 1px solid var(--line-light);
+                position: absolute; top: -7px; left: -7px;
+            }
+            .focus-hero .hero-value {
+                font-family: Georgia, 'Times New Roman', 'SimSun', serif;
+                font-size: 88px; line-height: 1; font-weight: 400;
+                letter-spacing: -3px; margin-bottom: 4px; position: relative; z-index: 1;
+            }
+            .focus-hero .hero-label {
+                font-size: 12px; color: var(--quiet); letter-spacing: 3px;
+                text-transform: uppercase; font-weight: 500; position: relative; z-index: 1;
+            }
+            .focus-hero .hero-compare {
+                margin-top: 10px; font-size: 13px; font-weight: 500; position: relative; z-index: 1;
+            }
+
+            /* ── 统计卡片 ── */
             .stats-grid {
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                gap: 15px;
-                margin-bottom: 20px;
+                grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+                gap: 1px; background: var(--line); border: 1px solid var(--line);
+                margin-bottom: 24px;
             }
-            .stat-box {
-                background: #f8f9fa;
-                padding: 15px;
-                border-radius: 8px;
-                text-align: center;
+            .stat-card {
+                background: var(--card); padding: 20px 16px; text-align: center;
             }
-            .stat-box .value {
-                font-size: 32px;
-                font-weight: bold;
-                color: #667eea;
+            .stat-card .stat-value {
+                font-family: Georgia, 'Times New Roman', 'SimSun', serif;
+                font-size: 28px; line-height: 1.15; font-weight: 400;
             }
-            .stat-box .label {
+            .stat-card .stat-label { font-size: 11px; color: var(--quiet); margin-top: 6px; }
+            .stat-card .stat-sub {
+                font-size: 11px; color: var(--quiet); margin-top: 3px; font-weight: 500;
+            }
+
+            /* ── 通用卡片 · 左 accent + hover ── */
+            .card {
+                background: var(--card); padding: 24px 24px 24px 22px;
+                margin-bottom: 1px;
+                border: 1px solid var(--line);
+                border-left: 2px solid var(--line);
+                transition: border-left-color 0.3s, box-shadow 0.3s;
+            }
+            .card:hover {
+                border-left-color: var(--iris);
+                box-shadow: 0 1px 6px rgba(0,0,0,0.03);
+            }
+            .card h2 {
+                font-family: Georgia, 'Times New Roman', 'SimSun', serif;
+                font-size: 15px; font-weight: 400; color: var(--ink);
+                margin-bottom: 16px; padding-bottom: 10px;
+                border-bottom: 1px solid var(--line-light);
+                letter-spacing: -0.1px;
+            }
+            .card .card-desc {
+                font-size: 12px; color: var(--quiet); margin-bottom: 14px; line-height: 1.6;
+            }
+
+            /* ── 图表 (v4.16: Plotly 交互式) ── */
+            .chart-container { margin: 0; overflow: hidden; }
+            .chart-container .plotly-graph-div { width: 100% !important; }
+            .chart-container .js-plotly-plot { max-width: 100%; }
+            .no-data { text-align: center; color: #ccc; padding: 36px; font-size: 13px; }
+            .chart-error {
+                text-align: center; color: var(--rose); background: #FDF8F6;
+                border: 1px solid #F0D0CC; padding: 16px; margin: 8px 0;
                 font-size: 12px;
-                color: #666;
-                text-transform: uppercase;
             }
-            .stat-box.good .value { color: #28a745; }
-            .stat-box.warning .value { color: #ffc107; }
-            .stat-box.danger .value { color: #dc3545; }
-            .chart-container {
-                text-align: center;
-                margin: 20px 0;
+
+            /* ── 历史对比 ── */
+            .compare-box {
+                display: flex; gap: 24px; flex-wrap: wrap; padding: 16px 0;
+                margin-bottom: 20px; border-bottom: 1px solid var(--line-light);
             }
-            .chart-container img {
-                max-width: 100%;
-                height: auto;
-                border-radius: 8px;
+            .compare-item { text-align: center; flex: 1; min-width: 80px; }
+            .compare-item .label { font-size: 11px; color: var(--quiet); }
+            .compare-item .value {
+                font-family: Georgia, 'Times New Roman', 'SimSun', serif;
+                font-size: 24px; font-weight: 400; line-height: 1.2;
             }
-            .insights-list {
-                list-style: none;
-            }
+            .compare-item .delta { font-size: 12px; font-weight: 500; }
+
+            /* ── 建议列表 ── */
+            .insights-list { list-style: none; }
             .insight-item {
-                padding: 15px;
-                margin-bottom: 10px;
-                border-radius: 8px;
-                border-left: 4px solid;
+                padding: 16px 20px; margin-bottom: 1px;
+                border-left: 2px solid transparent;
+                background: var(--card); border-bottom: 1px solid var(--line-light);
             }
-            .insight-item.alert {
-                background: #fff5f5;
-                border-color: #dc3545;
-            }
-            .insight-item.warning {
-                background: #fffaf0;
-                border-color: #ffc107;
-            }
-            .insight-item.info {
-                background: #f0f7ff;
-                border-color: #667eea;
-            }
-            .insight-item .title {
-                font-weight: bold;
-                margin-bottom: 5px;
-            }
-            .insight-item .description {
-                font-size: 14px;
-                color: #666;
-                margin-bottom: 8px;
-            }
+            .insight-item.alert { border-left-color: var(--rose); }
+            .insight-item.warning { border-left-color: var(--amber); }
+            .insight-item.info { border-left-color: var(--iris); }
+            .insight-item .title { font-weight: 600; margin-bottom: 3px; font-size: 13px; }
+            .insight-item .description { font-size: 12px; color: var(--quiet); margin-bottom: 4px; }
             .insight-item .suggestion {
-                font-size: 14px;
-                color: #333;
-                padding: 8px 12px;
-                background: rgba(255,255,255,0.5);
-                border-radius: 4px;
+                font-size: 12px; color: var(--ink); margin-top: 6px;
+                padding: 6px 12px; background: #F9F8F6;
             }
             .severity-badge {
-                display: inline-block;
-                padding: 2px 8px;
-                border-radius: 4px;
-                font-size: 11px;
-                font-weight: bold;
-                text-transform: uppercase;
-                margin-left: 10px;
+                display: inline-block; padding: 1px 6px; font-size: 9px;
+                font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+                margin-right: 8px; vertical-align: middle;
             }
-            .severity-badge.alert { background: #dc3545; color: white; }
-            .severity-badge.warning { background: #ffc107; color: #333; }
-            .severity-badge.info { background: #667eea; color: white; }
+            .severity-badge.alert { background: var(--rose); color: #fff; }
+            .severity-badge.warning { background: var(--amber); color: #fff; }
+            .severity-badge.info { background: var(--iris); color: #fff; }
+
+            /* ── 关于 Tab ── */
+            .about-grid {
+                display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+                gap: 1px; background: var(--line); border: 1px solid var(--line);
+            }
+            .about-card {
+                background: var(--card); padding: 16px 18px;
+            }
+            .about-card .ac-title { font-size: 12px; font-weight: 600; color: var(--ink); }
+            .about-card .ac-desc { font-size: 11px; color: var(--quiet); margin-top: 4px; line-height: 1.5; }
+            .tech-badge {
+                display: inline-block; padding: 3px 10px; font-size: 11px;
+                background: #F5F3F0; color: var(--quiet); margin: 2px 4px 2px 0;
+            }
+
+            /* ── 页脚 ── */
             .footer {
-                text-align: center;
-                color: #999;
-                font-size: 12px;
-                margin-top: 30px;
-                padding: 20px;
+                text-align: center; color: #ccc; font-size: 11px;
+                margin-top: 36px; padding: 20px; letter-spacing: 0.2px;
             }
-            .summary-chart {
-                max-width: 600px;
-                margin: 0 auto;
+
+            /* ── 会话详情表 ── */
+            .detail-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+            .detail-table td { padding: 8px 0; }
+            .detail-table td:first-child { color: var(--quiet); width: 100px; }
+
+            /* ── 数据不足页 ── */
+            .collecting {
+                text-align: center; padding: 64px 20px; background: var(--card);
+                border: 1px solid var(--line);
             }
-            .no-data {
-                text-align: center;
-                color: #999;
-                padding: 40px;
-            }
-            .chart-error {
-                text-align: center;
-                color: #dc3545;
-                background: #fff5f5;
-                border: 1px solid #f5c6cb;
-                border-radius: 8px;
-                padding: 20px;
-                margin: 10px 0;
-            }
+            .collecting .icon { font-size: 48px; margin-bottom: 16px; }
+            .collecting h2 { font-size: 18px; color: var(--ink); margin-bottom: 8px; }
+            .collecting p { font-size: 13px; color: var(--quiet); line-height: 1.7; }
         </style>
+    """
+
+    # Tab 切换 JS
+    PLOTLY_JS = '<script src="plotly.min.js"></script>'
+
+    @staticmethod
+    def _ensure_plotly_asset(report_dir: str) -> None:
+        """v4.16: 复制 plotly.min.js 到报告目录（确保离线可用）"""
+        import os as _os
+        import shutil
+        import plotly as _plotly
+        src = _os.path.join(_os.path.dirname(_plotly.__file__), 'package_data', 'plotly.min.js')
+        dst = _os.path.join(report_dir, 'plotly.min.js')
+        if not _os.path.exists(dst) and _os.path.exists(src):
+            try:
+                shutil.copy2(src, dst)
+                logger.debug("plotly.min.js 已复制到报告目录")
+            except Exception as e:
+                logger.warning("复制 plotly.min.js 失败: %s", e)
+
+    JS_SCRIPT = """
+        <script>
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(function(el) {
+                el.classList.remove('active');
+            });
+            document.querySelectorAll('.tab-btn').forEach(function(el) {
+                el.classList.remove('active');
+            });
+            document.getElementById('tab-' + tabId).classList.add('active');
+            document.querySelector('.tab-btn[data-tab="' + tabId + '"]').classList.add('active');
+            // v4.16: Plotly charts in hidden tabs have zero size — resize after display
+            setTimeout(function() {
+                var charts = document.querySelectorAll('#tab-' + tabId + ' .js-plotly-plot');
+                charts.forEach(function(el) {
+                    try { Plotly.Plots.resize(el); } catch(e) {}
+                });
+            }, 100);
+        }
+        </script>
     """
 
     def __init__(
@@ -232,7 +339,8 @@ class HTMLReportGenerator:
         """
         self.db = db_manager
         self.chart_gen = chart_generator or create_chart_generator()
-        self.insights_engine = insights_engine or create_insights_engine()
+        # v4.10: 传递 db 给建议引擎（用于历史对比）
+        self.insights_engine = insights_engine or create_insights_engine(db=db_manager)
 
     def generate_report(self, session_id: str) -> str:
         """生成完整 HTML 报告
@@ -243,6 +351,9 @@ class HTMLReportGenerator:
         Returns:
             HTML 字符串
         """
+        # v4.16: 确保 plotly.min.js 本地资产可用
+        self._ensure_plotly_asset("reports")
+
         if not self.db:
             return self._error_html("数据库管理器未初始化")
 
@@ -255,6 +366,13 @@ class HTMLReportGenerator:
         focus_records = self.db.get_focus_records(session_id)
         fatigue_records = self.db.get_fatigue_records(session_id)
         blink_records = self.db.get_blink_events(session_id)
+        # v4.13: 取帧记录（头姿散点图用），采样控制性能
+        all_frames = self.db.get_frame_records(session_id)
+        frame_records = all_frames[::max(1, len(all_frames) // 500)] if len(all_frames) > 500 else all_frames
+
+        # v4.11: 数据不足时显示占位页
+        if len(focus_records) < 3:
+            return self._render_insufficient_data(session_id)
 
         # 计算统计信息
         avg_focus = self._calc_avg_focus(focus_records)
@@ -268,6 +386,7 @@ class HTMLReportGenerator:
             focus_records=focus_records,
             fatigue_records=fatigue_records,
             blink_records=blink_records,
+            frame_records=frame_records,
             avg_focus=avg_focus,
             avg_blink_rate=avg_blink_rate,
             total_duration=total_duration,
@@ -284,6 +403,8 @@ class HTMLReportGenerator:
             avg_focus=avg_focus,
             avg_blink_rate=avg_blink_rate,
             session_duration=total_duration,
+            session_id=session.session_id,
+            session_start_time=session.start_time.timestamp(),
         )
 
         # 渲染 HTML
@@ -295,6 +416,7 @@ class HTMLReportGenerator:
         focus_records: List[FocusRecord],
         fatigue_records: List[FatigueRecord],
         blink_records: List[BlinkRecord],
+        frame_records: Optional[List] = None,
     ) -> str:
         """从数据对象生成报告（不依赖数据库）
 
@@ -303,10 +425,9 @@ class HTMLReportGenerator:
             focus_records: 专注度记录列表
             fatigue_records: 疲劳记录列表
             blink_records: 眨眼事件列表
-
-        Returns:
-            HTML 字符串
         """
+        self._ensure_plotly_asset("reports")
+
         # 计算统计信息
         avg_focus = self._calc_avg_focus(focus_records)
         avg_blink_rate = self._calc_avg_blink_rate(focus_records)
@@ -319,6 +440,7 @@ class HTMLReportGenerator:
             focus_records=focus_records,
             fatigue_records=fatigue_records,
             blink_records=blink_records,
+            frame_records=frame_records or [],
             avg_focus=avg_focus,
             avg_blink_rate=avg_blink_rate,
             total_duration=total_duration,
@@ -335,6 +457,8 @@ class HTMLReportGenerator:
             avg_focus=avg_focus,
             avg_blink_rate=avg_blink_rate,
             session_duration=total_duration,
+            session_id=session.session_id,
+            session_start_time=session.start_time.timestamp(),
         )
 
         # 渲染 HTML
@@ -358,13 +482,17 @@ class HTMLReportGenerator:
 
         # 每个图表独立 try/except + always populate entry (即使失败)
         def _try_chart(name, gen_fn, has_data):
-            """单个图表生成包装。始终在 charts 中放条目。"""
+            """v4.16: Plotly 返回 HTML 字符串，直接使用。"""
             if not has_data:
                 charts[name] = {"data": None, "error": None}
                 return
             try:
-                raw = gen_fn()
-                charts[name] = {"data": self._bytes_to_base64(raw), "error": None}
+                result = gen_fn()
+                # v4.16: Plotly 返回 HTML 字符串；session_colorbar 也返回 HTML
+                if isinstance(result, bytes):
+                    charts[name] = {"data": self._bytes_to_base64(result), "error": None}
+                else:
+                    charts[name] = {"data": result, "error": None}
             except Exception as e:
                 logger.error("生成图表 %s 失败: %s", name, e)
                 charts[name] = {"data": None, "error": str(e)}
@@ -375,11 +503,9 @@ class HTMLReportGenerator:
             has_data=bool(data.focus_records),
         )
         _try_chart(
-            "blink_distribution",
-            lambda: self.chart_gen.generate_blink_rate_distribution(
-                data.blink_records, data.focus_records
-            ),
-            has_data=bool(data.focus_records or data.blink_records),
+            "blink_rate",
+            lambda: self.chart_gen.generate_blink_rate_chart(data.focus_records),
+            has_data=bool(data.focus_records),
         )
         _try_chart(
             "fatigue_timeline",
@@ -387,14 +513,14 @@ class HTMLReportGenerator:
             has_data=bool(data.fatigue_records),
         )
         _try_chart(
-            "summary",
-            lambda: self.chart_gen.generate_summary_chart(
-                avg_focus=data.avg_focus,
-                avg_blink_rate=data.avg_blink_rate,
-                fatigue_level=data.fatigue_level,
-                total_duration=data.total_duration,
-            ),
+            "session_colorbar",
+            lambda: self.chart_gen.generate_session_colorbar(data.focus_records),
             has_data=bool(data.focus_records),
+        )
+        _try_chart(
+            "head_pose_scatter",
+            lambda: self.chart_gen.generate_head_pose_scatter(data.frame_records),
+            has_data=bool(data.frame_records),
         )
 
         return charts
@@ -405,26 +531,22 @@ class HTMLReportGenerator:
         charts: dict,
         insights: List[Insight],
     ) -> str:
-        """渲染 HTML 页面"""
+        """v4.13: 4标签页布局（概览 + 数据分析 + 改善建议 + 关于）"""
         session = data.session
 
-        # 格式化时间
-        start_time = session.start_time.strftime("%Y-%m-%d %H:%M:%S")
-        end_time = session.end_time.strftime("%Y-%m-%d %H:%M:%S") if session.end_time else "进行中"
-        duration_str = self._format_duration(data.total_duration)
-
-        # M-17: session_id 来自外部，需 html_escape 防止 XSS
         safe_session_id = html_escape(session.session_id)
 
-        # 专注度等级
-        focus_class = self._get_stat_class(data.avg_focus, 70, 50)
-        blink_class = self._get_blink_stat_class(data.avg_blink_rate)
+        # 将原始 chart data 渲染为 HTML（insights_charts 是原生HTML字符串，跳过渲染）
+        charts_for_render = {k: v for k, v in charts.items() if k != "insights_charts"}
+        charts_html = self._render_charts(charts_for_render)
+        if "insights_charts" in charts:
+            charts_html["insights_charts"] = charts["insights_charts"]
 
-        # 生成建议 HTML
-        insights_html = self._render_insights(insights)
-
-        # 图表 HTML
-        charts_html = self._render_charts(charts)
+        # 各 tab HTML
+        overview_html = self._render_overview_tab(data, charts_html)
+        analysis_html = self._render_analysis_tab(charts_html)
+        suggestions_html = self._render_insights_tab(charts_html, insights)
+        about_html = self._render_about_tab(session_id=safe_session_id)
 
         html = f"""
 <!DOCTYPE html>
@@ -432,8 +554,9 @@ class HTMLReportGenerator:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EyeFocus 专注度分析报告</title>
+    <title>EyeFocus Insight 专注度分析报告</title>
     {self.CSS_STYLE}
+    {self.PLOTLY_JS}
 </head>
 <body>
     <div class="container">
@@ -444,95 +567,229 @@ class HTMLReportGenerator:
             </div>
         </div>
 
-        <!-- 统计摘要 -->
-        <div class="card">
-            <h2>会话摘要</h2>
-            <div class="stats-grid">
-                <div class="stat-box {focus_class}">
-                    <div class="value">{data.avg_focus:.1f}</div>
-                    <div class="label">平均专注度</div>
-                </div>
-                <div class="stat-box {blink_class}">
-                    <div class="value">{data.avg_blink_rate:.1f}</div>
-                    <div class="label">眨眼频率 (次/分)</div>
-                </div>
-                <div class="stat-box">
-                    <div class="value">{duration_str}</div>
-                    <div class="label">会话时长</div>
-                </div>
-                <div class="stat-box">
-                    <div class="value">{len(data.focus_records)}</div>
-                    <div class="label">专注度记录数</div>
+        <div class="tab-bar">
+            <button class="tab-btn active" data-tab="overview" onclick="switchTab('overview')">📊 概览</button>
+            <button class="tab-btn" data-tab="analysis" onclick="switchTab('analysis')">📈 数据分析</button>
+            <button class="tab-btn" data-tab="suggestions" onclick="switchTab('suggestions')">🔍 改善建议</button>
+            <button class="tab-btn" data-tab="about" onclick="switchTab('about')">ℹ️ 关于</button>
+        </div>
+
+        <div id="tab-overview" class="tab-content active">{overview_html}</div>
+        <div id="tab-analysis" class="tab-content">{analysis_html}</div>
+        <div id="tab-suggestions" class="tab-content">{suggestions_html}</div>
+        <div id="tab-about" class="tab-content">{about_html}</div>
+
+        <div class="footer">EyeFocus Insight | 自动生成的专注度分析报告</div>
+    </div>
+    {self.JS_SCRIPT}
+</body>
+</html>"""
+        return html
+
+    def _compute_overview_stats(self, data: ReportData) -> dict:
+        """计算概览页统计数据 + 与历史对比"""
+        stats = {
+            "avg_focus": data.avg_focus,
+            "duration": data.total_duration,
+            "blink_rate": data.avg_blink_rate,
+            "fatigue_level": data.fatigue_level,
+            "total_records": len(data.focus_records),
+            "hist_avg_focus": None,
+            "focus_change": None,
+        }
+
+        # 有效专注率: FOCUSED 记录占比
+        focused_count = sum(1 for r in data.focus_records if r.focus_score >= 80)
+        stats["focus_rate"] = (focused_count / max(1, len(data.focus_records))) * 100
+
+        # 与历史对比
+        if self.db and data.session.session_id:
+            try:
+                with self.db._get_cursor() as cur:
+                    cur.execute("""
+                        SELECT AVG(focus_score) FROM focus_records
+                        WHERE session_id != ? AND focus_score IS NOT NULL
+                    """, (data.session.session_id,))
+                    row = cur.fetchone()
+                    if row and row[0] is not None:
+                        stats["hist_avg_focus"] = round(row[0], 1)
+                        stats["focus_change"] = round(data.avg_focus - row[0], 1)
+            except Exception:
+                pass
+
+        return stats
+
+    def _render_overview_tab(self, data: ReportData, charts: dict) -> str:
+        """v4.15: Quiet Focus 美学 — Hero数字 + 精简卡片"""
+        stats = self._compute_overview_stats(data)
+        parts = []
+
+        # ── Hero 数字 ──
+        avg_focus = stats["avg_focus"]
+        if avg_focus >= 70:
+            hero_color = "#5A8A6D"
+        elif avg_focus >= 50:
+            hero_color = "#C9843A"
+        else:
+            hero_color = "#B55C5C"
+
+        parts.append(f'''
+            <div class="focus-hero">
+                <div class="hero-ring"></div>
+                <div class="hero-value" style="color:{hero_color}">{avg_focus:.0f}</div>
+                <div class="hero-label">平均专注度</div>
+            </div>''')
+
+        if stats["focus_change"] is not None:
+            arrow = "↑" if stats["focus_change"] >= 0 else "↓"
+            dc = "#5A8A6D" if stats["focus_change"] >= 0 else "#B55C5C"
+            parts.append(
+                f'<div class="hero-compare" style="color:{dc}">'
+                f'{arrow} {abs(stats["focus_change"]):.0f} vs 历史平均 {stats["hist_avg_focus"]:.0f}'
+                f'</div>'
+            )
+
+        # ── 统计卡片 ──
+        duration_str = self._format_duration(stats["duration"])
+        blink_val = stats["blink_rate"]
+        focused_count = sum(1 for r in data.focus_records if r.focus_score >= 80)
+        total_records = len(data.focus_records)
+        focus_rate = (focused_count / max(1, total_records)) * 100
+
+        fatigue_map = {"LOW": "低", "MEDIUM": "中", "HIGH": "高"}
+        fl = fatigue_map.get(stats["fatigue_level"].name, "--")
+
+        cards = [
+            ("⏱ 监测时长", duration_str, f"{total_records} 条记录"),
+            ("👁 眨眼频率", f"{blink_val:.1f}", "次/分钟"),
+            ("😊 疲劳等级", fl, ""),
+            ("📊 有效专注率", f"{focus_rate:.0f}%", f"{focused_count}/{total_records} 段"),
+        ]
+
+        parts.append('<div class="stats-grid">')
+        for label, val, sub in cards:
+            sub_html = f'<div class="stat-sub">{sub}</div>' if sub else ""
+            parts.append(
+                f'<div class="stat-card">'
+                f'<div class="stat-value">{val}</div>'
+                f'<div class="stat-label">{label}</div>'
+                f'{sub_html}'
+                f'</div>'
+            )
+        parts.append('</div>')
+
+        # ── 会话时间色条 ──
+        colorbar = charts.get("session_colorbar")
+        if colorbar:
+            parts.append('<div class="card"><h2>会话专注分布</h2>' + colorbar + "</div>")
+
+        return "\n".join(parts)
+
+    def _render_analysis_tab(self, charts: dict) -> str:
+        """v4.15: 数据分析 Tab"""
+        sections = [
+            ("专注度趋势",
+             "全程专注度变化。绿/橙/红背景对应专注/一般/分心，参考线 70 分为良好线。",
+             "focus_trend"),
+            ("疲劳趋势",
+             "累积疲劳分数。≥60 为严重疲劳信号，建议休息。",
+             "fatigue_timeline"),
+            ("眨眼频率",
+             "眨眼频率与个人基线对比。高于基线 1.5 倍标红（疲劳信号）。",
+             "blink_rate"),
+            ("头部姿态变化",
+             "头部偏离正位的角度变化。绿色区域为正常范围（≤20°），右上角为舒适区占比。",
+             "head_pose_scatter"),
+        ]
+
+        parts = []
+        for title, desc, key in sections:
+            chart_html = charts.get(key, '<div class="no-data">无数据</div>')
+            parts.append(f'''
+            <div class="card">
+                <h2>{title}</h2>
+                <div class="card-desc">{desc}</div>
+                {chart_html}
+            </div>''')
+
+        return "\n".join(parts)
+
+    def _render_insights_tab(self, charts: dict, insights: List[Insight]) -> str:
+        """v4.13: 改善建议 Tab（统一所有建议 + 高级图表）"""
+        insights_html = self._render_insights(insights) if insights else ""
+        insights_charts = charts.get('insights_charts', "")
+
+        return f"""
+            <div class="card">
+                <h2>个性化建议</h2>
+                {insights_html if insights_html else '<div class="no-data">未检测到明显问题</div>'}
+            </div>
+            {insights_charts}
+        """
+
+    def _render_about_tab(self, session_id: str = "") -> str:
+        """渲染关于 Tab"""
+        safe_sid = html_escape(session_id)
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return f"""
+            <div class="card">
+                <h2>EyeFocus Insight</h2>
+                <p style="color:#666;font-size:14px;line-height:1.8;margin-bottom:16px;">
+                    EyeFocus Insight 是一款基于计算机视觉的专注度监测与分析系统。
+                    利用 MediaPipe Face Landmarker 实时追踪人脸 478 个关键点，
+                    结合眼部纵横比 (EAR) 与 Blendshape 多信号融合算法，
+                    实现高精度的眼部状态检测和疲劳分析。
+                </p>
+            </div>
+
+            <div class="card">
+                <h2>核心技术</h2>
+                <div class="about-grid">
+                    <div class="about-card">
+                        <div class="ac-title">MediaPipe Face Landmarker</div>
+                        <div class="ac-desc">478 个面部关键点实时追踪，52 种面部表情系数 (Blendshape) 输出</div>
+                    </div>
+                    <div class="about-card">
+                        <div class="ac-title">多信号融合眼部检测</div>
+                        <div class="ac-desc">Blendshape 主信号 + EAR 备选，对头部姿态变化不敏感，准确率 99%+</div>
+                    </div>
+                    <div class="about-card">
+                        <div class="ac-title">离线分析引擎</div>
+                        <div class="ac-desc">KMeans 聚类、PELT 变点检测、IsolationForest 异常检测、STL 时序分解</div>
+                    </div>
+                    <div class="about-card">
+                        <div class="ac-title">多维度报告</div>
+                        <div class="ac-desc">专注度趋势、疲劳分析、眨眼检测、高效时段分析、异常会话检测</div>
+                    </div>
                 </div>
             </div>
-        </div>
 
-        <!-- 摘要图表 -->
-        {charts_html.get('summary', '')}
+            <div class="card">
+                <h2>技术栈</h2>
+                <div>
+                    <span class="tech-badge">Python 3.12</span>
+                    <span class="tech-badge">MediaPipe 0.10</span>
+                    <span class="tech-badge">PyQt5</span>
+                    <span class="tech-badge">OpenCV</span>
+                    <span class="tech-badge">NumPy</span>
+                    <span class="tech-badge">SciPy</span>
+                    <span class="tech-badge">scikit-learn</span>
+                    <span class="tech-badge">Matplotlib</span>
+                    <span class="tech-badge">SQLite</span>
+                    <span class="tech-badge">PyTorch (CUDA 12.8)</span>
+                </div>
+            </div>
 
-        <!-- 专注度趋势 -->
-        <div class="card">
-            <h2>专注度趋势分析</h2>
-            {charts_html.get('focus_trend', '<div class="no-data">无数据</div>')}
-        </div>
-
-        <!-- 眨眼分析 -->
-        <div class="card">
-            <h2>眨眼频率分析</h2>
-            {charts_html.get('blink_distribution', '<div class="no-data">无数据</div>')}
-        </div>
-
-        <!-- 疲劳分析 -->
-        <div class="card">
-            <h2>疲劳趋势分析</h2>
-            {charts_html.get('fatigue_timeline', '<div class="no-data">无数据</div>')}
-        </div>
-
-        <!-- 个性化建议 -->
-        <div class="card">
-            <h2>个性化建议</h2>
-            {insights_html if insights_html else '<div class="no-data">未检测到明显问题</div>'}
-        </div>
-
-        <!-- 会话详情 -->
-        <div class="card">
-            <h2>会话详情</h2>
-            <table style="width: 100%; border-collapse: collapse;">
-                <tr style="border-bottom: 1px solid #eee;">
-                    <td style="padding: 8px; color: #666;">会话 ID</td>
-                    <td style="padding: 8px;">{safe_session_id}</td>
-                </tr>
-                <tr style="border-bottom: 1px solid #eee;">
-                    <td style="padding: 8px; color: #666;">开始时间</td>
-                    <td style="padding: 8px;">{start_time}</td>
-                </tr>
-                <tr style="border-bottom: 1px solid #eee;">
-                    <td style="padding: 8px; color: #666;">结束时间</td>
-                    <td style="padding: 8px;">{end_time}</td>
-                </tr>
-                <tr style="border-bottom: 1px solid #eee;">
-                    <td style="padding: 8px; color: #666;">校准状态</td>
-                    <td style="padding: 8px;">{'已校准' if session.is_calibrated else '未校准'}</td>
-                </tr>
-                <tr style="border-bottom: 1px solid #eee;">
-                    <td style="padding: 8px; color: #666;">眼镜模式</td>
-                    <td style="padding: 8px;">{session.glasses_mode.value}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px; color: #666;">CQS 分数</td>
-                    <td style="padding: 8px;">{session.cqs_score or 'N/A'}</td>
-                </tr>
-            </table>
-        </div>
-
-        <div class="footer">
-            EyeFocus Insight | 自动生成的专注度分析报告
-        </div>
-    </div>
-</body>
-</html>
-"""
-        return html
+            <div class="card">
+                <h2>会话详情</h2>
+                <table class="detail-table">
+                    <tr><td>会话 ID</td><td>{safe_sid}</td></tr>
+                    <tr><td>检测引擎</td><td>MediaPipe Face Landmarker (GPU)</td></tr>
+                    <tr><td>校准方式</td><td>个人基线校准 (EAR + 头位)</td></tr>
+                    <tr><td>生成时间</td><td>{now_str}</td></tr>
+                </table>
+            </div>
+        """
 
     def _render_insights(self, insights: List[Insight]) -> str:
         """渲染建议列表"""
@@ -588,29 +845,25 @@ class HTMLReportGenerator:
     def _render_charts(self, charts: dict) -> dict:
         """将图表数据转换为 HTML。
 
+        v4.16: Plotly 图表输出为 HTML 字符串，直接嵌入。
         输入 charts 结构 (来自 _generate_charts):
-            {name: {"data": base64_str | None, "error": str | None}}
-
-        渲染规则:
-        - data != None → <div class="chart-container"><img ...></div>
-        - data == None, error != None → <div class="chart-error">图表生成失败 ({name}): {error}</div>
-        - data == None, error == None → <div class="no-data">无数据</div>
+            {name: {"data": html_str | None, "error": str | None}}
         """
         result = {}
         for name, info in charts.items():
             data = info.get("data") if isinstance(info, dict) else None
             error = info.get("error") if isinstance(info, dict) else None
             if error:
-                # H-10: 失败时显式标记，让用户/调用方知道是生成失败不是无数据
                 result[name] = (
                     f'<div class="chart-error">'
                     f'图表生成失败 ({name}): {error}'
                     f'</div>'
                 )
             elif data:
+                # v4.16: data 是 Plotly HTML 字符串或纯 HTML
                 result[name] = (
                     f'<div class="chart-container">'
-                    f'<img src="data:image/png;base64,{data}" alt="{name}">'
+                    f'{data}'
                     f'</div>'
                 )
             else:
@@ -653,7 +906,7 @@ class HTMLReportGenerator:
         session_id: str,
         insights_result: Optional["_InsightsResult"] = None,
     ) -> str:
-        """生成含离线分析章节的 HTML 报告。
+        """生成含离线分析章节的 HTML 报告 (v4.9: Tab 布局兼容)。
 
         Args:
             session_id: 会话 ID
@@ -662,11 +915,13 @@ class HTMLReportGenerator:
         Returns:
             HTML 字符串
         """
+        self._ensure_plotly_asset("reports")
         if not HAS_INSIGHTS:
             return self.generate_report(session_id)
+        if not self.db:
+            return self._error_html("数据库管理器未初始化")
 
         if insights_result is None:
-            # 自动运行 pipeline
             from analyzer.insights import run_pipeline
             try:
                 insights_result = run_pipeline(self.db, session_id)
@@ -674,32 +929,41 @@ class HTMLReportGenerator:
                 logger.warning("Insights pipeline 自动运行失败: %s", e)
                 return self.generate_report(session_id)
 
-        # 先生成基础报告（规则引擎建议）
-        base_html = self.generate_report(session_id)
+        # 1. 获取会话数据
+        session = self.db.get_session(session_id)
+        if not session:
+            return self._error_html(f"未找到会话: {session_id}")
+        focus_records = self.db.get_focus_records(session_id)
+        fatigue_records = self.db.get_fatigue_records(session_id)
+        blink_records = self.db.get_blink_events(session_id)
+        # v4.13: 帧记录（头姿散点图用）
+        all_frames = self.db.get_frame_records(session_id)
+        frame_records = all_frames[::max(1, len(all_frames) // 500)] if len(all_frames) > 500 else all_frames
 
-        # ── 注入 attribution findings 到个性化建议章节 ──
-        if insights_result.attribution_findings:
-            try:
-                from reporter.insights import attribution_findings_to_insights
-                attr_insights = attribution_findings_to_insights(
-                    insights_result.attribution_findings)
-                attr_html = self._render_insight_items(attr_insights)
-                # 在 </ul> 前注入 attribution 建议项
-                base_html = base_html.replace(
-                    '</ul>\n        </div>\n\n        <!-- 会话详情 -->',
-                    attr_html + '\n</ul>\n        </div>\n\n        <!-- 会话详情 -->',
-                    1)
-            except Exception as e:
-                logger.warning("注入 attribution 建议失败: %s", e)
+        avg_focus = self._calc_avg_focus(focus_records)
+        avg_blink_rate = self._calc_avg_blink_rate(focus_records)
+        total_duration = session.duration_seconds() or 0.0
+        fatigue_level = self._determine_fatigue_level(fatigue_records)
 
-        # 生成 insights 图表
-        charts = self._generate_insights_charts(insights_result)
+        report_data = ReportData(
+            session=session, focus_records=focus_records,
+            fatigue_records=fatigue_records, blink_records=blink_records,
+            frame_records=frame_records,
+            avg_focus=avg_focus, avg_blink_rate=avg_blink_rate,
+            total_duration=total_duration, fatigue_level=fatigue_level,
+        )
 
-        # ── 分心热力图 ──
+        # 2. 生成常规图表
+        charts = self._generate_charts(report_data)
+
+        # 3. 生成 insights 图表
+        insight_charts_data = self._generate_insights_charts(insights_result)
+
+        # 4. 分心热力图
         distraction_result = None
-        distraction_chart_b64 = None
+        distraction_html = None
         try:
-            from analyzer.distraction import analyze_distraction, DistractionResult
+            from analyzer.distraction import analyze_distraction
             distraction_result = analyze_distraction(self.db, session_id)
             if distraction_result.detected:
                 from reporter.charts import create_chart_generator
@@ -709,25 +973,37 @@ class HTMLReportGenerator:
                     distraction_result.heatmap_labels,
                     pattern_type=distraction_result.pattern_description or "",
                 )
-                distraction_chart_b64 = self._bytes_to_base64(raw)
+                # v4.16: Plotly 返回 HTML 字符串
+                distraction_html = raw if isinstance(raw, str) else self._bytes_to_base64(raw)
         except Exception as e:
             logger.warning("分心热力图生成失败: %s", e)
 
-        # 渲染 insights HTML 章节（含分心分析）
-        insights_html = self._render_insights_sections(
-            insights_result, charts,
+        # 5. 渲染 insights 章节 HTML → 放入 charts dict
+        charts["insights_charts"] = self._render_insights_sections(
+            insights_result, insight_charts_data,
             distraction_result=distraction_result,
-            distraction_chart_b64=distraction_chart_b64,
+            distraction_html=distraction_html,
         )
 
-        # 插入到 base_html 的 </div><!-- 个性化建议 --> 之后
-        insert_marker = "<!-- 个性化建议 -->"
-        if insert_marker in base_html:
-            parts = base_html.split(insert_marker, 1)
-            return parts[0] + insert_marker + parts[1].replace(
-                '<div class="footer">',
-                insights_html + '\n        <div class="footer">', 1)
-        return base_html
+        # 6. 规则引擎建议 + attribution 发现
+        rule_insights = self.insights_engine.analyze(
+            focus_records=focus_records, fatigue_records=fatigue_records,
+            avg_focus=avg_focus, avg_blink_rate=avg_blink_rate,
+            session_duration=total_duration,
+            session_id=session_id,
+            session_start_time=session.start_time.timestamp(),
+        )
+        if insights_result.attribution_findings:
+            try:
+                from reporter.insights import attribution_findings_to_insights
+                attr_list = attribution_findings_to_insights(
+                    insights_result.attribution_findings)
+                rule_insights.extend(attr_list)
+            except Exception:
+                pass
+
+        # 7. 用新 Tab 布局渲染
+        return self._render_html(report_data, charts, rule_insights)
 
     def _generate_insights_charts(self, insights: "_InsightsResult") -> dict:
         """生成 insights 章节所需的 4 个图表。"""
@@ -736,7 +1012,11 @@ class HTMLReportGenerator:
         def _safe_chart(name: str, gen_fn):
             try:
                 raw = gen_fn()
-                charts[name] = {"data": self._bytes_to_base64(raw), "error": None}
+                # v4.16: Plotly 返回 HTML 字符串
+                if isinstance(raw, bytes):
+                    charts[name] = {"data": self._bytes_to_base64(raw), "error": None}
+                else:
+                    charts[name] = {"data": raw, "error": None}
             except Exception as e:
                 logger.warning("insights 图表 %s 失败: %s", name, e)
                 charts[name] = {"data": None, "error": str(e)}
@@ -783,7 +1063,7 @@ class HTMLReportGenerator:
         insights: "_InsightsResult",
         charts: dict,
         distraction_result=None,
-        distraction_chart_b64: str = "",
+        distraction_html: str = "",
     ) -> str:
         """渲染 4+1 个 insights HTML 章节。"""
         sections = []
@@ -795,6 +1075,10 @@ class HTMLReportGenerator:
             if error:
                 return f'<div class="chart-error">图表生成失败: {error}</div>'
             elif data:
+                # v4.16: Plotly 返回 HTML 字符串，直接嵌入
+                if isinstance(data, str) and ('plotly' in data.lower() or '<div' in data):
+                    return f'<div class="chart-container">{data}</div>'
+                # 兼容旧 base64 PNG
                 return (
                     f'<div class="chart-container">'
                     f'<img src="data:image/png;base64,{data}" alt="{title}">'
@@ -888,7 +1172,7 @@ class HTMLReportGenerator:
                 长分心 {distraction_result.long_events} 次。
             </p>
             <p style="color:#666;font-size:13px;margin-bottom:10px;">📌 {pattern_info}</p>
-            {f'<div class="chart-container"><img src="data:image/png;base64,{distraction_chart_b64}" alt="分心时间轴"></div>' if distraction_chart_b64 else '<div class="no-data">无数据</div>'}
+            {f'<div class="chart-container">{distraction_html}</div>' if distraction_html else '<div class="no-data">无数据</div>'}
         </div>""")
 
         return "\n".join(sections)
@@ -918,6 +1202,49 @@ class HTMLReportGenerator:
         elif blink_rate < 30:
             return "warning"
         return "danger"
+
+    def _render_insufficient_data(self, session_id: str) -> str:
+        """数据不足时的占位页面"""
+        safe_sid = html_escape(session_id)
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据收集中 - EyeFocus Insight</title>
+    {self.CSS_STYLE}
+    <style>
+        .collecting {{
+            text-align: center; padding: 80px 20px; background: white;
+            border-radius: 12px; margin-top: 20px;
+        }}
+        .collecting .icon {{ font-size: 64px; margin-bottom: 20px; }}
+        .collecting h2 {{ font-size: 22px; color: #444; margin-bottom: 12px; }}
+        .collecting p {{ font-size: 15px; color: #999; line-height: 1.8; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>EyeFocus Insight 专注度分析报告</h1>
+            <div class="subtitle">会话 ID: {safe_sid} | 生成时间: {now_str}</div>
+        </div>
+        <div class="collecting">
+            <div class="icon">⏳</div>
+            <h2>数据收集中</h2>
+            <p>
+                当前会话数据尚不足（< 3 个采样周期），请稍后查看。<br>
+                监测运行约 2 分钟后数据将自动可用。
+            </p>
+            <p style="margin-top:16px;font-size:13px;color:#bbb;">
+                您也可以关闭窗口继续监测，之后再次点击"打开报告"
+            </p>
+        </div>
+        <div class="footer">EyeFocus Insight | 自动生成的专注度分析报告</div>
+    </div>
+</body>
+</html>"""
 
     def _error_html(self, message: str) -> str:
         """错误页面 HTML"""

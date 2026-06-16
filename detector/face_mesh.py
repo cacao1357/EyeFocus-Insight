@@ -262,31 +262,32 @@ class FaceMeshDetector:
             return yaw + 180.0
         return yaw
 
-    def close(self, timeout: float = 0.5) -> None:
+    def close(self, timeout: float = 2.0) -> None:
         """关闭检测器，释放资源
 
         使用独立线程调用 MediaPipe 的 close()，并通过 join(timeout)
         实现超时控制，防止 close() 可能无限阻塞。
 
-        v4.4: timeout 2.0→0.5 (关闭卡顿, 进程即将退出无需等待)
+        v4.7: timeout 0.5→2.0 (XNNPACK 线程关闭慢，增大超时减少警告误报)
+              超时日志降为 INFO (MediaPipe 已知上游 bug, 不影响功能)
 
         Args:
-            timeout: 超时时间（秒），默认 0.5 秒
+            timeout: 超时时间（秒），默认 2.0 秒
         """
         def _close_async():
             with self._lock:
                 try:
                     self._detector.close()
                 except Exception as e:
-                    logger.warning("FaceMeshDetector._detector.close() 异常: %s", e)
+                    logger.info("FaceMeshDetector._detector.close() 异常: %s", e)
 
         close_thread = threading.Thread(target=_close_async, name="FaceMeshDetector-close", daemon=True)
         close_thread.start()
         close_thread.join(timeout=timeout)
 
         if close_thread.is_alive():
-            logger.warning(
-                "FaceMeshDetector.close() 超时 (%.1fs)，MediaPipe close() 可能阻塞",
+            logger.info(
+                "FaceMeshDetector.close() 超时 (%.1fs) — MediaPipe 已知行为（XNNPACK 线程），进程退出时自动释放",
                 timeout
             )
 

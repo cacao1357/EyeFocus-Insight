@@ -129,10 +129,13 @@ class EyeFocusWindow(QMainWindow):
     calibrate_requested = pyqtSignal()
 
     def __init__(self, frame_buffer: FrameBuffer, parent: Optional[QWidget] = None,
-                 show_calibrate: bool = True):
+                 show_calibrate: bool = True, enable_tray: bool = True,
+                 app_ref=None):
         super().__init__(parent)
         self._frame_buffer = frame_buffer
         self._show_calibrate = show_calibrate
+        self._enable_tray = enable_tray
+        self._force_exit = False
 
         # ── 数据状态 ──
         self._focus_score: Optional[float] = None
@@ -142,6 +145,7 @@ class EyeFocusWindow(QMainWindow):
         self._eye_detected: bool = False
         self._fps: float = 0.0
         self._paused: bool = False
+        self._light_condition: Optional[str] = None  # "DARK"/"NORMAL"/"BRIGHT"
 
         # ── 卡死防护：帧跳过守卫 ──
         self._frame_busy: bool = False
@@ -216,6 +220,39 @@ class EyeFocusWindow(QMainWindow):
 
         panel_layout.addLayout(content)
 
+        # ── 光照警告标签（默认隐藏） ──
+        self._light_warning = QLabel("⚠ 光照不足 · 检测精度可能下降")
+        self._light_warning.setAlignment(Qt.AlignCenter)
+        self._light_warning.setStyleSheet(
+            "color: #FF9500; background: #FFF3E0; border: 1px solid #FF9500;"
+            "border-radius: 4px; padding: 4px 0; font-size: 12px;"
+            "font-weight: 600; margin: 0 16px;"
+        )
+        self._light_warning.setVisible(False)
+        panel_layout.addWidget(self._light_warning)
+
+        # ── 人脸丢失警告标签（默认隐藏） ──
+        self._face_lost_warning = QLabel("⚠ 人脸丢失 · 监测已暂停")
+        self._face_lost_warning.setAlignment(Qt.AlignCenter)
+        self._face_lost_warning.setStyleSheet(
+            "color: #FF3B30; background: #FFEBEE; border: 1px solid #FF3B30;"
+            "border-radius: 4px; padding: 4px 0; font-size: 12px;"
+            "font-weight: 600; margin: 0 16px;"
+        )
+        self._face_lost_warning.setVisible(False)
+        panel_layout.addWidget(self._face_lost_warning)
+
+        # ── v4.13: 校准提示标签（未校准时显示，校准后自动隐藏）──
+        self._calib_prompt = QLabel("🟡 尚未校准 · 评分仅供参考 — 点击\"校准\"建立个人基线")
+        self._calib_prompt.setAlignment(Qt.AlignCenter)
+        self._calib_prompt.setStyleSheet(
+            "color: #B8860B; background: #FFFDE7; border: 1px solid #FFD54F;"
+            "border-radius: 4px; padding: 6px 0; font-size: 12px;"
+            "font-weight: 500; margin: 0 16px;"
+        )
+        self._calib_prompt.setVisible(True)  # 默认显示（未校准状态）
+        panel_layout.addWidget(self._calib_prompt)
+
         # ── 按钮栏（面板底部） ──
         btn_bar = QHBoxLayout()
         btn_bar.setContentsMargins(8, 4, 8, 8)
@@ -252,6 +289,40 @@ class EyeFocusWindow(QMainWindow):
         self._fps_last_time = 0.0
 
         # ── Q 退出倒计时（保留作为安全退出方式） ──
+
+        # ── v4.10: 系统托盘 ──
+        self._tray_icon = None
+        if self._enable_tray and app_ref is not None:
+            from gui.tray import EyeFocusTrayIcon
+            self._tray_icon = EyeFocusTrayIcon(parent_window=self, app_ref=app_ref)
+            self._tray_icon.show()
+
+    # ── v4.10: 托盘辅助方法 ──
+
+    def toggle_visibility(self):
+        """显示/隐藏窗口（由托盘调用）"""
+        if self.isVisible():
+            self.hide()
+        else:
+            self.show()
+            self.raise_()
+            self.activateWindow()
+
+    def toggle_pause(self):
+        """切换暂停（由托盘调用）"""
+        self._paused = not self._paused
+        self.set_paused(self._paused)
+
+    def set_do_not_disturb(self, enabled: bool):
+        """设置免打扰模式"""
+        if self._tray_icon:
+            self._tray_icon.set_do_not_disturb(enabled)
+
+    def show_fatigue_notification(self, message: str = ""):
+        """显示疲劳提醒气泡"""
+        if self._tray_icon:
+            self._tray_icon.show_fatigue_notification(message)
+
     # ── 公共 API ──
 
     def start(self) -> None:
@@ -277,6 +348,21 @@ class EyeFocusWindow(QMainWindow):
     def is_paused(self) -> bool:
         return self._paused
 
+    def show_frame(self, frame: np.ndarray) -> None:
+        """直接显示一帧（从 _qt_process_frame 推送，解决 timer 时序依赖）"""
+        if frame is not None:
+            self._video_label.display_frame(frame)
+
+    def set_face_lost_warning(self, visible: bool) -> None:
+        """设置人脸丢失警告可见性"""
+        if hasattr(self, '_face_lost_warning'):
+            self._face_lost_warning.setVisible(visible)
+
+    def set_calibration_prompt(self, visible: bool) -> None:
+        """v4.13: 设置校准提示可见性"""
+        if hasattr(self, '_calib_prompt'):
+            self._calib_prompt.setVisible(visible)
+
     def update_data(self,
                     focus_score: Optional[float] = None,
                     fatigue_level: Optional[str] = None,
@@ -285,7 +371,8 @@ class EyeFocusWindow(QMainWindow):
                     focus_duration_minutes: Optional[float] = None,
                     face_detected: bool = False,
                     eye_detected: bool = False,
-                    fps: float = 0.0) -> None:
+                    fps: float = 0.0,
+                    light_condition: Optional[str] = None) -> None:
         """更新所有显示数据 (v4.6: 支持新 FocusLevel/FatigueIndicator)"""
         # v4.6: 提取字符串值
         fl_str = focus_level.value if hasattr(focus_level, 'value') else focus_level
@@ -295,6 +382,13 @@ class EyeFocusWindow(QMainWindow):
         self._face_detected = face_detected
         self._eye_detected = eye_detected
         self._fps = fps
+        self._light_condition = light_condition
+
+        # 光照警告
+        if light_condition == "DARK":
+            self._light_warning.setVisible(True)
+        else:
+            self._light_warning.setVisible(False)
 
         # FocusRing — 优先使用 v4.6 参数
         self._focus_ring.update_data(
@@ -358,11 +452,16 @@ class EyeFocusWindow(QMainWindow):
             status="ok" if face_detected else "error",
         )
 
+        # v4.10: 同步更新托盘状态
+        if self._tray_icon:
+            self._tray_icon.update_status(focus_score=focus_score, fatigue_level=fatigue_level)
+
     def update_data_from_processor(self, frame_processor, fps: float = 0.0) -> None:
         """从 FrameProcessor 读取最新分析结果（兼容 main.py）"""
         fr = frame_processor.latest_focus_result
         fa = frame_processor.latest_fatigue_result
         face = frame_processor.latest_face_detected
+        lr = getattr(frame_processor, 'latest_light_result', None)
 
         focus_score = None
         fatigue_level = None
@@ -373,6 +472,7 @@ class EyeFocusWindow(QMainWindow):
             fatigue_level = level.value.upper() if hasattr(level, 'value') else str(level)
 
         focus_dur = getattr(frame_processor, 'focus_duration_minutes', None)
+        light_cond = lr.condition.value.upper() if lr else None
 
         self.update_data(
             focus_score=focus_score,
@@ -381,6 +481,7 @@ class EyeFocusWindow(QMainWindow):
             face_detected=face,
             eye_detected=face,
             fps=fps,
+            light_condition=light_cond,
         )
 
     # ── 按钮回调 ──
@@ -423,7 +524,12 @@ class EyeFocusWindow(QMainWindow):
     # ── 窗口事件 ──
 
     def closeEvent(self, event):
-        """X 按钮关闭窗口"""
-        logger.info("窗口关闭 (X)")
-        self.exit_requested.emit()
-        event.accept()
+        """X 按钮关闭窗口 → 最小化到托盘（v4.10）"""
+        if self._enable_tray and self._tray_icon and not self._force_exit:
+            logger.info("窗口关闭 → 最小化到托盘")
+            self.hide()
+            event.ignore()
+        else:
+            logger.info("窗口关闭 → 退出程序")
+            self.exit_requested.emit()
+            event.accept()

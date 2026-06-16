@@ -133,6 +133,7 @@ class TestEyeFocusAppIntegration:
         app._db.write_frame = MagicMock()
         app._db.write_fatigue_record = MagicMock()
         app._db.write_blink_event = MagicMock()
+        app._db.write_focus_record = MagicMock()
 
         # v4.0 重构：FrameProcessor 是帧处理的单一数据源。
         # 集成测试 fixture 必须显式构造一个 FrameProcessor 注入到 app 上。
