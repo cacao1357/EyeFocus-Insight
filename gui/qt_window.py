@@ -143,6 +143,7 @@ class EyeFocusWindow(QMainWindow):
         self._show_calibrate = show_calibrate
         self._enable_tray = enable_tray
         self._force_exit = False
+        self._app = app_ref  # v4.21: 保存 app 引用供菜单使用
 
         # ── 数据状态 ──
         self._focus_score: Optional[float] = None
@@ -328,9 +329,7 @@ class EyeFocusWindow(QMainWindow):
 
     def _show_pomodoro_menu(self):
         """显示番茄操作菜单"""
-        app = None
-        if hasattr(self, '_tray_icon') and self._tray_icon is not None:
-            app = self._tray_icon._app
+        app = getattr(self, '_app', None)
         if app is None:
             return
         pomo = getattr(app, '_pomodoro', None)
