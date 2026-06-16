@@ -350,6 +350,105 @@ class StatusCard(QWidget):
 
 
 # ═══════════════════════════════════════════════════════════════════
+# FocusSparkline — 实时专注度波线 (v4.17)
+# ═══════════════════════════════════════════════════════════════════
+
+class FocusSparkline(QWidget):
+    """实时专注度趋势波线
+
+    显示最近 N 秒的专注度分数波形。
+    曲线颜色从绿→黄→红渐变，模拟 Apple 健康心电图风格。
+    """
+
+    def __init__(self, parent: Optional[QWidget] = None, max_points: int = 60):
+        super().__init__(parent)
+        self._max_points = max_points
+        self._scores: list = []  # (score, color_hex) 元组列表
+        self.setMinimumHeight(50)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+
+    def add_point(self, score: float) -> None:
+        """添加一个数据点（每秒调用一次）"""
+        color = "#34C759" if score >= 70 else "#FF9500" if score >= 40 else "#FF3B30"
+        self._scores.append((score, color))
+        if len(self._scores) > self._max_points:
+            self._scores.pop(0)
+        self.update()
+
+    def paintEvent(self, event):
+        if len(self._scores) < 2:
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        w = self.width() - 2
+        h = self.height() - 4
+        if w <= 0 or h <= 0:
+            painter.end()
+            return
+
+        margin_l = 4
+        plot_w = w - margin_l
+        plot_h = h - 2
+        n = len(self._scores)
+
+        # 提取分数
+        values = [s[0] for s in self._scores]
+        min_v, max_v = 0, 100
+
+        def _y(val):
+            return plot_h - (val - min_v) / (max_v - min_v) * plot_h
+
+        # 绘制渐变填充区域（路径）
+        fill_path = QPainterPath()
+        fill_path.moveTo(margin_l, plot_h)
+        for i in range(n):
+            x = margin_l + (i / (n - 1)) * plot_w
+            y = _y(values[i])
+            if i == 0:
+                fill_path.lineTo(x, y)
+            else:
+                fill_path.lineTo(x, y)
+        fill_path.lineTo(margin_l + plot_w, plot_h)
+        fill_path.closeSubpath()
+
+        # 渐变填充
+        last_color = self._scores[-1][1] if self._scores else "#34C759"
+        lc = QColor(last_color)
+        lc.setAlpha(25)
+        painter.fillPath(fill_path, QBrush(lc))
+
+        # 绘制波线
+        line_path = QPainterPath()
+        for i in range(n):
+            x = margin_l + (i / (n - 1)) * plot_w
+            y = _y(values[i])
+            if i == 0:
+                line_path.moveTo(x, y)
+            else:
+                line_path.lineTo(x, y)
+
+        pen = QPen(QColor(last_color), 2.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawPath(line_path)
+
+        # 最新值标签
+        last_val = values[-1]
+        label_x = margin_l + plot_w
+        label_y = _y(last_val)
+        painter.setPen(QPen(QColor(last_color)))
+        font = painter.font()
+        font.setPointSize(8)
+        painter.setFont(font)
+        painter.drawText(int(label_x - 32), int(label_y - 10), 32, 14,
+                         Qt.AlignRight | Qt.AlignBottom, f"{last_val:.0f}")
+
+        painter.end()
+
+
+# ═══════════════════════════════════════════════════════════════════
 # GradientDivider — 垂直渐变过渡带
 # ═══════════════════════════════════════════════════════════════════
 

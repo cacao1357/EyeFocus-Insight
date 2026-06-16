@@ -46,6 +46,7 @@ from gui.qt_overlay import (
     GradientDivider,
     StatusCard,
     DistractionLabel,
+    FocusSparkline,
     FATIGUE_EMOJI,
     _get_segoe_font,
 )
@@ -229,6 +230,10 @@ class EyeFocusWindow(QMainWindow):
 
         panel_layout.addLayout(content)
 
+        # ── v4.17: 专注度波线 ──
+        self._sparkline = FocusSparkline()
+        panel_layout.addWidget(self._sparkline)
+
         # ── 光照警告标签（默认隐藏） ──
         self._light_warning = QLabel("⚠ 光照不足 · 检测精度可能下降")
         self._light_warning.setAlignment(Qt.AlignCenter)
@@ -319,6 +324,13 @@ class EyeFocusWindow(QMainWindow):
             from gui.tray import EyeFocusTrayIcon
             self._tray_icon = EyeFocusTrayIcon(parent_window=self, app_ref=app_ref)
             self._tray_icon.show()
+
+    # ── v4.17: 专注度波线 ──
+
+    def update_sparkline(self, focus_score: float) -> None:
+        """每秒添加一个专注度点到波线"""
+        if hasattr(self, '_sparkline') and self._sparkline is not None:
+            self._sparkline.add_point(focus_score)
 
     # ── v4.17: 游戏化 ──
 

@@ -917,8 +917,10 @@ class EyeFocusApp:
             self._focus_analyzer.set_blink_detector(self._eye_detector)
             self._fatigue_analyzer.start()
 
-            # v4.17: 语音反馈助手
-            self._voice_asst = create_voice_assistant(enabled=True)
+            # v4.17: 语音反馈助手（从 config.yaml 读取开关状态）
+            from config import get_yaml_value
+            voice_enabled = get_yaml_value("voice", "enabled", default=True)
+            self._voice_asst = create_voice_assistant(enabled=voice_enabled)
 
             # v4.17: 智能提醒引擎（回调延迟绑定）
             self._reminder_engine = create_reminder_engine(
@@ -1363,6 +1365,13 @@ class EyeFocusApp:
                     session_minutes=session_min,
                     face_detected=self._frame_processor.latest_face_detected,
                 )
+
+            # v4.17: 专注度波线更新（每秒一次）
+            spark_time = getattr(self, '_spark_update_time', 0)
+            if time.time() - spark_time >= 1.0:
+                self._spark_update_time = time.time()
+                if hasattr(self, '_qt_window') and self._qt_window is not None:
+                    self._qt_window.update_sparkline(focus_score)
 
             # v4.17: 游戏化状态更新（每 60s 一次，避免频繁 DB 查询）
             gamify_update = getattr(self, '_gamify_update_time', 0)

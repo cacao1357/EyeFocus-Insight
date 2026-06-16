@@ -37,6 +37,9 @@ data:
   db_path: data/eyefocus.db
   export_dir: data/exports
 
+voice:
+  enabled: true
+
 logging:
   level: INFO
   format: "[%(levelname)s] %(name)s: %(message)s"
