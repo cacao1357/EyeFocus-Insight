@@ -371,3 +371,42 @@ class GradientDivider(QWidget):
 
         painter.fillRect(self.rect(), gradient)
         painter.end()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# DistractionLabel — 分心原因分解标签 (v4.17)
+# ═══════════════════════════════════════════════════════════════════
+
+class DistractionLabel(QWidget):
+    """分心原因实时分解
+
+    专注度 < 70 时显示各因素百分比：
+      分心源：头部偏移 55% | 眨眼异常 30% | 视线偏离 15%
+    专注度 ≥ 70 时自动隐藏。
+    """
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._label = QLabel(self)
+        self._label.setAlignment(Qt.AlignCenter)
+        self._label.setStyleSheet(
+            "color: #8B8680; background: #F5F3F1;"
+            "border: 1px solid #E6E2DC; border-radius: 4px;"
+            "padding: 3px 8px; font-size: 11px;"
+        )
+        self._causes = {}
+        self.setVisible(False)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 2, 16, 2)
+        layout.addWidget(self._label)
+
+    def update_causes(self, causes: dict) -> None:
+        """更新分心原因显示"""
+        self._causes = causes
+        if causes:
+            parts = [f"{k} {v:.0f}%" for k, v in causes.items() if v > 0]
+            self._label.setText(f"分心源：{' | '.join(parts)}")
+            self.setVisible(True)
+        else:
+            self.setVisible(False)

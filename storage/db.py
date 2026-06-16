@@ -186,6 +186,16 @@ CREATE TABLE IF NOT EXISTS insights_cache (
     total_duration_ms REAL DEFAULT 0.0,
     FOREIGN KEY (session_id) REFERENCES sessions(session_id)
 );
+
+-- v4.17: 每日专注统计（游戏化）
+CREATE TABLE IF NOT EXISTS daily_stats (
+    date TEXT PRIMARY KEY,
+    total_focus_minutes REAL DEFAULT 0,
+    session_count INTEGER DEFAULT 0,
+    avg_focus_score REAL DEFAULT 0,
+    best_focus_score REAL DEFAULT 0,
+    longest_session_minutes REAL DEFAULT 0
+);
 """
 
 
@@ -977,6 +987,95 @@ class DatabaseManager:
                     ])
 
         logger.info("导出 CSV 完成: %s", output_dir)
+
+    # ── v4.17: 游戏化 - 每日统计 ──
+
+    def save_daily_stats(self, stats) -> None:
+        """保存或更新每日统计"""
+        with self._get_cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO daily_stats (date, total_focus_minutes, session_count,
+                    avg_focus_score, best_focus_score, longest_session_minutes)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(date) DO UPDATE SET
+                    total_focus_minutes = excluded.total_focus_minutes,
+                    session_count = excluded.session_count,
+                    avg_focus_score = excluded.avg_focus_score,
+                    best_focus_score = excluded.best_focus_score,
+                    longest_session_minutes = excluded.longest_session_minutes
+            """, (
+                stats.date, stats.total_focus_minutes, stats.session_count,
+                stats.avg_focus_score, stats.best_focus_score, stats.longest_session_minutes,
+            ))
+
+    def get_daily_stats(self, date: str):
+        """获取指定日期的统计"""
+        from storage.models import DailyStats
+        with self._get_cursor() as cursor:
+            cursor.execute("SELECT * FROM daily_stats WHERE date = ?", (date,))
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return DailyStats(
+            date=row["date"],
+            total_focus_minutes=row["total_focus_minutes"],
+            session_count=row["session_count"],
+            avg_focus_score=row["avg_focus_score"],
+            best_focus_score=row["best_focus_score"],
+            longest_session_minutes=row["longest_session_minutes"],
+        )
+
+    def get_all_daily_stats(self):
+        """获取所有日统计（用于日历热力图）"""
+        from storage.models import DailyStats
+        with self._get_cursor() as cursor:
+            cursor.execute("SELECT * FROM daily_stats ORDER BY date")
+            rows = cursor.fetchall()
+        return [
+            DailyStats(
+                date=row["date"],
+                total_focus_minutes=row["total_focus_minutes"],
+                session_count=row["session_count"],
+                avg_focus_score=row["avg_focus_score"],
+                best_focus_score=row["best_focus_score"],
+                longest_session_minutes=row["longest_session_minutes"],
+            )
+            for row in rows
+        ]
+
+    def get_sessions_by_date_range(self, start_date: str, end_date: str):
+        """按日期范围查询会话"""
+        with self._get_cursor() as cursor:
+            cursor.execute("""
+                SELECT * FROM sessions
+                WHERE date(start_time) >= ? AND date(start_time) <= ?
+                ORDER BY start_time DESC
+            """, (start_date, end_date))
+            rows = cursor.fetchall()
+        return self._rows_to_sessions(rows)
+
+    def _rows_to_sessions(self, rows):
+        from storage.models import Session, GlassesMode
+        from datetime import datetime
+        result = []
+        for row in rows:
+            try:
+                result.append(Session(
+                    session_id=row["session_id"],
+                    start_time=datetime.fromisoformat(row["start_time"]),
+                    end_time=datetime.fromisoformat(row["end_time"]) if row["end_time"] else None,
+                    baseline_ear=row["baseline_ear"],
+                    baseline_yaw_std=row["baseline_yaw_std"],
+                    baseline_pitch_std=row["baseline_pitch_std"],
+                    cqs_score=row["cqs_score"],
+                    baseline_blink_rate=row["baseline_blink_rate"],
+                    glasses_mode=GlassesMode(row["glasses_mode"]),
+                    is_calibrated=bool(row["is_calibrated"]),
+                    is_active=bool(row["is_active"]),
+                ))
+            except Exception:
+                continue
+        return result
 
     def __enter__(self):
         self.initialize()

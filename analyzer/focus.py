@@ -556,6 +556,37 @@ class FocusAnalyzer:
         }
 
 
+# ── v4.17: 分心原因分解 ──
+
+def compute_distraction_causes(focus_result: FocusResult) -> dict:
+    """分解专注度下降源
+
+    从 FocusResult 的 eye_score/head_score/gaze_score 推算
+    各因素在总分下降中的贡献占比。
+
+    Returns:
+        {"眨眼异常": float%, "头部偏移": float%, "视线偏离": float%}
+        总分高时返回 None（不分心则无原因）
+    """
+    if focus_result is None or focus_result.focus_score >= 70:
+        return {}
+
+    # 期望值：正常专注时眼≈90, 头≈100, 视线≈100
+    eye_drop = max(0.0, 90.0 - focus_result.eye_score)
+    head_drop = max(0.0, 100.0 - focus_result.head_score)
+    gaze_drop = max(0.0, 100.0 - focus_result.gaze_score)
+
+    total = eye_drop + head_drop + gaze_drop
+    if total < 1.0:
+        return {}
+
+    return {
+        "眨眼异常": round(eye_drop / total * 100, 0),
+        "头部偏移": round(head_drop / total * 100, 0),
+        "视线偏离": round(gaze_drop / total * 100, 0),
+    }
+
+
 def create_focus_analyzer(baseline_ear: float = 0.25) -> FocusAnalyzer:
     """工厂函数：创建专注度分析器（支持 YAML 配置覆盖）"""
     from config import get_yaml_value

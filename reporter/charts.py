@@ -362,6 +362,122 @@ class ChartGenerator:
         )
         return self._to_html(fig, height=100)
 
+    # ════════════════════════════════════════════════
+    # 7. 日历热力图 (v4.17 GitHub 贡献图风格)
+    # ════════════════════════════════════════════════
+    def generate_calendar_heatmap(self, daily_stats: list, title="专注日历"):
+        """GitHub 贡献图风格日历热力图
+
+        Args:
+            daily_stats: [{date: "2026-06-16", minutes: 45.0}, ...]
+
+        Returns:
+            HTML div string
+        """
+        if not daily_stats:
+            return self._empty_html("无历史数据")
+
+        # 构建日期→分钟映射
+        dm = {s["date"]: s["minutes"] for s in daily_stats}
+        dates = sorted(dm.keys())
+        if not dates:
+            return self._empty_html("无历史数据")
+
+        from datetime import datetime, timedelta
+
+        def _parse(d):
+            return datetime.strptime(d, "%Y-%m-%d")
+
+        first = _parse(dates[0])
+        last = _parse(dates[-1])
+
+        # 找到 first 所在周的周一
+        start = first - timedelta(days=first.weekday())
+        # 找到 last 所在周的周日
+        end = last + timedelta(days=(6 - last.weekday()))
+
+        total_days = (end - start).days + 1
+        n_weeks = (total_days + 6) // 7
+
+        # 行：周一→周日 (0-6)
+        weekdays_cn = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
+        # 构建 z 矩阵 [7 行 x n_weeks 列]
+        z = [[0.0] * n_weeks for _ in range(7)]
+        hover_texts = [[""] * n_weeks for _ in range(7)]
+        date_labels = [""] * n_weeks
+
+        current = start
+        for col in range(n_weeks):
+            for row in range(7):
+                if current > end:
+                    break
+                ds = current.strftime("%Y-%m-%d")
+                minutes = dm.get(ds, 0.0)
+                z[row][col] = minutes
+                if minutes > 0:
+                    hover_texts[row][col] = f"{ds}<br>{minutes:.0f} 分钟"
+                else:
+                    hover_texts[row][col] = ds
+                if row == 0:  # 每周一标注月份
+                    date_labels[col] = current.strftime("%m月")
+                current += timedelta(days=1)
+
+        # 颜色 scale：白→浅绿→深绿
+        colorscale = [
+            [0, "#F5F5F5"],
+            [0.01, "#E8F5E9"],
+            [0.25, "#A5D6A7"],
+            [0.5, "#66BB6A"],
+            [0.75, "#388E3C"],
+            [1, "#1B5E20"],
+        ]
+
+        max_min = max(max(row) for row in z) if any(any(r) for r in z) else 1
+
+        fig = go.Figure()
+        fig.add_trace(go.Heatmap(
+            z=z,
+            x=list(range(n_weeks)),
+            y=weekdays_cn,
+            text=hover_texts,
+            hovertemplate="%{text}<extra></extra>",
+            colorscale=colorscale,
+            zmin=0,
+            zmax=max(1, max_min),
+            showscale=True,
+            colorbar=dict(
+                title="分钟",
+                titleside="right",
+                thickness=10,
+                len=0.6,
+                tickfont=dict(size=9, color=C_QUIET),
+            ),
+            xgap=3,
+            ygap=3,
+        ))
+
+        fig.update_layout(**_LAYOUT_BASE)
+        fig.update_layout(
+            title=dict(text=title, font_size=12, x=0),
+            height=180,
+            margin=dict(l=10, r=30, t=30, b=40),
+            xaxis=dict(
+                showgrid=False, zeroline=False,
+                tickvals=list(range(n_weeks)),
+                ticktext=date_labels,
+                tickfont=dict(size=9, color=C_QUIET),
+                side="top",
+            ),
+            yaxis=dict(
+                showgrid=False, zeroline=False,
+                tickfont=dict(size=9, color=C_QUIET),
+                autorange="reversed",
+            ),
+            showlegend=False,
+        )
+        return self._to_html(fig, height=200)
+
     def _empty_html(self, message):
         return f'<div style="text-align:center;color:#ccc;padding:32px;font-size:13px">{message}</div>'
 

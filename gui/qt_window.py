@@ -45,6 +45,7 @@ from gui.qt_overlay import (
     FocusRing,
     GradientDivider,
     StatusCard,
+    DistractionLabel,
     FATIGUE_EMOJI,
     _get_segoe_font,
 )
@@ -231,6 +232,10 @@ class EyeFocusWindow(QMainWindow):
         self._light_warning.setVisible(False)
         panel_layout.addWidget(self._light_warning)
 
+        # ── v4.17: 分心原因分解标签（默认隐藏） ──
+        self._distraction_label = DistractionLabel()
+        panel_layout.addWidget(self._distraction_label)
+
         # ── 人脸丢失警告标签（默认隐藏） ──
         self._face_lost_warning = QLabel("⚠ 人脸丢失 · 监测已暂停")
         self._face_lost_warning.setAlignment(Qt.AlignCenter)
@@ -241,6 +246,16 @@ class EyeFocusWindow(QMainWindow):
         )
         self._face_lost_warning.setVisible(False)
         panel_layout.addWidget(self._face_lost_warning)
+
+        # ── v4.17: 游戏化状态栏（专注天数 + 今日时长）──
+        self._gamification_bar = QLabel("")
+        self._gamification_bar.setAlignment(Qt.AlignCenter)
+        self._gamification_bar.setStyleSheet(
+            "color: #8B8680; background: transparent;"
+            "border: none; font-size: 11px; padding: 2px 0;"
+        )
+        self._gamification_bar.setVisible(False)
+        panel_layout.addWidget(self._gamification_bar)
 
         # ── v4.13: 校准提示标签（未校准时显示，校准后自动隐藏）──
         self._calib_prompt = QLabel("🟡 尚未校准 · 评分仅供参考 — 点击\"校准\"建立个人基线")
@@ -296,6 +311,22 @@ class EyeFocusWindow(QMainWindow):
             from gui.tray import EyeFocusTrayIcon
             self._tray_icon = EyeFocusTrayIcon(parent_window=self, app_ref=app_ref)
             self._tray_icon.show()
+
+    # ── v4.17: 游戏化 ──
+
+    def update_gamification(self, streak_days: int = 0, today_minutes: float = 0.0) -> None:
+        """更新游戏化状态显示（专注天数 + 今日时长）"""
+        parts = []
+        if streak_days > 0:
+            fire = "🔥" if streak_days >= 3 else ""
+            parts.append(f"{fire}连续 {streak_days} 天")
+        if today_minutes > 0:
+            parts.append(f"今日 {today_minutes:.0f} 分钟")
+        if parts:
+            self._gamification_bar.setText(" | ".join(parts))
+            self._gamification_bar.setVisible(True)
+        else:
+            self._gamification_bar.setVisible(False)
 
     # ── v4.10: 托盘辅助方法 ──
 
@@ -372,7 +403,8 @@ class EyeFocusWindow(QMainWindow):
                     face_detected: bool = False,
                     eye_detected: bool = False,
                     fps: float = 0.0,
-                    light_condition: Optional[str] = None) -> None:
+                    light_condition: Optional[str] = None,
+                    distraction_causes: Optional[dict] = None) -> None:  # v4.17
         """更新所有显示数据 (v4.6: 支持新 FocusLevel/FatigueIndicator)"""
         # v4.6: 提取字符串值
         fl_str = focus_level.value if hasattr(focus_level, 'value') else focus_level
@@ -452,6 +484,10 @@ class EyeFocusWindow(QMainWindow):
             status="ok" if face_detected else "error",
         )
 
+        # v4.17: 分心原因分解
+        if hasattr(self, '_distraction_label'):
+            self._distraction_label.update_causes(distraction_causes or {})
+
         # v4.10: 同步更新托盘状态
         if self._tray_icon:
             self._tray_icon.update_status(focus_score=focus_score, fatigue_level=fatigue_level)
@@ -474,6 +510,12 @@ class EyeFocusWindow(QMainWindow):
         focus_dur = getattr(frame_processor, 'focus_duration_minutes', None)
         light_cond = lr.condition.value.upper() if lr else None
 
+        # v4.17: 分心原因分解
+        causes = {}
+        if fr is not None:
+            from analyzer.focus import compute_distraction_causes
+            causes = compute_distraction_causes(fr)
+
         self.update_data(
             focus_score=focus_score,
             fatigue_level=fatigue_level,
@@ -482,6 +524,7 @@ class EyeFocusWindow(QMainWindow):
             eye_detected=face,
             fps=fps,
             light_condition=light_cond,
+            distraction_causes=causes,
         )
 
     # ── 按钮回调 ──

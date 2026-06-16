@@ -2,6 +2,9 @@
 from analyzer.focus import FocusAnalyzer, create_focus_analyzer
 from analyzer.glasses import GlassesDetector, create_glasses_detector
 from analyzer.fatigue import FatigueAnalyzer, create_fatigue_analyzer
+from analyzer.voice_assistant import VoiceAssistant, create_voice_assistant
+from analyzer.reminder_engine import ReminderEngine, create_reminder_engine
+from analyzer.gamification import GamificationEngine, create_gamification_engine
 
 # v4.1 Distraction 分心识别
 try:

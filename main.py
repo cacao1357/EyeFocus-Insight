@@ -49,6 +49,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import CAMERA
 from analyzer.focus import FocusAnalyzer, create_focus_analyzer
+from analyzer.voice_assistant import create_voice_assistant
+from analyzer.reminder_engine import create_reminder_engine
+from analyzer.gamification import create_gamification_engine
 from analyzer.glasses import GlassesDetector, create_glasses_detector
 from analyzer.fatigue import FatigueAnalyzer, create_fatigue_analyzer
 from detector.face_mesh import FaceMeshDetector, create_face_mesh_detector
@@ -885,6 +888,9 @@ class EyeFocusApp:
             )
             self._db.initialize()
 
+            # v4.17: 会话开始时间（供语音/提醒使用）
+            self._session_start_time = time.time()
+
             # 创建新会话
             self._session_id = self._db.create_session()
             self._current_session = self._db.get_session(self._session_id)
@@ -910,6 +916,18 @@ class EyeFocusApp:
             # 连接分析器与检测器
             self._focus_analyzer.set_blink_detector(self._eye_detector)
             self._fatigue_analyzer.start()
+
+            # v4.17: 语音反馈助手
+            self._voice_asst = create_voice_assistant(enabled=True)
+
+            # v4.17: 智能提醒引擎（回调延迟绑定）
+            self._reminder_engine = create_reminder_engine(
+                tray_callback=self._reminder_tray_notify,
+                voice_callback=lambda text: self._voice_asst.say(text) if self._voice_asst else None,
+            )
+
+            # v4.17: 游戏化引擎
+            self._gamification = create_gamification_engine(db=self._db)
 
             # 初始化校准管理器
             self._calib_callbacks = CalibrationFlowCallbacks(self)
@@ -1312,6 +1330,46 @@ class EyeFocusApp:
                             cumulative = getattr(fa, 'cumulative_fatigue_score', 0)
                             self._qt_window.show_fatigue_notification(
                                 f"累积疲劳分数 {cumulative:.0f}，建议休息10-15分钟")
+
+            # v4.17: 语音反馈 + 智能提醒
+            fr = self._frame_processor.latest_focus_result
+            fa = self._frame_processor.latest_fatigue_result
+            focus_score = fr.focus_score if fr else 50.0
+            focus_level = fr.focus_level.value if (fr and fr.focus_level) else None
+            fatigue_level = None
+            session_min = 0.0
+            if fa is not None:
+                fl = fa.fatigue_level
+                fatigue_level = fl.value.upper() if hasattr(fl, 'value') else str(fl)
+            if hasattr(self, '_session_start_time') and self._session_start_time:
+                session_min = (time.time() - self._session_start_time) / 60.0
+
+            if hasattr(self, '_voice_asst') and self._voice_asst is not None:
+                self._voice_asst.on_tick(
+                    focus_score=focus_score,
+                    fatigue_level=fatigue_level,
+                    session_minutes=session_min,
+                    face_detected=self._frame_processor.latest_face_detected,
+                )
+
+            if hasattr(self, '_reminder_engine') and self._reminder_engine is not None:
+                self._reminder_engine.check(
+                    focus_score=focus_score,
+                    focus_level=focus_level,
+                    fatigue_level=fatigue_level,
+                    session_minutes=session_min,
+                    face_detected=self._frame_processor.latest_face_detected,
+                )
+
+            # v4.17: 游戏化状态更新（每 60s 一次，避免频繁 DB 查询）
+            gamify_update = getattr(self, '_gamify_update_time', 0)
+            if time.time() - gamify_update >= 60:
+                self._gamify_update_time = time.time()
+                if (hasattr(self, '_gamification') and self._gamification is not None
+                        and hasattr(self, '_qt_window') and self._qt_window is not None):
+                    streak = self._gamification.get_streak_days()
+                    today_min = self._gamification.get_today_minutes()
+                    self._qt_window.update_gamification(streak, today_min)
         finally:
             self._qt_frame_busy = False
 
@@ -1697,6 +1755,21 @@ class EyeFocusApp:
 
         logger.info("已安全退出")
 
+    # ── v4.17: 提醒引擎托盘回调 ──
+
+    def _reminder_tray_notify(self, title: str, message: str) -> None:
+        """提醒引擎的托盘通知回调（延迟绑定，运行时再取托盘引用）"""
+        try:
+            if hasattr(self, '_qt_window') and self._qt_window is not None:
+                if hasattr(self._qt_window, '_tray_icon') and self._qt_window._tray_icon is not None:
+                    self._qt_window._tray_icon.showMessage(
+                        title, message,
+                        self._qt_window._tray_icon.Information,
+                        5000,
+                    )
+        except Exception:
+            pass
+
     def _finalize_session(self) -> None:
         """结束当前会话并生成含 insights 的 HTML 报告。
 
@@ -1718,6 +1791,16 @@ class EyeFocusApp:
                 end_time=datetime.now(),
                 is_active=False,
             )
+
+            # v4.17: 游戏化 - 更新每日统计与成就
+            if hasattr(self, '_gamification') and self._gamification is not None:
+                session = self._db.get_session(self._session_id)
+                fr = self._frame_processor.latest_focus_result
+                avg_focus = fr.focus_score if fr and fr.focus_score else 50.0
+                new_ach = self._gamification.on_session_end(session, avg_focus)
+                if new_ach:
+                    names = ", ".join(f"{a.icon} {a.name}" for a in new_ach)
+                    logger.info("🏅 新成就: %s", names)
 
             # 2. 生成含 insights 的 HTML 报告
             from reporter.report_html import create_html_generator
@@ -1752,6 +1835,10 @@ class EyeFocusApp:
 
         # v4.16: 强制移除托盘图标
         self._tray_cleanup()
+
+        # v4.17: 关闭语音助手
+        if hasattr(self, '_voice_asst') and self._voice_asst is not None:
+            self._voice_asst.shutdown()
 
         # 恢复信号处理器
         if self._original_sigint:

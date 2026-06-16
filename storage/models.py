@@ -188,3 +188,28 @@ class CalibrationResult:
     baseline_blink_rate: Optional[float] = None  # 个人基线眨眼频率 (次/分钟)
     is_accepted: bool = True      # 用户是否接受
     notes: str = ""              # 用户备注
+
+
+# ── v4.17: 游戏化数据模型 ──
+
+
+@dataclass
+class DailyStats:
+    """每日专注统计"""
+    date: str  # "2026-06-16"
+    total_focus_minutes: float = 0.0
+    session_count: int = 0
+    avg_focus_score: float = 0.0
+    best_focus_score: float = 0.0
+    longest_session_minutes: float = 0.0
+
+
+@dataclass
+class Achievement:
+    """成就定义"""
+    id: str
+    name: str
+    description: str
+    icon: str  # emoji
+    unlocked: bool = False
+    unlocked_date: Optional[str] = None  # "2026-06-16"
