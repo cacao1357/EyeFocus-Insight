@@ -1273,6 +1273,10 @@ class EyeFocusApp:
             self._qt_frame_first_logged = True
             logger.debug("_qt_process_frame 首次调用")
 
+        # v4.19: 暂停时跳过处理
+        if getattr(self, '_qt_window', None) is not None and self._qt_window.is_paused():
+            return
+
         if not self._camera_manager or not self._camera_manager.is_running:
             return
 

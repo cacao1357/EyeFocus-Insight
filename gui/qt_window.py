@@ -47,7 +47,6 @@ from gui.qt_overlay import (
     StatusCard,
     DistractionLabel,
     FocusSparkline,
-    PomodoroStatus,
     FATIGUE_EMOJI,
     _get_segoe_font,
 )
@@ -168,7 +167,7 @@ class EyeFocusWindow(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # ── 上半：摄像头画面 (stretch 6) ──
+        # ── 上半：摄像头画面 (stretch 7) ──
         self._video_container = QWidget()
         self._video_container.setStyleSheet("background-color: #000000;")
         video_layout = QVBoxLayout(self._video_container)
@@ -184,49 +183,50 @@ class EyeFocusWindow(QMainWindow):
             "font-size: 36px; font-weight: bold; border-radius: 12px;"
         )
         self._pause_overlay.setVisible(False)
-        main_layout.addWidget(self._video_container, 6)
+        main_layout.addWidget(self._video_container, 7)
 
-        # ── 下半：白色数据面板 (stretch 4) ──
+        # ── 下半：白色数据面板 (stretch 3) ──
         self._data_panel = DataPanel()
         panel_layout = QVBoxLayout(self._data_panel)
-        panel_layout.setContentsMargins(0, 8, 0, 4)
+        panel_layout.setContentsMargins(0, 6, 0, 2)
         panel_layout.setSpacing(0)
         panel_layout.setAlignment(Qt.AlignCenter)
 
-        # 面板内容：左卡片列 + 圆环 + 右卡片列
+        # v4.19 新布局：左列[专注时长+番茄] | 圆环 | 右列[识别状态]
         content = QHBoxLayout()
-        content.setSpacing(20)
+        content.setSpacing(16)
         content.setAlignment(Qt.AlignCenter)
 
-        # 左列卡片
+        # 左列：专注时长 + 番茄状态
         left_col = QVBoxLayout()
         left_col.setSpacing(6)
         left_col.setAlignment(Qt.AlignCenter)
 
-        self._fatigue_card = StatusCard(
-            emoji="😊", main_text="LOW", label_text="疲劳", size=100)
         self._duration_card = StatusCard(
-            emoji="", main_text="--", label_text="专注时长", size=100)
-        left_col.addWidget(self._fatigue_card)
+            emoji="⏱", main_text="--", label_text="专注时长", size=90)
         left_col.addWidget(self._duration_card)
+
+        # v4.18 番茄状态移入左列
+        self._pomodoro_card = StatusCard(
+            emoji="🍅", main_text="--", label_text="番茄", size=90)
+        left_col.addWidget(self._pomodoro_card)
+
         content.addLayout(left_col)
 
-        # 中心圆环
+        # 中心圆环（字体放大）
         self._focus_ring = FocusRing()
         self._focus_ring.setMinimumSize(180, 180)
         content.addWidget(self._focus_ring)
 
-        # 右列卡片
+        # 右列：识别状态（合并眼+脸）
         right_col = QVBoxLayout()
         right_col.setSpacing(6)
         right_col.setAlignment(Qt.AlignCenter)
 
-        self._eye_card = StatusCard(
-            emoji="", main_text="正常", label_text="眼睛", size=100)
-        self._face_card = StatusCard(
-            emoji="", main_text="正常", label_text="人脸", size=100)
-        right_col.addWidget(self._eye_card)
-        right_col.addWidget(self._face_card)
+        self._status_card = StatusCard(
+            emoji="🟢", main_text="正常", label_text="识别状态", size=90)
+        right_col.addWidget(self._status_card)
+
         content.addLayout(right_col)
 
         panel_layout.addLayout(content)
@@ -235,12 +235,7 @@ class EyeFocusWindow(QMainWindow):
         self._sparkline = FocusSparkline()
         panel_layout.addWidget(self._sparkline)
 
-        # ── v4.18: 番茄状态 ──
-        self._pomodoro_status = PomodoroStatus()
-        panel_layout.addWidget(self._pomodoro_status)
-
         # ── 光照警告标签（默认隐藏） ──
-        self._light_warning = QLabel("⚠ 光照不足 · 检测精度可能下降")
         self._light_warning.setAlignment(Qt.AlignCenter)
         self._light_warning.setStyleSheet(
             "color: #FF9500; background: #FFF3E0; border: 1px solid #FF9500;"
@@ -334,8 +329,19 @@ class EyeFocusWindow(QMainWindow):
 
     def update_pomodoro(self, status: dict) -> None:
         """更新番茄状态显示"""
-        if hasattr(self, '_pomodoro_status'):
-            self._pomodoro_status.update_status(status)
+        if hasattr(self, '_pomodoro_card'):
+            s = status["state"]
+            if s == "IDLE":
+                self._pomodoro_card.update_data(
+                    main_text="--", label_text="番茄", emoji="🍅", status="ok")
+            else:
+                remaining = status["remaining_sec"]
+                rm, rs = divmod(remaining, 60)
+                time_str = f"{rm:02d}:{rs:02d}"
+                emoji = "🍅" if s == "WORKING" else "☕"
+                self._pomodoro_card.update_data(
+                    main_text=time_str, label_text=emoji + " 番茄",
+                    emoji="", status="ok")
 
     # ── v4.17: 专注度波线 ──
 
@@ -522,29 +528,7 @@ class EyeFocusWindow(QMainWindow):
             fatigue_level=fatigue_level,   # 向后兼容
         )
 
-        # 疲劳卡片 (v4.6 标签)
-        if fi_str:
-            card_labels = {"rested": "清醒", "attention": "关注", "tired": "休息"}
-            card_status = {"rested": "ok", "attention": "warn", "tired": "error"}
-            fi_lower = fi_str.lower() if fi_str else "rested"
-            self._fatigue_card.update_data(
-                main_text=card_labels.get(fi_lower, fi_str),
-                label_text="眼疲劳",
-                emoji="",
-                status=card_status.get(fi_lower, "ok"),
-            )
-        elif fatigue_level:
-            level = fatigue_level or "LOW"
-            level_labels = {"LOW": "清醒", "MEDIUM": "关注", "HIGH": "疲劳"}
-            fatigue_status = "ok" if level == "LOW" else ("warn" if level == "MEDIUM" else "error")
-            self._fatigue_card.update_data(
-                main_text=level_labels.get(level, level),
-                label_text="疲劳",
-                emoji="",
-                status=fatigue_status,
-            )
-        else:
-            self._fatigue_card.update_data(main_text="--", label_text="眼疲劳", status="ok")
+        # v4.19: 疲劳信息已整合到 FocusRing 圆点中，不再单独卡片
 
         # 专注时长卡片
         if focus_duration_minutes is not None:
@@ -562,18 +546,24 @@ class EyeFocusWindow(QMainWindow):
             status="ok",
         )
 
-        # 眼睛卡片
-        self._eye_card.update_data(
-            main_text="正常" if eye_detected else "闭眼",
-            label_text="眼睛",
-            status="ok" if eye_detected else "error",
-        )
-
-        # 人脸卡片
-        self._face_card.update_data(
-            main_text="正常" if face_detected else "丢失",
-            label_text="人脸",
-            status="ok" if face_detected else "error",
+        # v4.19: 识别状态卡片（合并眼+脸）
+        if not face_detected:
+            status_text = "丢失"
+            status_emoji = "🔴"
+            status_st = "error"
+        elif not eye_detected:
+            status_text = "闭眼"
+            status_emoji = "🟡"
+            status_st = "warn"
+        else:
+            status_text = "正常"
+            status_emoji = "🟢"
+            status_st = "ok"
+        self._status_card.update_data(
+            main_text=status_text,
+            label_text="识别状态",
+            emoji=status_emoji,
+            status=status_st,
         )
 
         # v4.17: 分心原因分解

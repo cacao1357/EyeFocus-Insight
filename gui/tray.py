@@ -238,7 +238,17 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         if not hasattr(self._app, '_finalize_session'):
             logger.warning("无法生成报告: _app 无 _finalize_session")
             return
-        self._app._finalize_session()
+        # v4.19: 通知用户报告生成中
+        self.showMessage(
+            "EyeFocus Insight", "报告生成中（首次生成可能较慢）...",
+            QSystemTrayIcon.Information, 3000,
+        )
+        try:
+            self._app._finalize_session()
+        except Exception as e:
+            logger.warning("生成报告异常: %s", e)
+            self.showMessage("EyeFocus Insight", "报告生成失败", QSystemTrayIcon.Critical, 3000)
+            return
         # 自动在浏览器中打开报告
         sid = getattr(self._app, '_session_id', None)
         if sid:
@@ -249,6 +259,7 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
                     logger.info("报告已打开: %s", report_path)
                 except Exception as e:
                     logger.warning("打开报告失败: %s", e)
+                    self.showMessage("EyeFocus Insight", f"打开报告失败", QSystemTrayIcon.Critical, 3000)
 
     # ── v4.18: 最近会话 ──
 

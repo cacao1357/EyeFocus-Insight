@@ -134,9 +134,9 @@ class FocusRing(QWidget):
         self._focus_score: Optional[float] = None
         self._fatigue_level: Optional[str] = None
 
-        self._text_font = _get_segoe_font(20, QFont.Bold)
-        self._label_font = _get_segoe_font(11)
-        self._dot_font = _get_segoe_font(9)
+        self._text_font = _get_segoe_font(28, QFont.Bold)  # v4.19: 20→28
+        self._label_font = _get_segoe_font(12)  # v4.19: 11→12
+        self._dot_font = _get_segoe_font(10)  # v4.19: 9→10
 
     def update_data(self,
                     focus_score: Optional[float] = None,

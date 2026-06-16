@@ -73,7 +73,7 @@ class VideoLabel(QLabel):
         pixmap = QPixmap.fromImage(qimg)
         scaled = pixmap.scaled(
             self.size(),
-            Qt.KeepAspectRatioByExpanding,  # v4.5.5: 填满区域消除黑边
+            Qt.KeepAspectRatio,  # v4.19: 完整显示不裁剪
             Qt.SmoothTransformation,
         )
         self.setPixmap(scaled)
