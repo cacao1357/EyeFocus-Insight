@@ -33,12 +33,15 @@ class PomodoroEngine:
                  pause_callback: Optional[Callable[[], None]] = None,
                  resume_callback: Optional[Callable[[], None]] = None):
         self._voice = voice_callback
-        self._pause = pause_callback
-        self._resume = resume_callback
+        self._pause_cb = pause_callback
+        self._resume_cb = resume_callback
 
-        self._state = "IDLE"        # IDLE / WORKING / BREAK
+        self._state = "IDLE"        # IDLE / WORKING / BREAK / PAUSED
+        self._paused: bool = False
         self._elapsed: float = 0.0  # 当前阶段已过秒数
         self._duration: float = self.WORK_MINUTES * 60.0
+        self._work_minutes: int = self.WORK_MINUTES
+        self._break_minutes: int = self.BREAK_MINUTES
         self._count: int = 0        # 今日番茄数
         self._session_count: int = 0  # 连续番茄数
         self._last_tick: Optional[float] = None
@@ -48,15 +51,43 @@ class PomodoroEngine:
         """开始一个番茄"""
         if self._state == "IDLE":
             self._state = "WORKING"
+            self._paused = False
             self._elapsed = 0.0
-            self._duration = self.WORK_MINUTES * 60.0
+            self._duration = self._work_minutes * 60.0
             self._last_tick = time.time()
             self._started = True
-            logger.info("🍅 番茄开始 (%d 分钟)", self.WORK_MINUTES)
+            logger.info("🍅 番茄开始 (%d 分钟)", self._work_minutes)
             if self._voice:
-                self._voice(f"番茄开始，专注工作{self.WORK_MINUTES}分钟")
-            if self._resume:
-                self._resume()
+                self._voice(f"番茄开始，专注工作{self._work_minutes}分钟")
+            if self._resume_cb:
+                self._resume_cb()
+
+    def pause(self) -> None:
+        """暂停当前番茄"""
+        if self._state in ("WORKING", "BREAK") and not self._paused:
+            self._paused = True
+            logger.info("🍅 番茄已暂停")
+            if self._voice:
+                self._voice("番茄已暂停")
+
+    def resume(self) -> None:
+        """继续当前番茄"""
+        if self._paused:
+            self._paused = False
+            self._last_tick = time.time()
+            logger.info("🍅 番茄已继续")
+            if self._voice:
+                label = "工作" if self._state == "WORKING" else "休息"
+                self._voice(f"{label}继续")
+
+    def set_duration(self, work_minutes: int, break_minutes: int) -> None:
+        """自定义工作/休息时长"""
+        self._work_minutes = max(1, min(120, work_minutes))
+        self._break_minutes = max(1, min(60, break_minutes))
+        logger.info("🍅 番茄时间已设置: 工作%d分, 休息%d分",
+                     self._work_minutes, self._break_minutes)
+        if self._state == "IDLE":
+            self._duration = self._work_minutes * 60.0
 
     def stop(self) -> None:
         """停止当前番茄"""
@@ -83,6 +114,9 @@ class PomodoroEngine:
         if self._state == "IDLE":
             return
 
+        if self._paused:
+            return  # 暂停不计时
+
         self._elapsed += dt
 
         if self._elapsed >= self._duration:
@@ -97,18 +131,20 @@ class PomodoroEngine:
             is_long = (self._session_count % self.SESSIONS_BEFORE_LONG_BREAK == 0)
             break_min = self.LONG_BREAK_MINUTES if is_long else self.BREAK_MINUTES
             self._state = "BREAK"
+            self._paused = False
             self._elapsed = 0.0
             self._duration = break_min * 60.0
             logger.info("🍅 番茄完成! 第 %d 个 (休息 %d 分钟)", self._count, break_min)
             if self._voice:
                 self._voice(f"番茄完成！休息{break_min}分钟")
-            if self._pause:
-                self._pause()
+            if self._pause_cb:
+                self._pause_cb()
         elif self._state == "BREAK":
             # 休息结束 → 工作
             self._state = "WORKING"
+            self._paused = False
             self._elapsed = 0.0
-            self._duration = self.WORK_MINUTES * 60.0
+            self._duration = self._work_minutes * 60.0
             logger.info("🍅 休息结束，开始第 %d 个番茄", self._count + 1)
             if self._voice:
                 self._voice("休息结束，开始新的番茄")
@@ -119,7 +155,8 @@ class PomodoroEngine:
         """获取当前状态（供 UI 显示）
 
         Returns:
-            dict with: state, count, remaining_sec, elapsed_sec, total_sec, progress
+            dict with: state, count, remaining_sec, elapsed_sec, total_sec,
+                       progress, paused, work_min, break_min
         """
         remaining = max(0.0, self._duration - self._elapsed)
         return {
@@ -129,6 +166,9 @@ class PomodoroEngine:
             "elapsed_sec": int(self._elapsed),
             "total_sec": int(self._duration),
             "progress": min(1.0, self._elapsed / max(1, self._duration)),
+            "paused": self._paused,
+            "work_min": self._work_minutes,
+            "break_min": self._break_minutes,
         }
 
     @property

@@ -1408,7 +1408,10 @@ class EyeFocusApp:
                         if hasattr(self, '_qt_window') and self._qt_window is not None:
                             self._qt_window.update_pomodoro(self._pomodoro.get_status())
                             if hasattr(self._qt_window, '_tray_icon') and self._qt_window._tray_icon is not None:
-                                self._qt_window._tray_icon.set_pomodoro_state(self._pomodoro.state, self._pomodoro.count)
+                                st = self._pomodoro.state
+                                if self._pomodoro._paused:
+                                    st = "PAUSED"
+                                self._qt_window._tray_icon.set_pomodoro_state(st, self._pomodoro.count)
 
                 # 游戏化（每 60s）
                 gamify_update = getattr(self, '_gamify_update_time', 0)
@@ -1845,6 +1848,13 @@ class EyeFocusApp:
 
     # ── v4.18: 周报 ──
 
+    def _error_report_html(self, error_msg: str) -> str:
+        """生成错误占位报告（保证文件存在）"""
+        return f"""<!DOCTYPE html><html><meta charset="utf-8"><body style="padding:40px;font-family:sans-serif">
+<h2>⚠️ 报告生成失败</h2><p style="color:#666;">{error_msg}</p>
+<p style="color:#999;font-size:12px;">EyeFocus Insight · {datetime.now()}</p>
+</body></html>"""
+
     def _generate_weekly_report(self) -> None:
         """生成周报并在浏览器中打开"""
         try:
@@ -1899,7 +1909,15 @@ class EyeFocusApp:
             import os
 
             generator = create_html_generator(self._db)
-            html = generator.generate_report_with_insights(self._session_id)
+            try:
+                html = generator.generate_report_with_insights(self._session_id)
+            except Exception as e:
+                logger.warning("Insights 报告失败，回退到基础报告: %s", e)
+                try:
+                    html = generator.generate_report(self._session_id)
+                except Exception as e2:
+                    logger.error("基础报告也失败: %s", e2)
+                    html = self._error_report_html(str(e2))
 
             os.makedirs("reports", exist_ok=True)
             report_path = f"reports/{self._session_id}.html"

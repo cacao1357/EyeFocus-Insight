@@ -89,31 +89,37 @@ class DataPanel(QWidget):
 # ═══════════════════════════════════════════════════════════════════
 
 class ControlButton(QPushButton):
-    """极简文字按钮：无色背景，彩色文字，hover 微亮"""
+    """简约文字按钮：圆角背景，hover 微亮，pressed 加深"""
 
     def __init__(self, text: str, color: str = "#8E8E93",
                  parent: Optional[QWidget] = None):
         super().__init__(text, parent)
         self._color = color
-        self.setFont(_get_segoe_font(11))
+        self.setFont(_get_segoe_font(12))
         self.setCursor(Qt.PointingHandCursor)
         self.setFlat(True)
+        self._update_style(color)
+
+    def _update_style(self, color: str):
         self.setStyleSheet(
             f"QPushButton {{"
-            f"  color: {color};"
-            f"  background: transparent;"
-            f"  border: none;"
-            f"  padding: 6px 16px;"
+            f"  color: {color}; background: transparent;"
+            f"  border: 1px solid {color}40;"
+            f"  border-radius: 8px; padding: 6px 18px;"
+            f"  font-size: 12px; font-weight: 500;"
             f"}}"
             f"QPushButton:hover {{"
-            f"  color: {color};"
-            f"  background: rgba(0,0,0,0.05);"
-            f"  border-radius: 6px;"
+            f"  color: {color}; background: {color}15;"
+            f"  border-color: {color}70;"
             f"}}"
             f"QPushButton:pressed {{"
-            f"  background: rgba(0,0,0,0.10);"
+            f"  background: {color}25;"
             f"}}"
         )
+
+    def set_color(self, color: str):
+        self._color = color
+        self._update_style(color)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -197,34 +203,27 @@ class EyeFocusWindow(QMainWindow):
         content.setSpacing(16)
         content.setAlignment(Qt.AlignCenter)
 
-        # 左列：专注时长 + 番茄状态
-        left_col = QVBoxLayout()
-        left_col.setSpacing(6)
-        left_col.setAlignment(Qt.AlignCenter)
-
-        self._duration_card = StatusCard(
-            emoji="⏱", main_text="--", label_text="专注时长", size=90)
-        left_col.addWidget(self._duration_card)
-
-        # v4.18 番茄状态移入左列
-        self._pomodoro_card = StatusCard(
-            emoji="🍅", main_text="--", label_text="番茄", size=90)
-        left_col.addWidget(self._pomodoro_card)
-
-        content.addLayout(left_col)
-
-        # 中心圆环（字体放大）
+        # v4.20 新布局：圆环在左 | 三卡片在右
+        # 左：专注度圆环
         self._focus_ring = FocusRing()
-        self._focus_ring.setMinimumSize(180, 180)
+        self._focus_ring.setMinimumSize(160, 160)
         content.addWidget(self._focus_ring)
 
-        # 右列：识别状态（合并眼+脸）
+        # 右：三卡片垂直排列 + 番茄按钮
         right_col = QVBoxLayout()
-        right_col.setSpacing(6)
+        right_col.setSpacing(4)
         right_col.setAlignment(Qt.AlignCenter)
 
+        self._duration_card = StatusCard(
+            emoji="⏱", main_text="--", label_text="", size=80)
+        right_col.addWidget(self._duration_card)
+
+        self._pomodoro_card = StatusCard(
+            emoji="🍅", main_text="--", label_text="", size=80)
+        right_col.addWidget(self._pomodoro_card)
+
         self._status_card = StatusCard(
-            emoji="🟢", main_text="正常", label_text="识别状态", size=90)
+            emoji="🟢", main_text="正常", label_text="", size=80)
         right_col.addWidget(self._status_card)
 
         content.addLayout(right_col)
@@ -265,8 +264,8 @@ class EyeFocusWindow(QMainWindow):
         self._gamification_bar = QLabel("")
         self._gamification_bar.setAlignment(Qt.AlignCenter)
         self._gamification_bar.setStyleSheet(
-            "color: #8B8680; background: transparent;"
-            "border: none; font-size: 11px; padding: 2px 0;"
+            "color: #5B4A8C; background: transparent;"
+            "border: none; font-size: 13px; padding: 2px 0; font-weight: 500;"
         )
         self._gamification_bar.setVisible(False)
         panel_layout.addWidget(self._gamification_bar)
@@ -334,15 +333,17 @@ class EyeFocusWindow(QMainWindow):
             s = status["state"]
             if s == "IDLE":
                 self._pomodoro_card.update_data(
-                    main_text="--", label_text="番茄", emoji="🍅", status="ok")
+                    main_text="--", label_text="", emoji="🍅", status="ok")
             else:
                 remaining = status["remaining_sec"]
                 rm, rs = divmod(remaining, 60)
                 time_str = f"{rm:02d}:{rs:02d}"
-                emoji = "🍅" if s == "WORKING" else "☕"
+                paused = status.get("paused", False)
+                if paused:
+                    time_str = "⏸ " + time_str
                 self._pomodoro_card.update_data(
-                    main_text=time_str, label_text=emoji + " 番茄",
-                    emoji="", status="ok")
+                    main_text=time_str, label_text="",
+                    emoji="🍅" if s == "WORKING" else "☕", status="ok")
 
     # ── v4.17: 专注度波线 ──
 
@@ -466,14 +467,7 @@ class EyeFocusWindow(QMainWindow):
             if paused:
                 self._position_pause_overlay()
         # 按钮颜色随暂停状态切换
-        if paused:
-            self._pause_btn._color = "#34C759"
-        else:
-            self._pause_btn._color = "#8E8E93"
-        self._pause_btn.setStyleSheet(
-            self._pause_btn.styleSheet()
-            .replace("color: #8E8E93", "color: #34C759" if paused else "color: #8E8E93")
-        )
+        self._pause_btn.set_color("#34C759" if paused else "#8E8E93")
 
     def is_paused(self) -> bool:
         return self._paused
@@ -542,9 +536,7 @@ class EyeFocusWindow(QMainWindow):
         else:
             dur_text = "--"
         self._duration_card.update_data(
-            main_text=dur_text,
-            label_text="专注时长",
-            status="ok",
+            main_text=dur_text, label_text="", status="ok",
         )
 
         # v4.19: 识别状态卡片（合并眼+脸）
@@ -561,10 +553,8 @@ class EyeFocusWindow(QMainWindow):
             status_emoji = "🟢"
             status_st = "ok"
         self._status_card.update_data(
-            main_text=status_text,
-            label_text="识别状态",
-            emoji=status_emoji,
-            status=status_st,
+            main_text=status_text, label_text="",
+            emoji=status_emoji, status=status_st,
         )
 
         # v4.17: 分心原因分解

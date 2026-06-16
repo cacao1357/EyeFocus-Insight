@@ -324,6 +324,7 @@ class StatusCard(QWidget):
 
         self._main_label.setText(main_text)
         self._label_label.setText(label_text)
+        self._label_label.setVisible(bool(label_text))
 
         # 状态颜色
         if status == "error":

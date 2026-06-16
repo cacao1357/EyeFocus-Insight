@@ -94,9 +94,14 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         export_action = menu.addAction("导出数据")
         export_action.triggered.connect(self._export_data)
 
-        # v4.18: 番茄工作法
+        # v4.18: 番茄工作法（v4.20: 增加暂停/设置）
         self._pomodoro_action = menu.addAction("开始番茄")
         self._pomodoro_action.triggered.connect(self._toggle_pomodoro)
+        self._pomodoro_pause_action = menu.addAction("暂停番茄")
+        self._pomodoro_pause_action.setEnabled(False)
+        self._pomodoro_pause_action.triggered.connect(self._pause_pomodoro)
+        pomodoro_set_action = menu.addAction("设置番茄...")
+        pomodoro_set_action.triggered.connect(self._set_pomodoro)
 
         # 重新校准
         calibrate_action = menu.addAction("重新校准")
@@ -174,8 +179,12 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             "IDLE": "开始番茄",
             "WORKING": f"🍅 ×{count} 工作中..." if count else "番茄工作中...",
             "BREAK": "☕ 休息中...",
+            "PAUSED": "⏸ 已暂停",
         }
         self._pomodoro_action.setText(labels.get(state, "开始番茄"))
+        can_pause = state in ("WORKING", "BREAK")
+        self._pomodoro_pause_action.setEnabled(can_pause)
+        self._pomodoro_pause_action.setText("继续番茄" if state == "PAUSED" else "暂停番茄")
 
     def set_voice_enabled(self, enabled: bool):
         """同步语音状态到菜单项"""
@@ -362,19 +371,50 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
     # ── v4.18: 番茄工作法 ──
 
     def _toggle_pomodoro(self) -> None:
-        """切换番茄工作法状态"""
+        """切换番茄工作法：IDLE→开始 / WORKING→停止 / BREAK→跳过"""
         try:
             pomo = getattr(self._app, '_pomodoro', None)
             if pomo is None:
                 return
             if pomo.state == "IDLE":
                 pomo.start()
-                self._pomodoro_action.setText("停止番茄")
             else:
                 pomo.stop()
-                self._pomodoro_action.setText("开始番茄")
+            self.set_pomodoro_state(pomo.state, pomo.count)
         except Exception as e:
             logger.warning("番茄切换失败: %s", e)
+
+    def _pause_pomodoro(self) -> None:
+        """暂停或继续番茄"""
+        try:
+            pomo = getattr(self._app, '_pomodoro', None)
+            if pomo is None or pomo.state == "IDLE":
+                return
+            if getattr(pomo, '_paused', False):
+                pomo.resume()
+            else:
+                pomo.pause()
+            self.set_pomodoro_state(pomo.state, pomo.count)
+        except Exception as e:
+            logger.warning("番茄暂停失败: %s", e)
+
+    def _set_pomodoro(self) -> None:
+        """设置番茄工作/休息时间"""
+        try:
+            from PyQt5.QtWidgets import QInputDialog
+            work, ok = QInputDialog.getInt(None, "设置番茄",
+                "工作分钟数 (1-120):", value=25, min=1, max=120)
+            if not ok:
+                return
+            rest, ok = QInputDialog.getInt(None, "设置番茄",
+                "休息分钟数 (1-60):", value=5, min=1, max=60)
+            if not ok:
+                return
+            pomo = getattr(self._app, '_pomodoro', None)
+            if pomo:
+                pomo.set_duration(work, rest)
+        except Exception as e:
+            logger.warning("设置番茄失败: %s", e)
 
     def _start_calibration(self):
         """启动重新校准（v4.16: try/except 保护，防止异常导致程序退出）"""
