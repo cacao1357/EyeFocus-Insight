@@ -43,6 +43,7 @@ class GamificationEngine:
     def __init__(self, db):
         self._db = db
         self._today = datetime.now().strftime("%Y-%m-%d")
+        self._logged_achievements: set = set()  # 防重复通知
 
     def on_session_end(self, session: Session, avg_focus: float) -> List[Achievement]:
         """会话结束时更新统计并检查成就
@@ -82,13 +83,14 @@ class GamificationEngine:
             )
         self._db.save_daily_stats(stats)
 
-        # 检查成就解锁
+        # 检查成就解锁（去重：仅首次通知）
         new_achievements = self._check_achievements(session, avg_focus, duration_min)
-        if new_achievements:
-            names = ", ".join(a.name for a in new_achievements)
-            logger.info("🏅 新成就解锁: %s", names)
+        first_time = [a for a in new_achievements if a.id not in self._logged_achievements]
+        for a in first_time:
+            self._logged_achievements.add(a.id)
+            logger.info("🏅 新成就解锁: %s %s", a.icon, a.name)
 
-        return new_achievements
+        return first_time
 
     def get_streak_days(self) -> int:
         """计算连续使用天数

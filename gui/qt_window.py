@@ -516,12 +516,17 @@ class EyeFocusWindow(QMainWindow):
             from analyzer.focus import compute_distraction_causes
             causes = compute_distraction_causes(fr)
 
+        # v4.17: 眼睛检测状态从 FocusResult 获取，不再 aliased 到 face
+        eyes_open = True
+        if fr is not None and hasattr(fr, 'eye_openness'):
+            eyes_open = fr.eye_openness > 0.5
+
         self.update_data(
             focus_score=focus_score,
             fatigue_level=fatigue_level,
             focus_duration_minutes=focus_dur,
             face_detected=face,
-            eye_detected=face,
+            eye_detected=eyes_open,
             fps=fps,
             light_condition=light_cond,
             distraction_causes=causes,

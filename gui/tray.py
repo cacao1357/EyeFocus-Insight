@@ -88,6 +88,12 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
 
         menu.addSeparator()
 
+        # v4.17: 语音反馈开关
+        self._voice_action = menu.addAction("启用语音反馈")
+        self._voice_action.setCheckable(True)
+        self._voice_action.setChecked(True)
+        self._voice_action.triggered.connect(self._toggle_voice)
+
         # 免打扰模式
         self._dnd_action = menu.addAction("免打扰模式")
         self._dnd_action.setCheckable(True)
@@ -127,6 +133,10 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
     def set_paused_state(self, paused: bool):
         """同步暂停状态到菜单项"""
         self._pause_action.setText("继续监测" if paused else "暂停监测")
+
+    def set_voice_enabled(self, enabled: bool):
+        """同步语音状态到菜单项"""
+        self._voice_action.setChecked(enabled)
 
     def set_do_not_disturb(self, enabled: bool):
         """设置免打扰模式"""
@@ -211,6 +221,15 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             logger.error("重新校准异常: %s", e)
             import traceback
             traceback.print_exc()
+
+    def _toggle_voice(self, checked: bool):
+        """切换语音反馈"""
+        logger.info("语音反馈: %s", "ON" if checked else "OFF")
+        try:
+            if hasattr(self._app, '_voice_asst') and self._app._voice_asst is not None:
+                self._app._voice_asst.set_enabled(checked)
+        except Exception as e:
+            logger.warning("切换语音反馈失败: %s", e)
 
     def _toggle_dnd(self, checked: bool):
         """切换免打扰模式"""

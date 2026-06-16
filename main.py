@@ -1289,6 +1289,9 @@ class EyeFocusApp:
 
             # 更新 Qt 窗口的数据面板（圆环 + 卡片）
             if hasattr(self, '_qt_window') and self._qt_window is not None:
+                # v4.17: 修复专注时长一直显示 "--" 的问题
+                elapsed_min = (time.time() - self._session_start_time) / 60.0 if self._session_start_time else 0.0
+                self._frame_processor.focus_duration_minutes = elapsed_min
                 self._qt_window.update_data_from_processor(self._frame_processor, self._fps)
 
             # FPS
