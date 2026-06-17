@@ -1010,6 +1010,55 @@ class TestHTMLReportGenerator:
         finally:
             font_loader.force_offline(None)
 
+    def test_v426_no_achievement_system(
+        self, html_generator, sample_session,
+        sample_focus_records, sample_fatigue_records, sample_blink_records,
+    ):
+        """v4.26: 成就系统已彻底移除（用户反馈 v4.17 徽章与腕表美学冲突）
+
+        验证三处:
+        1. _render_achievements 方法不存在
+        2. CSS_STYLE 不含 .achieve-row / .achieve-badge
+        3. 渲染的报告不含 🏅 成就 卡片
+        """
+        # 1) 方法已删
+        assert not hasattr(HTMLReportGenerator, "_render_achievements"), \
+            "_render_achievements 方法还在，应已删除"
+        # 2) CSS 已删
+        css = HTMLReportGenerator.CSS_STYLE
+        assert ".achieve-row" not in css, ".achieve-row CSS 还在"
+        assert ".achieve-badge" not in css, ".achieve-badge CSS 还在"
+        # 3) 渲染的报告不含成就
+        html = html_generator.generate_report_from_data(
+            session=sample_session,
+            focus_records=sample_focus_records,
+            fatigue_records=sample_fatigue_records,
+            blink_records=sample_blink_records,
+        )
+        assert "🏅" not in html, "报告渲染了 🏅 成就 emoji"
+        assert "achieve-row" not in html, "报告渲染了 .achieve-row"
+        assert "achieve-badge" not in html, "报告渲染了 .achieve-badge"
+
+    def test_v426_temporal_line_no_vrect(self, chart_generator):
+        """v4.26: 高效时段图表不应再有 vrect 柱状叠加（用户反馈与折线冲突）
+
+        修复前: peak/low 段加 vrect 半透明矩形 → 用户视觉上是"柱状+折线并存"
+        修复后: 只保留 Scatter lines，peak/low 列表通过 hover / 文字传达
+        """
+        result = chart_generator.generate_temporal_line_chart(
+            hourly_pattern=[10] * 24,
+            peak_hours=["9-12", "14-15"],
+            low_hours=["15-18"],
+        )
+        # vrect 在 Plotly 序列化为 layout.shapes 数组
+        assert "\"shapes\"" not in result, \
+            "高效时段图表不应再包含 vrect 矩形（plotly layout.shapes）"
+        assert "\"shape\"" not in result, \
+            "高效时段图表不应再包含 shape 对象"
+        # 折线应保留
+        assert "\"type\":\"scatter\"" in result, \
+            "高效时段图表应保留 Scatter 折线"
+
     def test_v426_font_html_in_rendered_head(self):
         """v4.26: 渲染的 HTML <head> 应包含字体 link 标签（如果在线）"""
         session = Session(

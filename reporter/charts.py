@@ -410,26 +410,9 @@ class ChartGenerator:
             name='专注度',
             hovertemplate='%{y:.0f} 分<br>%{x}<extra></extra>',
         ))
-        if peak_hours:
-            for ph in peak_hours:
-                parts = ph.split("-")
-                if len(parts) == 2:
-                    try:
-                        sh, eh = int(parts[0]), int(parts[1])
-                        fig.add_vrect(x0=f"{sh:02d}:00", x1=f"{eh:02d}:00",
-                                      fillcolor=C_SAGE, opacity=0.08, line_width=0)
-                    except ValueError:
-                        pass
-        if low_hours:
-            for lh in low_hours:
-                parts = lh.split("-")
-                if len(parts) == 2:
-                    try:
-                        sh, eh = int(parts[0]), int(parts[1])
-                        fig.add_vrect(x0=f"{sh:02d}:00", x1=f"{eh:02d}:00",
-                                      fillcolor=C_ROSE, opacity=0.06, line_width=0)
-                    except ValueError:
-                        pass
+        # v4.26: 去掉 peak/low 小时的 vrect "柱状" 视觉（用户反馈与折线重叠、看起来像柱状图）
+        # 之前用 fillcolor 矩形标 peak/low 时段，因填色 + 折线叠加产生"双图"错觉。
+        # 改为通过 hover 提示传达 peak/low 列表，不在画布上叠加。
         fig.update_layout(**_LAYOUT_BASE)
         fig.update_layout(
             yaxis=dict(**_LAYOUT_BASE["yaxis"], range=[0, 100], **_y_title_axis()),

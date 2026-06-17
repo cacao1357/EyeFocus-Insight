@@ -312,20 +312,6 @@ class HTMLReportGenerator:
                 background: #F5F3F0; color: var(--quiet); margin: 2px 4px 2px 0;
             }
 
-            /* ── v4.17: 成就徽章 ── */
-            .achieve-row { display: flex; gap: 12px; flex-wrap: wrap; }
-            .achieve-badge {
-                display: flex; flex-direction: column; align-items: center;
-                padding: 14px 16px; min-width: 90px;
-                background: #FAF9F7; border: 1px solid var(--line);
-                border-radius: 8px; text-align: center;
-            }
-            .achieve-badge .achieve-icon { font-size: 26px; margin-bottom: 4px; }
-            .achieve-badge .achieve-name {
-                font-size: 12px; font-weight: 600; color: var(--ink);
-            }
-            .achieve-badge .achieve-desc { font-size: 10px; color: var(--quiet); margin-top: 2px; }
-
             /* ── 页脚 ── */
             .footer {
                 text-align: center; color: #ccc; font-size: 11px;
@@ -1063,88 +1049,10 @@ class HTMLReportGenerator:
         if weekly_html:
             parts.append(weekly_html)
 
-        # ── v4.17: 成就徽章 ──
-        achievements_html = self._render_achievements()
-        if achievements_html:
-            parts.append(
-                '<div class="card"><h2>🏅 成就</h2>'
-                + achievements_html + "</div>"
-            )
-
         return "\n".join(parts)
 
-    # ── v4.17: 成就渲染 ──
-
-    def _render_achievements(self) -> str:
-        """渲染成就徽章行（从 daily_stats 读取数据）"""
-        try:
-            all_stats = self.db.get_all_daily_stats() if self.db else []
-            if not all_stats:
-                return ""
-
-            total_minutes = sum(s.total_focus_minutes for s in all_stats)
-            total_sessions = sum(s.session_count for s in all_stats)
-            dates = sorted(set(s.date for s in all_stats), reverse=True)
-
-            # 计算连续天数
-            streak = 0
-            from datetime import datetime, timedelta
-            check = datetime.now().date()
-            for d in dates:
-                sd = datetime.strptime(d, "%Y-%m-%d").date()
-                if sd == check:
-                    streak += 1
-                    check -= timedelta(days=1)
-                elif sd == check:
-                    break
-                else:
-                    break
-
-            # 构建成就列表
-            achievements = []
-
-            # 总时长成就
-            if total_minutes >= 3000:  # 50h
-                achievements.append(("🚀", "专注强者", f"累计 {total_minutes/60:.0f} 小时"))
-            elif total_minutes >= 600:  # 10h
-                achievements.append(("📈", "累积进步", f"累计 {total_minutes/60:.0f} 小时"))
-            else:
-                achievements.append(("🌟", "初次专注", f"{total_sessions} 次会话"))
-
-            # 连续成就
-            if streak >= 30:
-                achievements.append(("👑", "专注满贯", f"连续 {streak} 天"))
-            elif streak >= 7:
-                achievements.append(("💎", "坚持不懈", f"连续 {streak} 天"))
-            elif streak >= 3:
-                achievements.append(("🔥", "初露锋芒", f"连续 {streak} 天"))
-
-            # 最长单次
-            best = max((s.longest_session_minutes for s in all_stats), default=0)
-            if best >= 180:
-                achievements.append(("🏆", "专注大师", f"单次 {best:.0f} 分钟"))
-            elif best >= 60:
-                achievements.append(("💪", "专注达人", f"单次 {best:.0f} 分钟"))
-            elif best >= 30:
-                achievements.append(("⏱", "专注入门", f"单次 {best:.0f} 分钟"))
-
-            if not achievements:
-                return ""
-
-            cards_html = ""
-            for icon, name, desc in achievements:
-                cards_html += (
-                    f'<div class="achieve-badge">'
-                    f'<span class="achieve-icon">{icon}</span>'
-                    f'<span class="achieve-name">{name}</span>'
-                    f'<span class="achieve-desc">{desc}</span>'
-                    f'</div>'
-                )
-
-            return f'<div class="achieve-row">{cards_html}</div>'
-        except Exception as e:
-            logger.debug("成就渲染跳过: %s", e)
-            return ""
+    # v4.26: 成就系统已移除（用户反馈：v4.17 引入的徽章与"腕表背透"美学冲突，删除）
+    # 之前的方法 _render_achievements、调用点、.achieve-row / .achieve-badge CSS 一并删除
 
     # ════════════════════════════════════════════
     # v4.25: 周聚合（嵌入主报告概览 Tab）
