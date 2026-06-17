@@ -71,14 +71,26 @@ class ChartGenerator:
         return fig.to_html(full_html=False, include_plotlyjs=False,
                            config=dict(displayModeBar=False, responsive=True))
 
+    # ── v4.25: 统一排序工具，确保 x 轴从左到右为时间正序 ──
+    @staticmethod
+    def _sorted_records(records):
+        """按时间戳升序排列记录，确保图表不出现"时间倒流" """
+        if not records:
+            return records
+        def _ts(r):
+            return getattr(r, 'window_start', None) or getattr(r, 'timestamp', 0.0) or 0.0
+        return sorted(records, key=_ts)
+
     def _time_labels(self, records):
         if not records:
             return []
+        # v4.25: 先排序，确保时间从左到右递增
+        sorted_r = self._sorted_records(records)
         def _ts(r):
             v = getattr(r, 'window_start', None)
             return v if (v is not None and v != 0.0) else getattr(r, 'timestamp', 0.0)
-        t0 = min(_ts(r) for r in records)
-        return [f"{int((_ts(r)-t0)//60)}:{int((_ts(r)-t0)%60):02d}" for r in records]
+        t0 = min(_ts(r) for r in sorted_r)
+        return [f"{int((_ts(r)-t0)//60)}:{int((_ts(r)-t0)%60):02d}" for r in sorted_r]
 
     # ════════════════════════════════════════════
     # 1. 专注度趋势
@@ -87,8 +99,10 @@ class ChartGenerator:
         if not focus_records:
             return self._empty_html("无数据")
 
-        labels = self._time_labels(focus_records)
-        scores = [r.focus_score for r in focus_records]
+        # v4.25: 排序保时序
+        fr = self._sorted_records(focus_records)
+        labels = self._time_labels(focus_records)  # _time_labels 内部已排序
+        scores = [r.focus_score for r in fr]
         colors = [_level_color(s) for s in scores]
 
         fig = go.Figure()
@@ -127,8 +141,9 @@ class ChartGenerator:
         if not focus_records:
             return self._empty_html("无数据")
 
-        labels = self._time_labels(focus_records)
-        rates = [r.blink_rate for r in focus_records]
+        fr = self._sorted_records(focus_records)
+        labels = self._time_labels(focus_records)  # 内部已排序
+        rates = [r.blink_rate for r in fr]
 
         bc = max(5, len(rates) // 5)
         bs = [b for b in rates[:bc] if b > 0]
@@ -162,8 +177,9 @@ class ChartGenerator:
         if not fatigue_records:
             return self._empty_html("无数据")
 
-        labels = self._time_labels(fatigue_records)
-        scores = [r.cumulative_fatigue_score for r in fatigue_records]
+        fr = self._sorted_records(fatigue_records)
+        labels = self._time_labels(fatigue_records)  # 内部已排序
+        scores = [r.cumulative_fatigue_score for r in fr]
 
         fig = go.Figure()
         fig.add_trace(go.Scatter(
@@ -192,14 +208,14 @@ class ChartGenerator:
         if not focus_records:
             return self._empty_html("无数据")
 
-        n = len(focus_records)
+        fr = self._sorted_records(focus_records)
+        n = len(fr)
         if n == 0:
             return self._empty_html("无数据")
 
         # 生成色条 HTML
-        total = max(1, n)
         blocks = []
-        for r in focus_records:
+        for r in fr:
             s = r.focus_score
             c = C_SAGE if s >= 70 else C_AMBER if s >= 40 else C_ROSE
             blocks.append(f'<span style="background:{c};flex:1;height:100%;min-width:2px"></span>')
@@ -227,16 +243,19 @@ class ChartGenerator:
         if not frame_records:
             return self._empty_html("无头部姿态数据")
 
-        times, devs = [], []
-        t0 = None
-        for r in frame_records:
-            if abs(r.yaw) < 90 and abs(r.pitch) < 90:
-                if t0 is None:
-                    t0 = r.timestamp
-                devs.append(np.sqrt(r.yaw**2 + r.pitch**2))
-                times.append(max(0, r.timestamp - t0))
-        if len(devs) < 3:
+        # v4.25: 先排序
+        sorted_frames = sorted(
+            [r for r in frame_records if abs(getattr(r, 'yaw', 0)) < 90 and abs(getattr(r, 'pitch', 0)) < 90],
+            key=lambda r: getattr(r, 'timestamp', 0.0) or 0.0,
+        )
+        if len(sorted_frames) < 3:
             return self._empty_html("头部姿态数据不足")
+
+        times, devs = [], []
+        t0 = sorted_frames[0].timestamp
+        for r in sorted_frames:
+            devs.append(np.sqrt(r.yaw**2 + r.pitch**2))
+            times.append(max(0, r.timestamp - t0))
 
         step = max(1, len(times) // 200)
         times, devs = times[::step], devs[::step]
@@ -252,19 +271,20 @@ class ChartGenerator:
             name='偏移角',
             hovertemplate='%{y:.1f}°<br>%{x}<extra></extra>',
         ))
+        # v4.25: annotation_position="right" 避免与数据点重叠
         fig.add_hline(y=20, line_dash="dash", line_color=C_SAGE, line_width=1,
-                      annotation_text=f"舒适上限 20°", annotation_position="left",
+                      annotation_text="舒适上限 20°", annotation_position="right",
                       annotation_font_size=10, annotation_font_color=C_SAGE)
 
         fig.update_layout(**_LAYOUT_BASE)
         fig.update_layout(
-            yaxis=dict(**_LAYOUT_BASE["yaxis"], title="偏移°"),
+            yaxis=dict(**_LAYOUT_BASE["yaxis"], title="偏移度 (°)", range=[0, max(devs)*1.15]),
             xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间"),
             showlegend=False,
             annotations=(
                 _LAYOUT_BASE.get("annotations", []) + [
-                    dict(x=1, y=1, xref="paper", yref="paper", xanchor="right", yanchor="top",
-                         text=f"舒适区占比 {pct:.0f}%", showarrow=False,
+                    dict(x=1, y=0.98, xref="paper", yref="paper", xanchor="right", yanchor="top",
+                         text=f"≤20° 舒适区占 {pct:.0f}%", showarrow=False,
                          font=dict(size=11, color=C_SAGE), bgcolor="rgba(254,253,251,0.85)")
                 ]
             ),
@@ -351,6 +371,8 @@ class ChartGenerator:
         vals = hourly_pattern[:24]
         while len(vals) < 24:
             vals.append(0.0)
+        # v4.25: 每 4 小时一个刻度标签，避免拥挤
+        tick_vals = [f"{h:02d}:00" for h in range(0, 24, 4)]
         hours = [f"{h:02d}:00" for h in range(24)]
         fig = go.Figure()
         fig.add_trace(go.Scatter(
@@ -370,10 +392,21 @@ class ChartGenerator:
                                       fillcolor=C_SAGE, opacity=0.08, line_width=0)
                     except ValueError:
                         pass
+        if low_hours:
+            for lh in low_hours:
+                parts = lh.split("-")
+                if len(parts) == 2:
+                    try:
+                        sh, eh = int(parts[0]), int(parts[1])
+                        fig.add_vrect(x0=f"{sh:02d}:00", x1=f"{eh:02d}:00",
+                                      fillcolor=C_ROSE, opacity=0.06, line_width=0)
+                    except ValueError:
+                        pass
         fig.update_layout(**_LAYOUT_BASE)
         fig.update_layout(
-            yaxis=dict(**_LAYOUT_BASE["yaxis"], range=[0, 100], title="专注度"),
-            xaxis=dict(**_LAYOUT_BASE["xaxis"], title="小时"),
+            yaxis=dict(**_LAYOUT_BASE["yaxis"], range=[0, 100], title="平均专注度"),
+            xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时段",
+                       tickvals=tick_vals, ticktext=[f"{h:02d}:00" for h in range(0, 24, 4)]),
             showlegend=False,
         )
         return self._to_html(fig, height=220)
@@ -464,14 +497,16 @@ class ChartGenerator:
         n_weeks = (total_days + 6) // 7
 
         # 行：周一→周日 (0-6)
-        weekdays_cn = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+        weekdays_cn = ["一", "二", "三", "四", "五", "六", "日"]
 
         # 构建 z 矩阵 [7 行 x n_weeks 列]
         z = [[0.0] * n_weeks for _ in range(7)]
         hover_texts = [[""] * n_weeks for _ in range(7)]
         date_labels = [""] * n_weeks
+        tick_vals = []
 
         current = start
+        last_month = -1
         for col in range(n_weeks):
             for row in range(7):
                 if current > end:
@@ -484,7 +519,11 @@ class ChartGenerator:
                 else:
                     hover_texts[row][col] = ds
                 if row == 0:  # 每周一标注月份
-                    date_labels[col] = current.strftime("%m月")
+                    m = current.month
+                    if m != last_month:
+                        date_labels[col] = f"{current.year}-{m:02d}" if last_month == -1 else f"{m}月"
+                        tick_vals.append(col)
+                        last_month = m
                 current += timedelta(days=1)
 
         # 颜色 scale：白→浅绿→深绿
@@ -511,9 +550,9 @@ class ChartGenerator:
             zmax=max(1, max_min),
             showscale=True,
             colorbar=dict(
-                title=dict(text="分钟", side="right"),
-                thickness=10,
-                len=0.6,
+                title=dict(text="分钟/天", side="right"),
+                thickness=12,
+                len=0.65,
                 tickfont=dict(size=9, color=C_QUIET),
             ),
             xgap=3,
@@ -523,11 +562,11 @@ class ChartGenerator:
         fig.update_layout(**_LAYOUT_BASE)
         fig.update_layout(
             title=dict(text=title, font_size=12, x=0),
-            height=180,
-            margin=dict(l=10, r=30, t=30, b=40),
+            height=160,
+            margin=dict(l=10, r=40, t=28, b=10),
             xaxis=dict(
                 showgrid=False, zeroline=False,
-                tickvals=list(range(n_weeks)),
+                tickvals=tick_vals if tick_vals else list(range(0, n_weeks, max(1, n_weeks//6))),
                 ticktext=date_labels,
                 tickfont=dict(size=9, color=C_QUIET),
                 side="top",
@@ -539,7 +578,7 @@ class ChartGenerator:
             ),
             showlegend=False,
         )
-        return self._to_html(fig, height=200)
+        return self._to_html(fig, height=180)
 
     def _empty_html(self, message):
         return f'<div style="text-align:center;color:#ccc;padding:32px;font-size:13px">{message}</div>'

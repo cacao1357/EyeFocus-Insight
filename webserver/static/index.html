@@ -19,7 +19,7 @@
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
   background: var(--stone);
   color: var(--ink);
   min-height: 100vh;
@@ -29,23 +29,26 @@ body {
 .header {
   background: var(--ink);
   color: var(--stone);
-  padding: 16px 24px;
+  padding: 12px 20px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  flex-wrap: wrap;
 }
-.header h1 { font-size: 20px; font-weight: 600; }
+.header h1 { font-size: 18px; font-weight: 600; white-space: nowrap; }
 .header .badge {
-  font-size: 12px;
+  font-size: 11px;
   background: var(--iris);
   padding: 2px 10px;
   border-radius: 10px;
+  white-space: nowrap;
 }
 .header .ctrl-group {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 .header select {
   background: #2A2725;
@@ -53,48 +56,65 @@ body {
   border: 1px solid #444;
   border-radius: 6px;
   padding: 4px 10px;
-  font-size: 13px;
-  max-width: 200px;
+  font-size: 12px;
+  max-width: 180px;
 }
 .header .btn {
   background: var(--iris);
   color: white;
   border: none;
   border-radius: 6px;
-  padding: 4px 14px;
-  font-size: 13px;
+  padding: 4px 12px;
+  font-size: 12px;
   cursor: pointer;
   transition: background 0.2s;
+  white-space: nowrap;
 }
 .header .btn:hover { background: #4A3B7A; }
 .header .btn:active { background: #3D2E6A; }
+.header .btn-secondary {
+  background: #3A3735;
+  color: var(--stone);
+  border: 1px solid #555;
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+  white-space: nowrap;
+}
+.header .btn-secondary:hover { background: #4A4745; }
 .header .status-dot {
-  width: 10px; height: 10px;
+  width: 8px; height: 8px;
   border-radius: 50%;
   transition: background 0.3s;
 }
 
-/* ── Grid ── */
+/* ── Views ── */
+.view { display: none; }
+.view.active { display: block; }
+
+/* ── Dashboard Grid ── */
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 16px;
-  padding: 20px;
+  gap: 12px;
+  padding: 16px;
   max-width: 1200px;
   margin: 0 auto;
 }
 .card {
   background: white;
-  border-radius: 12px;
-  padding: 20px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
 }
 .card h2 {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--gray);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 /* ── Focus Ring ── */
@@ -107,8 +127,8 @@ body {
 }
 .ring-container {
   position: relative;
-  width: 180px;
-  height: 180px;
+  width: 160px;
+  height: 160px;
 }
 .ring-container svg { transform: rotate(-90deg); }
 .ring-bg { fill: none; stroke: var(--warm); stroke-width: 10; }
@@ -126,20 +146,20 @@ body {
   text-align: center;
 }
 .ring-score {
-  font-size: 42px;
+  font-size: 38px;
   font-weight: 700;
   line-height: 1;
   transition: color 0.5s;
 }
 .ring-sub {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--gray);
-  margin-top: 4px;
+  margin-top: 2px;
 }
 .ring-grade {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
-  margin-top: 8px;
+  margin-top: 6px;
   padding: 2px 12px;
   border-radius: 8px;
 }
@@ -148,69 +168,185 @@ body {
 .metric-row {
   display: flex;
   justify-content: space-between;
-  padding: 8px 0;
+  padding: 6px 0;
   border-bottom: 1px solid var(--warm);
+  font-size: 13px;
 }
 .metric-row:last-child { border: none; }
-.metric-label {
-  font-size: 14px;
-  color: var(--gray);
-}
-.metric-value {
-  font-size: 16px;
-  font-weight: 600;
-}
+.metric-label { color: var(--gray); }
+.metric-value { font-weight: 600; }
 
 /* ── Sparkline ── */
 .sparkline-wrap { grid-column: 1 / -1; }
 .sparkline-wrap canvas {
   width: 100%;
-  height: 80px;
+  height: 70px;
   border-radius: 6px;
 }
 
-/* ── History Table ── */
-.history-wrap { grid-column: 1 / -1; }
-.history-table {
-  width: 100%;
-  border-collapse: collapse;
+/* ── Report View ── */
+
+/* ── Session Info Bar ── */
+.session-bar {
+  background: white;
+  margin: 12px 16px 0;
+  padding: 14px 20px;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.session-bar .label { font-size: 11px; color: var(--gray); }
+.session-bar .value { font-size: 16px; font-weight: 600; font-family: Georgia, serif; }
+.session-bar .item { text-align: center; min-width: 70px; }
+
+/* ── Tab bar for report ── */
+.report-tabs {
+  display: flex; gap: 2px; padding: 0 16px; margin-top: 8px;
+}
+.report-tab {
+  padding: 8px 18px; border: none; background: #E8E4DC; cursor: pointer;
+  font-size: 12px; font-weight: 500; color: var(--gray);
+  border-radius: 8px 8px 0 0; transition: all 0.2s;
+}
+.report-tab:hover { background: #DCD8D0; }
+.report-tab.active { background: white; color: var(--iris); font-weight: 600; }
+.report-panel { display: none; padding: 0 16px 16px; }
+.report-panel.active { display: block; }
+
+/* ── AI Analysis ── */
+.ai-card {
+  background: linear-gradient(135deg, #F4F2EE, #FFFFFF);
+  border-left: 3px solid var(--iris);
+  padding: 16px 20px; margin-bottom: 10px; border-radius: 8px;
+}
+.ai-card h3 { font-size: 14px; color: var(--iris); margin-bottom: 8px; }
+.ai-card .ai-text {
+  font-size: 14px; line-height: 1.7; color: var(--ink);
+  white-space: pre-wrap;
+}
+.ai-loading {
+  text-align: center; padding: 20px; color: var(--gray);
   font-size: 13px;
 }
-.history-table th {
+.ai-placeholder {
+  text-align: center; padding: 30px; color: var(--gray);
+  font-size: 13px; background: #FAF9F7; border-radius: 8px;
+}
+
+/* ── Report Metrics Grid ── */
+.report-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 1px;
+  background: var(--warm);
+  border: 1px solid var(--warm);
+  margin-bottom: 12px;
+}
+.report-stat {
+  background: white; padding: 14px 12px; text-align: center;
+}
+.report-stat .stat-value {
+  font-family: Georgia, serif;
+  font-size: 24px; font-weight: 400; line-height: 1.2;
+}
+.report-stat .stat-label { font-size: 10px; color: var(--gray); margin-top: 4px; }
+
+/* ── Segment bars ── */
+.seg-row {
+  display: flex; gap: 8px; align-items: center;
+  margin: 8px 0;
+}
+.seg-bar {
+  height: 10px;
+  border-radius: 4px;
+  transition: width 0.5s;
+}
+
+/* ── Fatigue bars ── */
+.fatigue-row {
+  display: flex; gap: 20px; flex-wrap: wrap; margin: 8px 0;
+}
+.fatigue-item {
+  display: flex; align-items: center; gap: 6px; font-size: 12px;
+}
+.fatigue-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+/* ── History table (report view) ── */
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-top: 8px;
+}
+.report-table th {
   text-align: left;
   padding: 6px 8px;
   color: var(--gray);
   font-weight: 500;
   border-bottom: 2px solid var(--warm);
+  font-size: 11px;
 }
-.history-table td {
-  padding: 6px 8px;
+.report-table td {
+  padding: 5px 8px;
   border-bottom: 1px solid var(--warm);
 }
 
-/* ── Responsive ── */
+/* ── History Table (dashboard) ── */
+.history-wrap { grid-column: 1 / -1; }
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.history-table th {
+  text-align: left;
+  padding: 5px 8px;
+  color: var(--gray);
+  font-weight: 500;
+  border-bottom: 2px solid var(--warm);
+  font-size: 11px;
+}
+.history-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--warm);
+  font-size: 12px;
+}
+
 @media (max-width: 640px) {
-  .grid { grid-template-columns: 1fr; padding: 12px; }
+  .grid { grid-template-columns: 1fr; padding: 10px; }
   .focus-ring-wrap { grid-column: span 1; }
+  .header { padding: 10px 12px; gap: 6px; }
+  .header select { max-width: 120px; }
+  .session-bar { margin: 8px 10px 0; padding: 10px 14px; }
+  .report-tabs { padding: 0 10px; }
+  .report-panel { padding: 0 10px 10px; }
 }
 </style>
 </head>
 <body>
 
 <div class="header">
-  <h1>👁 EyeFocus Insight</h1>
+  <h1>👁 EyeFocus</h1>
   <span class="badge" id="modeBadge">实时</span>
-  <span id="sessionTime" style="font-size:13px;color:var(--gray)">--:--</span>
+  <span id="sessionTime" style="font-size:12px;color:var(--gray)">--:--</span>
   <div class="ctrl-group">
     <select id="sessionSelect" onchange="switchSession(this.value)">
       <option value="">-- 实时数据 --</option>
     </select>
     <button class="btn" onclick="refreshData()">⟳ 刷新</button>
+    <button class="btn-secondary" id="aiBtn" onclick="triggerAiAnalysis()" style="display:none;">🤖 AI 分析</button>
     <span class="status-dot" id="statusDot" style="background:var(--gray)"></span>
   </div>
 </div>
 
-<div class="grid" id="app">
+<!-- ════════════════════════════════════════ -->
+<!-- 实时仪表盘视图 -->
+<!-- ════════════════════════════════════════ -->
+<div class="view active" id="viewDashboard">
+<div class="grid">
   <!-- 专注度圆环 -->
   <div class="card focus-ring-wrap">
     <div class="ring-container">
@@ -230,43 +366,19 @@ body {
   <!-- 实时指标 -->
   <div class="card">
     <h2>📊 实时指标</h2>
-    <div class="metric-row">
-      <span class="metric-label">EAR</span>
-      <span class="metric-value" id="ear">--</span>
-    </div>
-    <div class="metric-row">
-      <span class="metric-label">疲劳等级</span>
-      <span class="metric-value" id="fatigue">--</span>
-    </div>
-    <div class="metric-row">
-      <span class="metric-label">人脸检测</span>
-      <span class="metric-value" id="faceDetected">--</span>
-    </div>
-    <div class="metric-row">
-      <span class="metric-label">专注时长</span>
-      <span class="metric-value" id="duration">--</span>
-    </div>
-    <div class="metric-row">
-      <span class="metric-label">趋势</span>
-      <span class="metric-value" id="trend" style="font-weight:700">--</span>
-    </div>
+    <div class="metric-row"><span class="metric-label">EAR</span><span class="metric-value" id="ear">--</span></div>
+    <div class="metric-row"><span class="metric-label">疲劳等级</span><span class="metric-value" id="fatigue">--</span></div>
+    <div class="metric-row"><span class="metric-label">人脸检测</span><span class="metric-value" id="faceDetected">--</span></div>
+    <div class="metric-row"><span class="metric-label">专注时长</span><span class="metric-value" id="duration">--</span></div>
+    <div class="metric-row"><span class="metric-label">趋势</span><span class="metric-value" id="trend" style="font-weight:700">--</span></div>
   </div>
 
   <!-- 番茄状态 -->
   <div class="card">
     <h2>🍅 番茄钟</h2>
-    <div class="metric-row">
-      <span class="metric-label">状态</span>
-      <span class="metric-value" id="pomoState">--</span>
-    </div>
-    <div class="metric-row">
-      <span class="metric-label">倒计时</span>
-      <span class="metric-value" id="pomoCountdown">--</span>
-    </div>
-    <div class="metric-row">
-      <span class="metric-label">今日番茄</span>
-      <span class="metric-value" id="pomoCount">--</span>
-    </div>
+    <div class="metric-row"><span class="metric-label">状态</span><span class="metric-value" id="pomoState">--</span></div>
+    <div class="metric-row"><span class="metric-label">倒计时</span><span class="metric-value" id="pomoCountdown">--</span></div>
+    <div class="metric-row"><span class="metric-label">今日番茄</span><span class="metric-value" id="pomoCount">--</span></div>
   </div>
 
   <!-- 波线 -->
@@ -280,13 +392,7 @@ body {
     <h2>📋 最近数据</h2>
     <table class="history-table">
       <thead>
-        <tr>
-          <th>时间</th>
-          <th>专注度</th>
-          <th>EAR</th>
-          <th>疲劳</th>
-          <th>人脸</th>
-        </tr>
+        <tr><th>时间</th><th>专注度</th><th>EAR</th><th>疲劳</th><th>人脸</th></tr>
       </thead>
       <tbody id="historyBody">
         <tr><td colspan="5" style="text-align:center;color:var(--gray)">等待数据...</td></tr>
@@ -294,6 +400,75 @@ body {
     </table>
   </div>
 </div>
+</div>
+
+<!-- ════════════════════════════════════════ -->
+<!-- 历史报告视图 -->
+<!-- ════════════════════════════════════════ -->
+<div class="view" id="viewReport">
+
+<!-- Session info bar -->
+<div class="session-bar" id="reportSessionBar">
+  <div class="item"><div class="label">会话 ID</div><div class="value" id="rptId" style="font-size:12px;">--</div></div>
+  <div class="item"><div class="label">开始时间</div><div class="value" id="rptStart" style="font-size:13px;">--</div></div>
+  <div class="item"><div class="label">时长</div><div class="value" id="rptDuration">--</div></div>
+  <div class="item"><div class="label">平均专注度</div><div class="value" id="rptAvgFocus">--</div></div>
+  <div class="item"><div class="label">疲劳等级</div><div class="value" id="rptFatigue">--</div></div>
+</div>
+
+<!-- Tab bar -->
+<div class="report-tabs">
+  <button class="report-tab active" data-panel="summary" onclick="switchReportTab('summary')">📊 概览</button>
+  <button class="report-tab" data-panel="detail" onclick="switchReportTab('detail')">📈 详细数据</button>
+  <button class="report-tab" data-panel="ai" onclick="switchReportTab('ai')">🤖 AI 分析</button>
+</div>
+
+<!-- Tab: 概览 -->
+<div class="report-panel active" id="panelSummary">
+  <div class="card" style="margin-bottom:8px;">
+    <h2>🎯 专注度分段</h2>
+    <div id="rptSegments"></div>
+  </div>
+  <div class="report-grid" id="rptMetricsGrid"></div>
+  <div class="card" style="margin-bottom:8px;">
+    <h2>😊 疲劳分布</h2>
+    <div id="rptFatigueDist"></div>
+  </div>
+</div>
+
+<!-- Tab: 详细数据 -->
+<div class="report-panel" id="panelDetail">
+  <div class="card" style="margin-bottom:8px;">
+    <h2>📋 专注度记录</h2>
+    <div style="max-height:350px;overflow-y:auto;">
+      <table class="report-table">
+        <thead><tr><th>时间</th><th>专注度</th><th>EVE</th><th>头部</th></tr></thead>
+        <tbody id="rptFocusTable"></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card">
+    <h2>📋 疲劳记录</h2>
+    <div style="max-height:250px;overflow-y:auto;">
+      <table class="report-table">
+        <thead><tr><th>时间</th><th>疲劳等级</th><th>累积疲劳</th><th>眨眼率</th></tr></thead>
+        <tbody id="rptFatigueTable"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Tab: AI 分析 -->
+<div class="report-panel" id="panelAi">
+  <div id="aiContent">
+    <div class="ai-placeholder">
+      🤖 点击「AI 分析」按钮生成智能分析建议<br>
+      <span style="font-size:11px;color:#bbb;">需要配置 AI 后端（OpenAI / Ollama / 本地模型）</span>
+    </div>
+  </div>
+</div>
+
+</div><!-- /viewReport -->
 
 <script>
 // ═══════════════════════════════════════════
@@ -319,10 +494,14 @@ const statusDot = $('statusDot');
 const historyBody = $('historyBody');
 const canvas = $('sparkline');
 const ctx = canvas.getContext('2d');
+const aiBtn = $('aiBtn');
 
 // 数据
 let history = [];
 let connectionOk = false;
+let viewingHistory = false;
+let currentSid = '';
+let sessionCache = {};
 
 // ═══════════════════════════════════════════
 // Canvas 尺寸 (Retina)
@@ -331,11 +510,11 @@ function resizeCanvas() {
   const rect = canvas.parentElement.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
   canvas.width = rect.width * dpr;
-  canvas.height = 80 * dpr;
-  canvas.style.height = '80px';
+  canvas.height = 70 * dpr;
+  canvas.style.height = '70px';
   ctx.scale(dpr, dpr);
   canvas._width = rect.width;
-  canvas._height = 80;
+  canvas._height = 70;
 }
 resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
@@ -369,13 +548,20 @@ function fmtDuration(sec) {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+function fmtDateTime(iso) {
+  if (!iso) return '--';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+  } catch(e) { return iso; }
+}
+
 // ═══════════════════════════════════════════
-// 渲染
+// 渲染：实时仪表盘
 // ═══════════════════════════════════════════
 function updateDashboard(data) {
   if (!data) return;
 
-  // 专注度圆环
   const score = data.focus_score;
   const gc = gradeColor(score);
   focusScore.textContent = score != null ? Math.round(score) : '--';
@@ -387,15 +573,12 @@ function updateDashboard(data) {
   ringFg.style.strokeDashoffset = offset;
   ringFg.style.stroke = gc.color;
 
-  // 指标
   ear.textContent = data.ear != null ? data.ear.toFixed(3) : '--';
   fatigue.textContent = data.fatigue_level || '--';
   faceDetected.textContent = data.face_detected ? '✅ 检测到' : '❌ 丢失';
   duration.textContent = data.session_minutes != null
-    ? `${Math.round(data.session_minutes)} 分钟`
-    : '--';
+    ? `${Math.round(data.session_minutes)} 分钟` : '--';
 
-  // 趋势
   const trendEl = document.getElementById('trend');
   if (data.trend) {
     const tc = {'↑': 'var(--sage)', '↓': 'var(--rose)', '→': 'var(--gray)'};
@@ -405,7 +588,6 @@ function updateDashboard(data) {
     trendEl.textContent = '--';
   }
 
-  // 番茄
   if (data.pomodoro) {
     const p = data.pomodoro;
     pomoState.textContent = p.state === 'IDLE' ? '空闲'
@@ -419,20 +601,18 @@ function updateDashboard(data) {
     pomoCount.textContent = `${p.count || 0} 个`;
   }
 
-  // 会话时间
   if (data.session_start) {
     if (!sessionTime._start) sessionTime._start = data.session_start;
     const elapsed = Math.floor((Date.now()/1000) - data.session_start);
     sessionTime.textContent = `⏱ ${fmtDuration(elapsed)}`;
   }
 
-  // 连接状态
   statusDot.style.background = connectionOk ? 'var(--sage)' : 'var(--rose)';
 }
 
 function drawSparkline() {
   const w = canvas._width || 600;
-  const h = canvas._height || 80;
+  const h = canvas._height || 70;
   ctx.clearRect(0, 0, w, h);
 
   if (history.length < 2) {
@@ -448,7 +628,6 @@ function drawSparkline() {
   const max = Math.min(100, Math.max(...points) + 10);
   const range = max - min || 1;
 
-  // 渐变填充
   const gradient = ctx.createLinearGradient(0, 0, 0, h);
   gradient.addColorStop(0, 'rgba(91, 74, 140, 0.3)');
   gradient.addColorStop(1, 'rgba(91, 74, 140, 0.02)');
@@ -459,14 +638,12 @@ function drawSparkline() {
     const y = h - ((v - min) / range) * (h - 4) - 2;
     i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
   });
-  // 闭合到基线
   ctx.lineTo(w, h);
   ctx.lineTo(0, h);
   ctx.closePath();
   ctx.fillStyle = gradient;
   ctx.fill();
 
-  // 线
   ctx.beginPath();
   points.forEach((v, i) => {
     const x = (i / (points.length - 1)) * w;
@@ -480,7 +657,6 @@ function drawSparkline() {
 
 function updateHistory(data, ts) {
   if (!data || data.focus_score == null) return;
-
   const row = document.createElement('tr');
   row.innerHTML = `
     <td>${fmtTime(ts)}</td>
@@ -490,8 +666,6 @@ function updateHistory(data, ts) {
     <td>${data.face_detected ? '✅' : '❌'}</td>
   `;
   historyBody.prepend(row);
-
-  // 保留最近 20 行
   while (historyBody.children.length > 20) {
     historyBody.removeChild(historyBody.lastChild);
   }
@@ -503,61 +677,50 @@ function updateHistory(data, ts) {
 let ws = null;
 
 function connect() {
+  if (viewingHistory) return; // 历史模式不连 WS
   ws = new WebSocket(WS_URL);
-
-  ws.onopen = () => {
-    connectionOk = true;
-    console.log('WebSocket 已连接');
-  };
-
+  ws.onopen = () => { connectionOk = true; };
   ws.onmessage = (event) => {
     try {
       const msg = JSON.parse(event.data);
-
       if (msg.type === 'init') {
-        // 初始数据
         history = (msg.history || []).map(d => d.focus_score).filter(v => v != null);
         updateDashboard(msg.current);
         drawSparkline();
         (msg.history || []).forEach(d => updateHistory(d, msg.timestamp));
       } else if (msg.type === 'update') {
-        // 更新数据
         const cur = msg.current || {};
         if (cur.focus_score != null) history.push(cur.focus_score);
         if (history.length > 120) history = history.slice(-120);
-
         updateDashboard(cur);
         drawSparkline();
         updateHistory(cur, msg.timestamp);
       }
-    } catch (e) {
-      console.warn('数据解析错误:', e);
-    }
+    } catch (e) { console.warn('数据解析错误:', e); }
   };
-
-  ws.onerror = () => {
-    connectionOk = false;
-  };
-
+  ws.onerror = () => { connectionOk = false; };
   ws.onclose = () => {
     connectionOk = false;
-    // 自动重连
-    setTimeout(connect, 2000);
+    if (!viewingHistory) setTimeout(connect, 2000);
   };
+}
+
+// ═══════════════════════════════════════════
+// 视图切换
+// ═══════════════════════════════════════════
+function showView(name) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById('view' + name).classList.add('active');
 }
 
 // ═══════════════════════════════════════════
 // 会话切换 & 刷新
 // ═══════════════════════════════════════════
-
-let viewingHistory = false;  // 当前是否查看历史会话
-
 async function loadSessions() {
   try {
     const resp = await fetch('/api/sessions');
     const data = await resp.json();
     const sel = document.getElementById('sessionSelect');
-    // 保留第一个选项
     while (sel.options.length > 1) sel.remove(1);
     for (const s of data.sessions || []) {
       const opt = document.createElement('option');
@@ -567,67 +730,214 @@ async function loadSessions() {
       opt.textContent = `${start} (${dur})`;
       sel.appendChild(opt);
     }
-  } catch (e) {
-    console.warn('加载会话列表失败:', e);
-  }
+  } catch (e) { console.warn('加载会话列表失败:', e); }
 }
 
 async function switchSession(sid) {
   if (!sid) {
-    // 切回实时模式 — 重新连接 WebSocket
+    // 切回实时
     viewingHistory = false;
+    currentSid = '';
+    aiBtn.style.display = 'none';
     document.getElementById('modeBadge').textContent = '实时';
     sessionTime._start = null;
     history = [];
     updateDashboard({});
     drawSparkline();
-    connect();  // 重新建立 WebSocket 连接
+    showView('Dashboard');
+    connect();
     return;
   }
+
+  currentSid = sid;
   viewingHistory = true;
+  aiBtn.style.display = 'inline-block';
   document.getElementById('modeBadge').textContent = '📜 历史';
+
+  // 断开 WS
+  if (ws) { ws.onclose = null; ws.close(); ws = null; }
+
   try {
-    // 断开实时 WebSocket（临时）
-    if (ws) { ws.onclose = null; ws.close(); }
     const resp = await fetch(`/api/session/${sid}`);
     const data = await resp.json();
+    if (data.error) { console.warn('获取会话失败:', data.error); return; }
+    sessionCache[sid] = data;
+    renderReport(data);
+    showView('Report');
+  } catch (e) { console.warn('切换会话失败:', e); }
+}
+
+// ═══════════════════════════════════════════
+// 渲染报告
+// ═══════════════════════════════════════════
+function renderReport(data) {
+  const s = data.session || {};
+  const sm = data.summary || {};
+
+  // Session bar
+  $('rptId').textContent = s.id ? s.id.slice(0, 8) : '--';
+  $('rptStart').textContent = fmtDateTime(s.start);
+  $('rptDuration').textContent = sm.duration_min ? `${sm.duration_min} 分钟` : '--';
+  $('rptAvgFocus').textContent = sm.avg_focus != null ? sm.avg_focus : '--';
+
+  // 疲劳等级显示
+  const fl = (sm.fatigue_level || 'LOW').toUpperCase();
+  const flMap = {LOW: '😊 低', MEDIUM: '😐 中', HIGH: '😫 高'};
+  $('rptFatigue').textContent = flMap[fl] || fl;
+  $('rptFatigue').style.color = fl === 'HIGH' ? 'var(--rose)' : fl === 'MEDIUM' ? 'var(--amber)' : 'var(--sage)';
+  $('rptAvgFocus').style.color =
+    sm.avg_focus >= 70 ? 'var(--sage)' : sm.avg_focus >= 50 ? 'var(--amber)' : 'var(--rose)';
+
+  // Metrics grid
+  const metrics = [
+    ['📊 平均专注度', sm.avg_focus != null ? sm.avg_focus.toFixed(1) : '--', '分'],
+    ['👁 眨眼频率', sm.avg_blink != null ? sm.avg_blink.toFixed(1) : '--', '次/分'],
+    ['⏱ 记录数', sm.record_count || 0, '条'],
+    ['💫 眨眼事件', sm.blink_events || 0, '次'],
+  ];
+  $('rptMetricsGrid').innerHTML = metrics.map(m =>
+    `<div class="report-stat"><div class="stat-value">${m[1]}</div><div class="stat-label">${m[0]}</div><div style="font-size:10px;color:var(--gray)">${m[2]}</div></div>`
+  ).join('');
+
+  // 专注度分段
+  const segHtml = renderSegments(sm.seg_start, sm.seg_mid, sm.seg_end);
+  $('rptSegments').innerHTML = segHtml;
+
+  // 疲劳分布
+  const fd = sm.fatigue_distribution || {};
+  const total = (fd.LOW || 0) + (fd.MEDIUM || 0) + (fd.HIGH || 0);
+  if (total > 0) {
+    $('rptFatigueDist').innerHTML =
+      `<div class="fatigue-row">
+        <div class="fatigue-item"><span class="fatigue-dot" style="background:var(--sage)"></span> 低 ${fd.LOW || 0}%</div>
+        <div class="fatigue-item"><span class="fatigue-dot" style="background:var(--amber)"></span> 中 ${fd.MEDIUM || 0}%</div>
+        <div class="fatigue-item"><span class="fatigue-dot" style="background:var(--rose)"></span> 高 ${fd.HIGH || 0}%</div>
+      </div>
+      <div style="display:flex;height:8px;border-radius:4px;overflow:hidden;margin-top:6px;">
+        <div style="flex:${fd.LOW || 0};background:var(--sage);"></div>
+        <div style="flex:${fd.MEDIUM || 0};background:var(--amber);"></div>
+        <div style="flex:${fd.HIGH || 0};background:var(--rose);"></div>
+      </div>`;
+  } else {
+    $('rptFatigueDist').innerHTML = '<div style="color:var(--gray);font-size:12px;">无疲劳数据</div>';
+  }
+
+  // 详细数据表: 专注度
+  const fr = data.focus_records || [];
+  if (fr.length > 0) {
+    $('rptFocusTable').innerHTML = fr.map(r =>
+      `<tr><td>${fmtTime(r.t)}</td><td>${r.score != null ? Math.round(r.score) : '--'}</td><td>${r.eye != null ? r.eye.toFixed(1) : '--'}</td><td>${r.head != null ? r.head.toFixed(1) : '--'}</td></tr>`
+    ).join('');
+  } else {
+    $('rptFocusTable').innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--gray)">无数据</td></tr>';
+  }
+
+  // 详细数据表: 疲劳
+  const fatR = data.fatigue_records || [];
+  if (fatR.length > 0) {
+    $('rptFatigueTable').innerHTML = fatR.map(r =>
+      `<tr>
+        <td>${fmtTime(r.t)}</td>
+        <td>${r.level || '--'}</td>
+        <td>${r.score != null ? Math.round(r.score) : '--'}</td>
+        <td>${r.blink_rate != null ? r.blink_rate.toFixed(1) : '--'}</td>
+      </tr>`
+    ).join('');
+  } else {
+    $('rptFatigueTable').innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--gray)">无数据</td></tr>';
+  }
+
+  // 清除旧的 AI 分析
+  $('aiContent').innerHTML = `
+    <div class="ai-placeholder">
+      🤖 点击「AI 分析」按钮生成智能分析建议<br>
+      <span style="font-size:11px;color:#bbb;">需要配置 AI 后端（OpenAI / Ollama / 本地模型）</span>
+    </div>`;
+
+  // 默认显示概览 Tab
+  switchReportTab('summary');
+}
+
+function renderSegments(start, mid, end) {
+  const maxVal = Math.max(start || 0, mid || 0, end || 0, 1);
+  const toPct = v => Math.max((v / 100) * 100, 1);
+
+  const segs = [
+    {label: '前期', val: start, color: 'var(--iris)'},
+    {label: '中期', val: mid, color: 'var(--sage)'},
+    {label: '后期', val: end, color: 'var(--amber)'},
+  ];
+
+  return segs.map(s => `
+    <div class="seg-row">
+      <span style="font-size:12px;color:var(--gray);width:40px;">${s.label}</span>
+      <div style="flex:1;background:var(--warm);border-radius:4px;height:10px;overflow:hidden;">
+        <div class="seg-bar" style="width:${toPct(s.val)}%;background:${s.color};"></div>
+      </div>
+      <span style="font-size:13px;font-weight:600;width:40px;text-align:right;">${s.val != null ? s.val.toFixed(0) : '--'}</span>
+    </div>
+  `).join('');
+}
+
+// ═══════════════════════════════════════════
+// Report Tab 切换
+// ═══════════════════════════════════════════
+function switchReportTab(name) {
+  document.querySelectorAll('.report-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.report-panel').forEach(p => p.classList.remove('active'));
+  document.querySelector(`.report-tab[data-panel="${name}"]`).classList.add('active');
+  document.getElementById('panel' + name.charAt(0).toUpperCase() + name.slice(1)).classList.add('active');
+}
+
+// ═══════════════════════════════════════════
+// AI 分析
+// ═══════════════════════════════════════════
+async function triggerAiAnalysis() {
+  if (!currentSid) {
+    alert('请先选择一个历史会话');
+    return;
+  }
+
+  // 切换到 AI Tab
+  switchReportTab('ai');
+  document.getElementById('aiContent').innerHTML =
+    '<div class="ai-loading">🤖 AI 分析中，请稍候...</div>';
+
+  aiBtn.disabled = true;
+  aiBtn.textContent = '⏳ 分析中...';
+
+  try {
+    const resp = await fetch(`/api/analyze/${currentSid}`);
+    const data = await resp.json();
+
     if (data.error) {
-      console.warn('获取会话失败:', data.error);
-      return;
+      document.getElementById('aiContent').innerHTML =
+        `<div class="ai-card"><h3>⚠️ 分析失败</h3><div class="ai-text">${data.error}</div></div>`;
+    } else {
+      const backendLabel = data.backend === 'template' ? '内置模板' : data.backend;
+      document.getElementById('aiContent').innerHTML = `
+        <div class="ai-card">
+          <h3>🤖 AI 分析报告 <span style="font-size:10px;color:var(--gray);font-weight:400;">${backendLabel}</span></h3>
+          <div class="ai-text">${data.analysis || '（分析结果为空）'}</div>
+        </div>`;
     }
-    // 填充仪表盘
-    const s = data.session || {};
-    const fr = data.focus_records || [];
-    history = fr.map(r => r.score).filter(v => v != null);
-    updateDashboard({
-      focus_score: s.avg_focus || (fr.length > 0 ? fr[fr.length-1].score : null),
-      ear: null,
-      fatigue_level: s.fatigue_level || '--',
-      face_detected: null,
-      session_minutes: s.duration ? s.duration / 60 : null,
-      session_start: s.start ? new Date(s.start).getTime() / 1000 : null,
-      pomodoro: null,
-    });
-    drawSparkline();
-    historyBody.innerHTML = '';
-    fr.slice(-20).reverse().forEach(r => {
-      const row = document.createElement('tr');
-      row.innerHTML = `<td>${new Date(r.t * 1000).toLocaleTimeString()}</td><td>${Math.round(r.score)}</td><td>${r.eye != null ? r.eye.toFixed(1) : '--'}</td><td>--</td><td>--</td>`;
-      historyBody.appendChild(row);
-    });
   } catch (e) {
-    console.warn('切换会话失败:', e);
+    document.getElementById('aiContent').innerHTML =
+      `<div class="ai-card"><h3>⚠️ 网络错误</h3><div class="ai-text">请求失败: ${e}</div></div>`;
+  } finally {
+    aiBtn.disabled = false;
+    aiBtn.textContent = '🤖 AI 分析';
   }
 }
 
+// ═══════════════════════════════════════════
+// 刷新
+// ═══════════════════════════════════════════
 async function refreshData() {
-  if (viewingHistory) {
-    // 在历史模式：重新加载当前会话
-    const sel = document.getElementById('sessionSelect');
-    if (sel.value) await switchSession(sel.value);
+  if (viewingHistory && currentSid) {
+    await switchSession(currentSid);
     return;
   }
-  // 实时模式：从 REST 端点拉一次最新数据
   try {
     const resp = await fetch('/data');
     const data = await resp.json();
@@ -637,9 +947,7 @@ async function refreshData() {
     });
     if (history.length > 120) history = history.slice(-120);
     drawSparkline();
-  } catch (e) {
-    console.warn('刷新数据失败:', e);
-  }
+  } catch (e) { console.warn('刷新数据失败:', e); }
 }
 
 // 启动时和每 30s 刷新会话列表

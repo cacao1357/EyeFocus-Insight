@@ -730,6 +730,11 @@ class HTMLReportGenerator:
                 + cal_html + "</div>"
             )
 
+        # ── v4.25: 本周聚合（周报嵌入概览）──
+        weekly_html = self._render_weekly_summary()
+        if weekly_html:
+            parts.append(weekly_html)
+
         # ── v4.17: 成就徽章 ──
         achievements_html = self._render_achievements()
         if achievements_html:
@@ -812,6 +817,103 @@ class HTMLReportGenerator:
         except Exception as e:
             logger.debug("成就渲染跳过: %s", e)
             return ""
+
+    # ════════════════════════════════════════════
+    # v4.25: 周聚合（嵌入主报告概览 Tab）
+    # ════════════════════════════════════════════
+    def _compute_weekly_stats(self):
+        """计算本周聚合统计数据"""
+        if not self.db:
+            return None
+        from datetime import datetime, timedelta
+        today = datetime.now()
+        week_ago = (today - timedelta(days=7))
+        week_ago_str = week_ago.strftime("%Y-%m-%d")
+        today_str = today.strftime("%Y-%m-%d")
+
+        sessions = self.db.get_sessions_by_date_range(week_ago_str, today_str)
+        if not sessions:
+            return None
+
+        total_minutes = 0.0
+        total_score = 0.0
+        score_count = 0
+        session_list = []
+
+        for sess in sessions:
+            dur = sess.duration_seconds() or 0.0
+            total_minutes += dur / 60.0
+            records = self.db.get_focus_records(sess.session_id)
+            avg = 0.0
+            if records:
+                valid = [r.focus_score for r in records if r.focus_score is not None]
+                if valid:
+                    avg = sum(valid) / len(valid)
+                    total_score += avg
+                    score_count += 1
+            session_list.append({
+                "id": sess.session_id[:8],
+                "date": sess.start_time.strftime("%m-%d %H:%M"),
+                "duration": dur / 60.0,
+                "score": avg,
+            })
+
+        avg_score = total_score / max(1, score_count) if score_count > 0 else 0
+        days_active = len(set(s.start_time.strftime("%Y-%m-%d") for s in sessions))
+
+        return {
+            "total_minutes": total_minutes,
+            "avg_score": avg_score,
+            "session_count": len(sessions),
+            "days_active": days_active,
+            "sessions": session_list,
+            "range": f"{week_ago.strftime('%m-%d')} ~ {today.strftime('%m-%d')}",
+        }
+
+    def _render_weekly_summary(self) -> str:
+        """渲染本周聚合卡片（嵌入概览 Tab）"""
+        stats = self._compute_weekly_stats()
+        if not stats or stats["session_count"] < 1:
+            return ""
+
+        # Hero 数字
+        hero = (
+            f'<div style="display:flex;gap:24px;flex-wrap:wrap;padding:12px 0;">'
+            f'<div style="text-align:center;flex:1;min-width:80px;">'
+            f'<div style="font-family:Georgia,serif;font-size:32px;color:var(--iris);">{stats["total_minutes"]:.0f}</div>'
+            f'<div style="font-size:11px;color:var(--quiet);">总专注(分钟)</div></div>'
+            f'<div style="text-align:center;flex:1;min-width:80px;">'
+            f'<div style="font-family:Georgia,serif;font-size:32px;color:var(--sage);">{stats["avg_score"]:.0f}</div>'
+            f'<div style="font-size:11px;color:var(--quiet);">平均专注度</div></div>'
+            f'<div style="text-align:center;flex:1;min-width:80px;">'
+            f'<div style="font-family:Georgia,serif;font-size:32px;color:var(--amber);">{stats["session_count"]}</div>'
+            f'<div style="font-size:11px;color:var(--quiet);">会话数</div></div>'
+            f'<div style="text-align:center;flex:1;min-width:80px;">'
+            f'<div style="font-family:Georgia,serif;font-size:32px;color:var(--ink);">{stats["days_active"]}</div>'
+            f'<div style="font-size:11px;color:var(--quiet);">活跃天数</div></div>'
+            f'</div>'
+        )
+
+        # 会话明细表
+        rows = "".join(
+            f'<tr><td>{s["date"]}</td><td>{s["duration"]:.0f}分</td>'
+            f'<td>{s["score"]:.0f}分</td></tr>'
+            for s in stats["sessions"][:10]
+        )
+        table = f"""
+        <table class="detail-table" style="margin-top:8px;">
+            <tr><th style="text-align:left;color:var(--quiet);font-weight:500;font-size:11px;">时间</th>
+                <th style="text-align:left;color:var(--quiet);font-weight:500;font-size:11px;">时长</th>
+                <th style="text-align:left;color:var(--quiet);font-weight:500;font-size:11px;">专注度</th></tr>
+            {rows}
+        </table>""" if stats["sessions"] else ""
+
+        return f"""
+        <div class="card" style="border-left:2px solid var(--iris);">
+            <h2>📊 本周统计 <span style="font-size:11px;color:var(--quiet);font-weight:400;">{stats["range"]}</span></h2>
+            {hero}
+            {table}
+        </div>"""
 
     def _render_analysis_tab(self, charts: dict) -> str:
         """v4.15: 数据分析 Tab（v4.24: 增加 AI 分析摘要）"""
