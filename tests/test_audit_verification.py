@@ -94,15 +94,17 @@ class TestF3BaselineWiring:
 
     def test_apply_calibration_result_invokes_set_baseline_blink_rate(self):
         """_apply_calibration_result 中存在 set_baseline_blink_rate 调用"""
-        # 通过源码扫描确认存在调用
-        main_src = Path(main.__file__).read_text(encoding="utf-8")
-        assert "set_baseline_blink_rate" in main_src, (
+        # v4.22: 该方法已移至 app/calibration.py
+        calib_src = Path(main.__file__).parent.joinpath(
+            "app", "calibration.py"
+        ).read_text(encoding="utf-8")
+        assert "set_baseline_blink_rate" in calib_src, (
             "_apply_calibration_result 未调用 set_baseline_blink_rate (F3 未修复)"
         )
         # 确认调用在 _apply_calibration_result 方法体内
         m = re.search(
             r"def _apply_calibration_result.*?(?=\n    def |\Z)",
-            main_src,
+            calib_src,
             re.DOTALL,
         )
         assert m, "_apply_calibration_result 方法未找到"
@@ -244,11 +246,14 @@ class TestF7PerFrameCalibrationData:
     """F7: FrameProcessor.process_frame 在 AUTO_CALIB 调 add_frame"""
 
     def test_frame_processor_calls_add_frame_in_auto_calib(self):
-        main_src = Path(main.__file__).read_text(encoding="utf-8")
+        # v4.22: FrameProcessor 已移至 app/processor.py
+        proc_src = Path(main.__file__).parent.joinpath(
+            "app", "processor.py"
+        ).read_text(encoding="utf-8")
         # 找 FrameProcessor.process_frame
         m = re.search(
             r"def process_frame\(self.*?(?=\n    def |\Z)",
-            main_src,
+            proc_src,
             re.DOTALL,
         )
         assert m, "FrameProcessor.process_frame 未找到"
