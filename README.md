@@ -53,6 +53,16 @@
 | 🎤 **语音反馈** | pyttsx3 TTS 语音播报：阶段提醒、里程碑、疲劳预警、番茄完成提示 |
 | ⏰ **智能提醒** | 定时休息提醒、长时间分心提醒、可配置间隔时间 |
 
+### AI 分析（v4.24）
+| 功能 | 描述 |
+|------|------|
+| 🤖 **LLM 分析摘要** | 支持 OpenAI / Anthropic / Ollama / 本地模型四种后端 |
+| 📝 **智能报告** | 自动生成 AI 分析摘要注入 HTML 报告，LLM 不可用则回退模板 |
+| ⚙️ **一键切换** | 系统托盘菜单一键切换 AI 后端，无需重启 |
+| 🗝️ **API Key 管理** | 设置面板支持 API Key 可见性切换（👁/🙈） |
+| 📥 **本地模型** | 可选 llama-cpp-python 本地推理，运行 `scripts/download_model.py` 下载模型 |
+| 🛡️ **超时保护** | LLM 调用 15s 超时自动降级，不影响主流程 |
+
 ### 扩展
 | 功能 | 描述 |
 |------|------|
@@ -129,7 +139,15 @@ python main.py --qt
 python main.py
 ```
 
-### 5. 运行测试
+### 5. （可选）下载本地 AI 模型
+
+如需要使用本地 AI 分析功能，需额外下载模型文件（~1 GB）：
+
+```bash
+python scripts/download_model.py
+```
+
+### 6. 运行测试
 
 ```bash
 # 全部测试（606 个）
@@ -253,6 +271,9 @@ EyeFocus Insight/
 │   ├── reminder_engine.py      # ⏰ 智能提醒引擎
 │   ├── gamification.py         # 🔥 游戏化激励（连续天数/今日时长）
 │   ├── baseline.py             # EAR 自动基线校准
+│   ├── predictor.py            # 📈 专注度趋势预测（v4.24）
+│   ├── llm_client.py           # 🤖 AI 分析客户端（4 种后端, v4.24）
+│   ├── user_calibration.py     # 用户校准数据管理器
 │   └── insights/               # 离线分析（PELT/IF/KMeans/STL）
 ├── app/                        # main.py 拆分包（strangler 模式）
 │   ├── camera.py               # 摄像头管理类
@@ -304,7 +325,7 @@ EyeFocus Insight/
 | **v4.21** | 面板 50:50 布局重设计 + FocusRing + QLabel 大字体 | 606 |
 | **v4.22** | main.py 拆分（strangler）+ 设置面板 + Web 仪表盘 | 606 |
 | **v4.23** | 黑背景 + 报告打不开 根因修复（查看终止分离） | 606 |
-| **v4.24** | 日历图/gamification typo/QMenu黑背景/弹窗精简/Web增强 | 606 |
+| **v4.24** | AI 分析摘要（4 种后端）+ LLMClient + 专注度预测 + 本地模型（脚本下载）| 606 |
 
 ---
 
