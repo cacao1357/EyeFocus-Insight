@@ -44,6 +44,73 @@ class SettingsDialog(QDialog):
     COLOR_SAGE = "#5A8A6D"
     COLOR_AMBER = "#C9843A"
 
+    # v4.26: 统一下拉/输入控件白底样式
+    # 关键：setStyleSheet 在 QDialog 级别无法覆盖 popup 窗口（popup 是独立 top-level），
+    # 必须把 QSS 直接绑到每个 QComboBox/QSpinBox/QLineEdit 实例上。
+    # 补全 Qt 子控件：::drop-down / ::down-arrow / QAbstractItemView::item
+    INPUT_WIDGET_QSS = """
+        QComboBox, QSpinBox, QLineEdit {
+            background-color: #FFFFFF;
+            color: #23201E;
+            border: 1px solid #D0D0D0;
+            border-radius: 4px;
+            padding: 4px 8px;
+            selection-background-color: #5B4A8C;
+            selection-color: #FFFFFF;
+        }
+        QComboBox:hover, QSpinBox:hover, QLineEdit:hover {
+            border: 1px solid #5B4A8C;
+        }
+        QComboBox:focus, QSpinBox:focus, QLineEdit:focus {
+            border: 1px solid #5B4A8C;
+            outline: 0;
+        }
+        QComboBox::drop-down {
+            subcontrol-origin: padding;
+            subcontrol-position: top right;
+            width: 20px;
+            border-left: 1px solid #D0D0D0;
+            background: #F8F6F2;
+        }
+        QComboBox::drop-down:hover { background: #F0EBF8; }
+        QComboBox::down-arrow {
+            image: none;
+            width: 0; height: 0;
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            border-top: 6px solid #5B4A8C;
+            margin-right: 6px;
+        }
+        QComboBox QAbstractItemView {
+            background-color: #FFFFFF;
+            color: #23201E;
+            selection-background-color: #5B4A8C;
+            selection-color: #FFFFFF;
+            border: 1px solid #D0D0D0;
+            outline: 0;
+            padding: 2px;
+        }
+        QComboBox QAbstractItemView::item {
+            padding: 6px 10px;
+            border: none;
+            background-color: transparent;
+            color: #23201E;
+            min-height: 20px;
+        }
+        QComboBox QAbstractItemView::item:hover {
+            background-color: #F0EBF8;
+            color: #23201E;
+        }
+        QSpinBox::up-button, QSpinBox::down-button {
+            background: #F8F6F2;
+            border: 1px solid #D0D0D0;
+            width: 18px;
+        }
+        QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+            background: #F0EBF8;
+        }
+    """
+
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._load_config()
@@ -52,6 +119,7 @@ class SettingsDialog(QDialog):
         self.setMinimumWidth(420)
         self.setModal(True)
         # v4.22: 强制白底（防止系统暗色模式导致全黑不可读）
+        # 注：QComboBox/QSpinBox/QLineEdit 规则不在这里（绑在实例上才能覆盖 popup）
         self.setStyleSheet("""
             QDialog { background-color: #FFFFFF; }
             QGroupBox {
@@ -68,27 +136,6 @@ class SettingsDialog(QDialog):
             }
             QLabel { background: transparent; color: #23201E; }
             QCheckBox { background: transparent; color: #23201E; }
-            QComboBox {
-                background: #FFFFFF; color: #23201E;
-                border: 1px solid #D0D0D0; border-radius: 4px;
-                padding: 4px 8px;
-            }
-            QComboBox QAbstractItemView {
-                background: #FFFFFF; color: #23201E;
-                selection-background-color: #5B4A8C;
-                selection-color: #FFFFFF;
-                border: 1px solid #D0D0D0;
-            }
-            QSpinBox {
-                background: #FFFFFF; color: #23201E;
-                border: 1px solid #D0D0D0; border-radius: 4px;
-                padding: 4px 8px;
-            }
-            QLineEdit {
-                background: #FFFFFF; color: #23201E;
-                border: 1px solid #D0D0D0; border-radius: 4px;
-                padding: 4px 8px;
-            }
         """)
 
     def _load_config(self) -> None:
@@ -130,6 +177,7 @@ class SettingsDialog(QDialog):
         cam_group = QGroupBox("📷 摄像头")
         cam_layout = QFormLayout(cam_group)
         self._cam_combo = QComboBox()
+        self._cam_combo.setStyleSheet(self.INPUT_WIDGET_QSS)  # v4.26: popup 强制白底
         for i in range(4):
             self._cam_combo.addItem(f"摄像头 {i}", i)
         self._cam_combo.setCurrentIndex(min(self._camera_index, 3))
@@ -152,6 +200,7 @@ class SettingsDialog(QDialog):
         ai_group = QGroupBox("🤖 AI 分析摘要")
         ai_layout = QFormLayout(ai_group)
         self._ai_backend = QComboBox()
+        self._ai_backend.setStyleSheet(self.INPUT_WIDGET_QSS)  # v4.26
         self._ai_backend.addItem("内置分析（模板）", "template")
         self._ai_backend.addItem("OpenAI 兼容 (GPT/DeepSeek/Kimi...)", "openai")
         self._ai_backend.addItem("Claude API", "claude")
@@ -163,6 +212,7 @@ class SettingsDialog(QDialog):
 
         # 存储标签引用以便显示/隐藏
         self._ai_provider = QComboBox()
+        self._ai_provider.setStyleSheet(self.INPUT_WIDGET_QSS)  # v4.26
         self._ai_provider.addItem("OpenAI GPT-4o", "openai")
         self._ai_provider.addItem("DeepSeek V4", "deepseek")
         self._ai_provider.addItem("Moonshot Kimi", "moonshot")
@@ -177,6 +227,7 @@ class SettingsDialog(QDialog):
         self._ai_api_key = QLineEdit()
         self._ai_api_key.setPlaceholderText("API Key...")
         self._ai_api_key.setEchoMode(QLineEdit.Password)
+        self._ai_api_key.setStyleSheet(self.INPUT_WIDGET_QSS)  # v4.26
         # 密码可见性切换
         from PyQt5.QtWidgets import QPushButton as _QPB
         self._api_key_toggle_btn = _QPB("👁")
@@ -207,6 +258,7 @@ class SettingsDialog(QDialog):
 
         self._ai_base_url = QLineEdit("https://api.openai.com/v1")
         self._ai_base_url.setPlaceholderText("自定义 API 地址")
+        self._ai_base_url.setStyleSheet(self.INPUT_WIDGET_QSS)  # v4.26
         self._ai_url_row = ai_layout.addRow("API 地址：", self._ai_base_url)
         layout.addWidget(ai_group)
 
@@ -214,12 +266,14 @@ class SettingsDialog(QDialog):
         pomo_group = QGroupBox("🍅 番茄工作法")
         pomo_layout = QFormLayout(pomo_group)
         self._pomo_work_spin = QSpinBox()
+        self._pomo_work_spin.setStyleSheet(self.INPUT_WIDGET_QSS)  # v4.26
         self._pomo_work_spin.setRange(1, 120)
         self._pomo_work_spin.setSuffix(" 分钟")
         self._pomo_work_spin.setValue(self._pomo_work)
         pomo_layout.addRow("工作时长：", self._pomo_work_spin)
 
         self._pomo_break_spin = QSpinBox()
+        self._pomo_break_spin.setStyleSheet(self.INPUT_WIDGET_QSS)  # v4.26
         self._pomo_break_spin.setRange(1, 60)
         self._pomo_break_spin.setSuffix(" 分钟")
         self._pomo_break_spin.setValue(self._pomo_break)

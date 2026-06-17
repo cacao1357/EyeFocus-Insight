@@ -321,3 +321,56 @@ class TestAlertMessage:
         )
         assert alert.level == AlertLevel.WARNING
         assert alert.text == "测试警告"
+
+
+# ════════════════════════════════════════
+# v4.26: SettingsDialog QSS 白底回归测试
+# 修复"托盘/主程序的下拉框弹出黑底看不见字"bug：
+# QSS 必须在每个 QComboBox/QSpinBox/QLineEdit 实例上 setStyleSheet，
+# 才能覆盖 popup 窗口（独立 top-level，QDialog 级别 QSS 无法传递）。
+# ════════════════════════════════════════
+
+class TestSettingsDialogWhiteDropdown:
+    """v4.26: 设置对话框所有下拉/输入控件白底"""
+
+    @pytest.fixture(scope="class", autouse=True)
+    def _setup_qt(self):
+        """确保有 QApplication 实例（offscreen，不弹窗）"""
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PyQt5.QtWidgets import QApplication
+        self._app = QApplication.instance() or QApplication([])
+
+    def test_input_widget_qss_contains_required_selectors(self):
+        """v4.26: INPUT_WIDGET_QSS 必须含 ::drop-down / ::down-arrow / QAbstractItemView::item
+
+        这三个是 Qt 关键子控件，缺一个 popup 就仍可能是黑底。
+        """
+        from gui.settings_dialog import SettingsDialog
+        qss = SettingsDialog.INPUT_WIDGET_QSS
+        for selector in ["::drop-down", "::down-arrow", "QAbstractItemView::item"]:
+            assert selector in qss, f"INPUT_WIDGET_QSS 缺关键选择器: {selector}"
+
+    def test_input_widget_qss_white_background(self):
+        """v4.26: 控件背景必须是 #FFFFFF，selection 必须是 Iris 紫"""
+        from gui.settings_dialog import SettingsDialog
+        qss = SettingsDialog.INPUT_WIDGET_QSS
+        assert "background-color: #FFFFFF" in qss
+        assert "selection-background-color: #5B4A8C" in qss  # Iris
+        assert "selection-color: #FFFFFF" in qss
+
+    def test_settings_dialog_qss_applied_to_every_input_widget(self):
+        """v4.26: 每个 QComboBox/QSpinBox/QLineEdit 实例都设了 QSS
+
+        关键：setStyleSheet 必须直接绑到 widget 实例上，否则 Qt 弹出
+        popup 窗口会绕过 QDialog 级别的样式，导致黑底。
+        """
+        from gui.settings_dialog import SettingsDialog
+        dlg = SettingsDialog()
+        for w in [dlg._cam_combo, dlg._ai_backend, dlg._ai_provider,
+                  dlg._pomo_work_spin, dlg._pomo_break_spin,
+                  dlg._ai_api_key, dlg._ai_base_url]:
+            assert w.styleSheet(), f"{type(w).__name__} 未 setStyleSheet"
+            assert "::drop-down" in w.styleSheet(), \
+                f"{type(w).__name__} QSS 缺 ::drop-down"
+            assert "QAbstractItemView::item" in w.styleSheet(), \
+                f"{type(w).__name__} QSS 缺 QAbstractItemView::item"
