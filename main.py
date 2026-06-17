@@ -77,6 +77,9 @@ from app.camera import CameraManager
 from app.processor import FrameProcessor
 from app.calibration import CalibrationFlowCallbacks, CalibrationCoordinator
 
+# v4.22: Web 仪表盘
+from webserver import WebDashboard
+
 
 logger = logging.getLogger("eyefocus.main")
 
@@ -246,6 +249,11 @@ class EyeFocusApp:
                 pause_callback=lambda: self._pomodoro_pause(),
                 resume_callback=lambda: self._pomodoro_resume(),
             )
+
+            # v4.22: Web 仪表盘（后台线程，不阻塞主程序）
+            self._web_dashboard = WebDashboard(port=8080)
+            self._web_dashboard.start()
+            logger.info("Web 仪表盘: http://127.0.0.1:8080")
 
             # 初始化校准管理器
             self._calib_callbacks = CalibrationFlowCallbacks(self)
@@ -713,6 +721,23 @@ class EyeFocusApp:
                                 if self._pomodoro._paused:
                                     st = "PAUSED"
                                 self._qt_window._tray_icon.set_pomodoro_state(st, self._pomodoro.count)
+
+                # v4.22: Web 仪表盘广播（每秒一次）
+                if hasattr(self, '_web_dashboard') and self._web_dashboard is not None:
+                    try:
+                        pomo = self._pomodoro.get_status() if hasattr(self, '_pomodoro') and self._pomodoro is not None else None
+                        ear = getattr(self._frame_processor, '_latest_ear', None)
+                        self._web_dashboard.broadcast({
+                            "focus_score": focus_score,
+                            "ear": ear,
+                            "fatigue_level": fatigue_level,
+                            "face_detected": self._frame_processor.latest_face_detected,
+                            "session_minutes": session_min,
+                            "session_start": getattr(self, '_session_start_time', None),
+                            "pomodoro": pomo,
+                        })
+                    except Exception:
+                        pass
 
                 # 游戏化（每 60s）
                 gamify_update = getattr(self, '_gamify_update_time', 0)
@@ -1250,6 +1275,13 @@ class EyeFocusApp:
         # v4.17: 关闭语音助手
         if hasattr(self, '_voice_asst') and self._voice_asst is not None:
             self._voice_asst.shutdown()
+
+        # v4.22: 停止 Web 仪表盘
+        if hasattr(self, '_web_dashboard') and self._web_dashboard is not None:
+            try:
+                self._web_dashboard.stop()
+            except Exception:
+                pass
 
         # 恢复信号处理器
         if self._original_sigint:

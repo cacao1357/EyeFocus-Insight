@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EyeFocus Insight · 实时仪表盘</title>
+<style>
+/* ── Quiet Focus 设计系统 ── */
+:root {
+  --ink: #23201E;
+  --stone: #F4F2EE;
+  --warm: #E8E4DC;
+  --iris: #5B4A8C;
+  --sage: #5A8A6D;
+  --amber: #C9843A;
+  --rose: #B55C5C;
+  --gray: #9E9A96;
+  --light-gray: #D4D0CA;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--stone);
+  color: var(--ink);
+  min-height: 100vh;
+}
+
+/* ── Header ── */
+.header {
+  background: var(--ink);
+  color: var(--stone);
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.header h1 { font-size: 20px; font-weight: 600; }
+.header .badge {
+  font-size: 12px;
+  background: var(--iris);
+  padding: 2px 10px;
+  border-radius: 10px;
+}
+.header .status-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  margin-left: auto;
+  transition: background 0.3s;
+}
+
+/* ── Grid ── */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  padding: 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+.card {
+  background: white;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+.card h2 {
+  font-size: 13px;
+  color: var(--gray);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+
+/* ── Focus Ring ── */
+.focus-ring-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  grid-column: span 2;
+}
+.ring-container {
+  position: relative;
+  width: 180px;
+  height: 180px;
+}
+.ring-container svg { transform: rotate(-90deg); }
+.ring-bg { fill: none; stroke: var(--warm); stroke-width: 10; }
+.ring-fg {
+  fill: none;
+  stroke: var(--iris);
+  stroke-width: 10;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.5s ease, stroke 0.5s ease;
+}
+.ring-label {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+}
+.ring-score {
+  font-size: 42px;
+  font-weight: 700;
+  line-height: 1;
+  transition: color 0.5s;
+}
+.ring-sub {
+  font-size: 13px;
+  color: var(--gray);
+  margin-top: 4px;
+}
+.ring-grade {
+  font-size: 14px;
+  font-weight: 600;
+  margin-top: 8px;
+  padding: 2px 12px;
+  border-radius: 8px;
+}
+
+/* ── Metrics ── */
+.metric-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--warm);
+}
+.metric-row:last-child { border: none; }
+.metric-label {
+  font-size: 14px;
+  color: var(--gray);
+}
+.metric-value {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* ── Sparkline ── */
+.sparkline-wrap { grid-column: 1 / -1; }
+.sparkline-wrap canvas {
+  width: 100%;
+  height: 80px;
+  border-radius: 6px;
+}
+
+/* ── History Table ── */
+.history-wrap { grid-column: 1 / -1; }
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.history-table th {
+  text-align: left;
+  padding: 6px 8px;
+  color: var(--gray);
+  font-weight: 500;
+  border-bottom: 2px solid var(--warm);
+}
+.history-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--warm);
+}
+
+/* ── Responsive ── */
+@media (max-width: 640px) {
+  .grid { grid-template-columns: 1fr; padding: 12px; }
+  .focus-ring-wrap { grid-column: span 1; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>👁 EyeFocus Insight</h1>
+  <span class="badge">实时</span>
+  <span id="sessionTime" style="font-size:13px;color:var(--gray)">--:--</span>
+  <span class="status-dot" id="statusDot" style="background:var(--gray)"></span>
+</div>
+
+<div class="grid" id="app">
+  <!-- 专注度圆环 -->
+  <div class="card focus-ring-wrap">
+    <div class="ring-container">
+      <svg viewBox="0 0 120 120">
+        <circle class="ring-bg" cx="60" cy="60" r="50"/>
+        <circle class="ring-fg" id="ringFg" cx="60" cy="60" r="50"
+                stroke-dasharray="314" stroke-dashoffset="314"/>
+      </svg>
+      <div class="ring-label">
+        <div class="ring-score" id="focusScore">--</div>
+        <div class="ring-sub">专注度</div>
+        <div class="ring-grade" id="focusGrade">等待数据</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 实时指标 -->
+  <div class="card">
+    <h2>📊 实时指标</h2>
+    <div class="metric-row">
+      <span class="metric-label">EAR</span>
+      <span class="metric-value" id="ear">--</span>
+    </div>
+    <div class="metric-row">
+      <span class="metric-label">疲劳等级</span>
+      <span class="metric-value" id="fatigue">--</span>
+    </div>
+    <div class="metric-row">
+      <span class="metric-label">人脸检测</span>
+      <span class="metric-value" id="faceDetected">--</span>
+    </div>
+    <div class="metric-row">
+      <span class="metric-label">专注时长</span>
+      <span class="metric-value" id="duration">--</span>
+    </div>
+  </div>
+
+  <!-- 番茄状态 -->
+  <div class="card">
+    <h2>🍅 番茄钟</h2>
+    <div class="metric-row">
+      <span class="metric-label">状态</span>
+      <span class="metric-value" id="pomoState">--</span>
+    </div>
+    <div class="metric-row">
+      <span class="metric-label">倒计时</span>
+      <span class="metric-value" id="pomoCountdown">--</span>
+    </div>
+    <div class="metric-row">
+      <span class="metric-label">今日番茄</span>
+      <span class="metric-value" id="pomoCount">--</span>
+    </div>
+  </div>
+
+  <!-- 波线 -->
+  <div class="card sparkline-wrap">
+    <h2>📈 专注度趋势 (60s)</h2>
+    <canvas id="sparkline"></canvas>
+  </div>
+
+  <!-- 历史数据 -->
+  <div class="card history-wrap">
+    <h2>📋 最近数据</h2>
+    <table class="history-table">
+      <thead>
+        <tr>
+          <th>时间</th>
+          <th>专注度</th>
+          <th>EAR</th>
+          <th>疲劳</th>
+          <th>人脸</th>
+        </tr>
+      </thead>
+      <tbody id="historyBody">
+        <tr><td colspan="5" style="text-align:center;color:var(--gray)">等待数据...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════
+// 配置
+// ═══════════════════════════════════════════
+const WS_URL = `ws://${location.host}/ws`;
+const RING_CIRCUMFERENCE = 314; // 2 * PI * 50
+
+// DOM 引用
+const $ = id => document.getElementById(id);
+const focusScore = $('focusScore');
+const focusGrade = $('focusGrade');
+const ringFg = $('ringFg');
+const ear = $('ear');
+const fatigue = $('fatigue');
+const faceDetected = $('faceDetected');
+const duration = $('duration');
+const pomoState = $('pomoState');
+const pomoCountdown = $('pomoCountdown');
+const pomoCount = $('pomoCount');
+const sessionTime = $('sessionTime');
+const statusDot = $('statusDot');
+const historyBody = $('historyBody');
+const canvas = $('sparkline');
+const ctx = canvas.getContext('2d');
+
+// 数据
+let history = [];
+let connectionOk = false;
+
+// ═══════════════════════════════════════════
+// Canvas 尺寸 (Retina)
+// ═══════════════════════════════════════════
+function resizeCanvas() {
+  const rect = canvas.parentElement.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = rect.width * dpr;
+  canvas.height = 80 * dpr;
+  canvas.style.height = '80px';
+  ctx.scale(dpr, dpr);
+  canvas._width = rect.width;
+  canvas._height = 80;
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+// ═══════════════════════════════════════════
+// 工具
+// ═══════════════════════════════════════════
+function fmt(s) {
+  if (s == null) return '--';
+  if (typeof s === 'number') return s.toFixed(1);
+  return String(s);
+}
+
+function gradeColor(score) {
+  if (score == null) return {color: 'var(--gray)', grade: '等待数据', bg: 'transparent'};
+  if (score >= 85) return {color: 'var(--sage)', grade: '🥇 极佳', bg: '#E8F5E9'};
+  if (score >= 70) return {color: '#7CB342', grade: '🥈 良好', bg: '#F1F8E9'};
+  if (score >= 50) return {color: 'var(--amber)', grade: '🥉 一般', bg: '#FFF8E1'};
+  return {color: 'var(--rose)', grade: '⚠️ 分心', bg: '#FFEBEE'};
+}
+
+function fmtTime(ts) {
+  const d = new Date(ts * 1000);
+  return d.toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+
+function fmtDuration(sec) {
+  if (sec == null) return '--';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+// ═══════════════════════════════════════════
+// 渲染
+// ═══════════════════════════════════════════
+function updateDashboard(data) {
+  if (!data) return;
+
+  // 专注度圆环
+  const score = data.focus_score;
+  const gc = gradeColor(score);
+  focusScore.textContent = score != null ? Math.round(score) : '--';
+  focusScore.style.color = gc.color;
+  focusGrade.textContent = gc.grade;
+  focusGrade.style.background = gc.bg;
+
+  const offset = RING_CIRCUMFERENCE - (score != null ? score / 100 * RING_CIRCUMFERENCE : 0);
+  ringFg.style.strokeDashoffset = offset;
+  ringFg.style.stroke = gc.color;
+
+  // 指标
+  ear.textContent = data.ear != null ? data.ear.toFixed(3) : '--';
+  fatigue.textContent = data.fatigue_level || '--';
+  faceDetected.textContent = data.face_detected ? '✅ 检测到' : '❌ 丢失';
+  duration.textContent = data.session_minutes != null
+    ? `${Math.round(data.session_minutes)} 分钟`
+    : '--';
+
+  // 番茄
+  if (data.pomodoro) {
+    const p = data.pomodoro;
+    pomoState.textContent = p.state === 'IDLE' ? '空闲'
+      : p.state === 'WORKING' ? (p.paused ? '⏸ 暂停' : '▶ 工作中')
+      : p.state === 'BREAK' ? (p.paused ? '⏸ 休息暂停' : '☕ 休息中')
+      : p.state;
+    const rem = p.remaining_sec;
+    pomoCountdown.textContent = rem != null
+      ? `${Math.floor(rem / 60)}:${(rem % 60).toString().padStart(2, '0')}`
+      : '--';
+    pomoCount.textContent = `${p.count || 0} 个`;
+  }
+
+  // 会话时间
+  if (data.session_start) {
+    if (!sessionTime._start) sessionTime._start = data.session_start;
+    const elapsed = Math.floor((Date.now()/1000) - data.session_start);
+    sessionTime.textContent = `⏱ ${fmtDuration(elapsed)}`;
+  }
+
+  // 连接状态
+  statusDot.style.background = connectionOk ? 'var(--sage)' : 'var(--rose)';
+}
+
+function drawSparkline() {
+  const w = canvas._width || 600;
+  const h = canvas._height || 80;
+  ctx.clearRect(0, 0, w, h);
+
+  if (history.length < 2) {
+    ctx.fillStyle = 'var(--gray)';
+    ctx.font = '13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('等待数据...', w/2, h/2 + 5);
+    return;
+  }
+
+  const points = history.slice(-60);
+  const min = Math.max(0, Math.min(...points) - 10);
+  const max = Math.min(100, Math.max(...points) + 10);
+  const range = max - min || 1;
+
+  // 渐变填充
+  const gradient = ctx.createLinearGradient(0, 0, 0, h);
+  gradient.addColorStop(0, 'rgba(91, 74, 140, 0.3)');
+  gradient.addColorStop(1, 'rgba(91, 74, 140, 0.02)');
+
+  ctx.beginPath();
+  points.forEach((v, i) => {
+    const x = (i / (points.length - 1)) * w;
+    const y = h - ((v - min) / range) * (h - 4) - 2;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  // 闭合到基线
+  ctx.lineTo(w, h);
+  ctx.lineTo(0, h);
+  ctx.closePath();
+  ctx.fillStyle = gradient;
+  ctx.fill();
+
+  // 线
+  ctx.beginPath();
+  points.forEach((v, i) => {
+    const x = (i / (points.length - 1)) * w;
+    const y = h - ((v - min) / range) * (h - 4) - 2;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = 'var(--iris)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+function updateHistory(data, ts) {
+  if (!data || data.focus_score == null) return;
+
+  const row = document.createElement('tr');
+  row.innerHTML = `
+    <td>${fmtTime(ts)}</td>
+    <td style="font-weight:600">${Math.round(data.focus_score)}</td>
+    <td>${data.ear != null ? data.ear.toFixed(3) : '--'}</td>
+    <td>${data.fatigue_level || '--'}</td>
+    <td>${data.face_detected ? '✅' : '❌'}</td>
+  `;
+  historyBody.prepend(row);
+
+  // 保留最近 20 行
+  while (historyBody.children.length > 20) {
+    historyBody.removeChild(historyBody.lastChild);
+  }
+}
+
+// ═══════════════════════════════════════════
+// WebSocket
+// ═══════════════════════════════════════════
+let ws = null;
+
+function connect() {
+  ws = new WebSocket(WS_URL);
+
+  ws.onopen = () => {
+    connectionOk = true;
+    console.log('WebSocket 已连接');
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+
+      if (msg.type === 'init') {
+        // 初始数据
+        history = (msg.history || []).map(d => d.focus_score).filter(v => v != null);
+        updateDashboard(msg.current);
+        drawSparkline();
+        (msg.history || []).forEach(d => updateHistory(d, msg.timestamp));
+      } else if (msg.type === 'update') {
+        // 更新数据
+        const cur = msg.current || {};
+        if (cur.focus_score != null) history.push(cur.focus_score);
+        if (history.length > 120) history = history.slice(-120);
+
+        updateDashboard(cur);
+        drawSparkline();
+        updateHistory(cur, msg.timestamp);
+      }
+    } catch (e) {
+      console.warn('数据解析错误:', e);
+    }
+  };
+
+  ws.onerror = () => {
+    connectionOk = false;
+  };
+
+  ws.onclose = () => {
+    connectionOk = false;
+    // 自动重连
+    setTimeout(connect, 2000);
+  };
+}
+
+// ═══════════════════════════════════════════
+// 启动
+// ═══════════════════════════════════════════
+connect();
+</script>
+</body>
+</html>

@@ -1,0 +1,190 @@
+"""
+webserver/server.py — aiohttp WebSocket 实时数据推送服务
+
+在后台线程运行，与主程序 EyeFocusApp 通过队列通信。
+主程序每秒推送一次专注度数据，Web 客户端实时展示。
+"""
+
+import asyncio
+import json
+import logging
+import os
+import threading
+import time
+from typing import Any, Dict, Optional, Set
+
+import aiohttp.web
+
+logger = logging.getLogger("eyefocus.webserver")
+
+
+class WebDashboard:
+    """Web 仪表盘 — 实时专注度数据可视化
+
+    用法：
+        dashboard = WebDashboard(port=8080)
+        dashboard.start()
+        dashboard.broadcast({"focus_score": 85, ...})
+        dashboard.stop()
+    """
+
+    def __init__(self, host: str = "127.0.0.1", port: int = 8080):
+        self._host = host
+        self._port = port
+        self._app: Optional[aiohttp.web.Application] = None
+        self._runner: Optional[aiohttp.web.AppRunner] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._thread: Optional[threading.Thread] = None
+        self._ws_clients: Set[aiohttp.web.WebSocketResponse] = set()
+        self._latest_data: Dict[str, Any] = {"status": "initializing"}
+        self._history: list = []  # 最近 120 个数据点
+        self._running: bool = False
+
+    # ── 公共 API ──
+
+    def start(self) -> bool:
+        """在后台线程启动 Web 服务器"""
+        if self._running:
+            logger.warning("WebDashboard 已在运行")
+            return True
+
+        self._running = True
+        self._thread = threading.Thread(
+            target=self._run_loop,
+            daemon=True,
+            name="web-dashboard",
+        )
+        self._thread.start()
+        logger.info("Web 仪表盘启动: http://%s:%d", self._host, self._port)
+        return True
+
+    def stop(self) -> None:
+        """停止 Web 服务器"""
+        self._running = False
+        if self._loop and not self._loop.is_closed():
+            asyncio.run_coroutine_threadsafe(self._shutdown(), self._loop)
+
+    def broadcast(self, data: Dict[str, Any]) -> None:
+        """广播数据到所有连接的 WebSocket 客户端
+
+        在主线程调用，线程安全。
+        """
+        self._latest_data = data
+
+        # 维护历史（60s @ 1点/s）
+        self._history.append(data)
+        if len(self._history) > 120:
+            self._history = self._history[-120:]
+
+        # 附加上历史数据
+        payload = {
+            "current": data,
+            "history": self._history[-60:],
+            "timestamp": time.time(),
+        }
+
+        if self._loop and not self._loop.is_closed() and self._ws_clients:
+            asyncio.run_coroutine_threadsafe(
+                self._broadcast_ws(payload), self._loop
+            )
+
+    @property
+    def url(self) -> str:
+        return f"http://{self._host}:{self._port}"
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+    # ── 后台线程 ──
+
+    def _run_loop(self) -> None:
+        """后台线程：创建和运行 aiohttp 服务器"""
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+
+        self._app = aiohttp.web.Application()
+
+        # 路由
+        self._app.router.add_get("/", self._handle_index)
+        self._app.router.add_get("/ws", self._handle_websocket)
+        self._app.router.add_get("/data", self._handle_data)
+        self._app.router.add_static(
+            "/static",
+            os.path.join(os.path.dirname(__file__), "static"),
+        )
+
+        try:
+            aiohttp.web.run_app(
+                self._app,
+                host=self._host,
+                port=self._port,
+                handle_signals=False,
+                print=lambda *a: None,  # 静默 aiohttp 启动日志
+            )
+        except Exception as e:
+            logger.error("Web 服务器异常: %s", e)
+        finally:
+            self._running = False
+
+    async def _shutdown(self) -> None:
+        """关闭服务器"""
+        if self._runner:
+            await self._runner.cleanup()
+        if self._loop and not self._loop.is_closed():
+            self._loop.stop()
+
+    # ── HTTP 路由 ──
+
+    async def _handle_index(self, request):
+        """首页 — 跳转到仪表盘"""
+        raise aiohttp.web.HTTPFound("/static/index.html")
+
+    async def _handle_data(self, request):
+        """REST 端点 — 获取最新数据（供 polling 备选）"""
+        return aiohttp.web.json_response({
+            "current": self._latest_data,
+            "history": self._history[-60:],
+        })
+
+    async def _handle_websocket(self, request):
+        """WebSocket 端点 — 实时推送"""
+        ws = aiohttp.web.WebSocketResponse(max_msg_size=65536)
+        await ws.prepare(request)
+
+        self._ws_clients.add(ws)
+        logger.info("WebSocket 客户端已连接 (%d 在线)", len(self._ws_clients))
+
+        try:
+            # 发送初始数据
+            await ws.send_json({
+                "type": "init",
+                "current": self._latest_data,
+                "history": self._history[-60:],
+            })
+
+            # 保持连接，等待客户端关闭
+            async for msg in ws:
+                if msg.type == aiohttp.WSMsgType.ERROR:
+                    logger.warning("WebSocket 错误: %s", ws.exception())
+
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._ws_clients.discard(ws)
+            logger.info("WebSocket 客户端断开 (%d 在线)", len(self._ws_clients))
+
+        return ws
+
+    async def _broadcast_ws(self, payload: dict) -> None:
+        """广播 JSON 到所有 WebSocket 客户端"""
+        if not self._ws_clients:
+            return
+        dead: list = []
+        for ws in self._ws_clients:
+            try:
+                await ws.send_json({"type": "update", **payload})
+            except (ConnectionError, asyncio.CancelledError):
+                dead.append(ws)
+        for ws in dead:
+            self._ws_clients.discard(ws)
