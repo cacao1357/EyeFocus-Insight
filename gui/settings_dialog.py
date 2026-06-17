@@ -36,6 +36,21 @@ from PyQt5.QtWidgets import (
 
 logger = logging.getLogger("eyefocus.gui.settings")
 
+# v4.26: 箭头图标用 base64 内联 SVG
+# 原因：之前用 `image: none` + CSS border 三角 hack，在 Qt 上不稳定
+#       （Qt 仍渲染默认方块位图，看到"黑色小方块"）
+# 解决：直接用 image: url(data:image/svg+xml;base64,...) 内联 SVG
+_ARROW_DOWN_SVG_B64 = (
+    "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMCA2IiB3aWR0aD0iMTAiIGhlaWdodD0iNiI+"
+    "PHBhdGggZD0iTTAgMCBMMTAgMCBMNSA2IFoiIGZpbGw9IiM1QjRBOEMiLz48L3N2Zz4="
+)
+_ARROW_UP_SVG_B64 = (
+    "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMCA2IiB3aWR0aD0iMTAiIGhlaWdodD0iNiI+"
+    "PHBhdGggZD0iTTAgNiBMMTAgNiBMNSAwIFoiIGZpbGw9IiM1QjRBOEMiLz48L3N2Zz4="
+)
+_ARROW_DOWN_URL = f"url(data:image/svg+xml;base64,{_ARROW_DOWN_SVG_B64})"
+_ARROW_UP_URL = f"url(data:image/svg+xml;base64,{_ARROW_UP_SVG_B64})"
+
 
 class SettingsDialog(QDialog):
     """应用设置对话框"""
@@ -49,7 +64,7 @@ class SettingsDialog(QDialog):
     # 关键：setStyleSheet 在 QDialog 级别无法覆盖 popup 窗口（popup 是独立 top-level），
     # 必须把 QSS 直接绑到每个 QComboBox/QSpinBox/QLineEdit 实例上。
     # 补全 Qt 子控件：::drop-down / ::down-arrow / QAbstractItemView::item
-    INPUT_WIDGET_QSS = """
+    INPUT_WIDGET_QSS = ("""
         QComboBox, QSpinBox, QLineEdit {
             background-color: #FFFFFF;
             color: #23201E;
@@ -75,12 +90,13 @@ class SettingsDialog(QDialog):
         }
         QComboBox::drop-down:hover { background: #F0EBF8; }
         QComboBox::down-arrow {
-            image: none;
-            width: 0; height: 0;
-            border-left: 4px solid transparent;
-            border-right: 4px solid transparent;
-            border-top: 6px solid #5B4A8C;
-            margin-right: 6px;
+            image: __ARROW_DOWN__;
+            width: 10px; height: 6px;
+            margin-right: 4px;
+        }
+        QComboBox::down-arrow:disabled {
+            image: __ARROW_DOWN__;
+            opacity: 0.5;
         }
         QComboBox QAbstractItemView {
             background-color: #FFFFFF;
@@ -113,22 +129,16 @@ class SettingsDialog(QDialog):
         QSpinBox::up-button:pressed, QSpinBox::down-button:pressed {
             background: #E0E0E0;
         }
-        /* v4.26: 上下箭头用 CSS 三角形，避免依赖系统位图（位图常是黑色） */
+        /* v4.26: 上下箭头用 base64 内联 SVG（image:none + border hack 在 Qt 上不稳定） */
         QSpinBox::up-arrow {
-            image: none;
-            width: 0; height: 0;
-            border-left: 4px solid transparent;
-            border-right: 4px solid transparent;
-            border-bottom: 5px solid #5B4A8C;
+            image: __ARROW_UP__;
+            width: 10px; height: 6px;
         }
         QSpinBox::down-arrow {
-            image: none;
-            width: 0; height: 0;
-            border-left: 4px solid transparent;
-            border-right: 4px solid transparent;
-            border-top: 5px solid #5B4A8C;
+            image: __ARROW_DOWN__;
+            width: 10px; height: 6px;
         }
-    """
+    """).replace("__ARROW_DOWN__", _ARROW_DOWN_URL).replace("__ARROW_UP__", _ARROW_UP_URL)
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -276,36 +286,60 @@ class SettingsDialog(QDialog):
         self._ai_provider.addItem("自定义", "__custom__")
         self._ai_provider_row = ai_layout.addRow("提供商：", self._ai_provider)
 
+        # v4.26: API Key 输入 + 切换按钮用 QFrame 容器统一边框
+        # 修复前：QLineEdit + QPushButton 各有 1px border + spacing=4 → 双黑边
+        # 修复后：容器统一边框，QLineEdit/Button 透明无边框（focus 时容器高亮）
+        from PyQt5.QtWidgets import QFrame
+        api_key_row = QFrame()
+        api_key_row.setObjectName("apiKeyContainer")
+        api_key_row.setStyleSheet("""
+            QFrame#apiKeyContainer {
+                background: #FFFFFF;
+                border: 1px solid #D0D0D0;
+                border-radius: 4px;
+            }
+            QFrame#apiKeyContainer:focus-within {
+                border: 1px solid #5B4A8C;
+            }
+            QFrame#apiKeyContainer QLineEdit {
+                background: transparent;
+                border: none;
+                padding: 5px 8px;
+                color: #23201E;
+                selection-background-color: #5B4A8C;
+                selection-color: #FFFFFF;
+            }
+            QFrame#apiKeyContainer QPushButton {
+                background: transparent;
+                border: none;
+                color: #5A5650;
+                font-size: 15px;
+                padding: 4px 10px;
+            }
+            QFrame#apiKeyContainer QPushButton:hover { color: #5B4A8C; }
+            QFrame#apiKeyContainer QPushButton:checked { color: #5B4A8C; }
+        """)
+
         self._ai_api_key = QLineEdit()
         self._ai_api_key.setPlaceholderText("API Key...")
         self._ai_api_key.setEchoMode(QLineEdit.Password)
-        self._ai_api_key.setStyleSheet(self.INPUT_WIDGET_QSS)  # v4.26
+        # 容器 QSS 已通过 #apiKeyContainer QLineEdit 选择器覆盖边框/背景
+        # 保留 INPUT_WIDGET_QSS 选择性属性（selection 等）作为补充
+        self._ai_api_key.setStyleSheet(self.INPUT_WIDGET_QSS)
         # 密码可见性切换
         from PyQt5.QtWidgets import QPushButton as _QPB
         self._api_key_toggle_btn = _QPB("👁")
-        self._api_key_toggle_btn.setFixedWidth(32)
+        self._api_key_toggle_btn.setFixedWidth(36)
         self._api_key_toggle_btn.setToolTip("显示/隐藏 API Key")
         self._api_key_toggle_btn.setCheckable(True)
-        self._api_key_toggle_btn.setStyleSheet("""
-            QPushButton {
-                background: #F0F0F0; color: #666;
-                border: 1px solid #D0D0D0; border-radius: 4px;
-                padding: 4px 2px; font-size: 14px;
-            }
-            QPushButton:checked {
-                background: #E0E0E0; color: #333;
-            }
-            QPushButton:hover {
-                background: #E5E5E5;
-            }
-        """)
+        # 容器 QSS 已通过 #apiKeyContainer QPushButton 选择器覆盖样式
+        # 留空 setStyleSheet 避免与容器冲突
         self._api_key_toggle_btn.clicked.connect(self._toggle_api_key_visibility)
-        api_key_row = QWidget()
-        api_key_row_layout = QHBoxLayout(api_key_row)
-        api_key_row_layout.setContentsMargins(0, 0, 0, 0)
-        api_key_row_layout.setSpacing(4)
-        api_key_row_layout.addWidget(self._ai_api_key)
-        api_key_row_layout.addWidget(self._api_key_toggle_btn)
+        api_key_layout = QHBoxLayout(api_key_row)
+        api_key_layout.setContentsMargins(0, 0, 0, 0)
+        api_key_layout.setSpacing(0)
+        api_key_layout.addWidget(self._ai_api_key)
+        api_key_layout.addWidget(self._api_key_toggle_btn)
         ai_layout.addRow("API Key：", api_key_row)
 
         self._ai_base_url = QLineEdit("https://api.openai.com/v1")
@@ -459,7 +493,7 @@ class SettingsDialog(QDialog):
 # ════════════════════════════════════════
 
 # 番茄设置 dialog 专用 QSS：白底 + Iris 紫主按钮，与项目色板一致
-_POMO_INPUT_DIALOG_QSS = """
+_POMO_INPUT_DIALOG_QSS = ("""
     QDialog {
         background-color: #FFFFFF;
     }
@@ -494,20 +528,14 @@ _POMO_INPUT_DIALOG_QSS = """
     QSpinBox::up-button:pressed, QSpinBox::down-button:pressed {
         background: #E0E0E0;
     }
-    /* v4.26: 上下箭头用 CSS 三角形（避免系统位图黑色） */
+    /* v4.26: 上下箭头用 base64 内联 SVG（避免系统位图黑色方块） */
     QSpinBox::up-arrow {
-        image: none;
-        width: 0; height: 0;
-        border-left: 4px solid transparent;
-        border-right: 4px solid transparent;
-        border-bottom: 5px solid #5B4A8C;
+        image: __ARROW_UP__;
+        width: 10px; height: 6px;
     }
     QSpinBox::down-arrow {
-        image: none;
-        width: 0; height: 0;
-        border-left: 4px solid transparent;
-        border-right: 4px solid transparent;
-        border-top: 5px solid #5B4A8C;
+        image: __ARROW_DOWN__;
+        width: 10px; height: 6px;
     }
     QPushButton {
         background-color: #F0F0F0;
@@ -536,7 +564,7 @@ _POMO_INPUT_DIALOG_QSS = """
     QPushButton:default:pressed {
         background-color: #3A2A6A;
     }
-"""
+""").replace("__ARROW_UP__", _ARROW_UP_URL).replace("__ARROW_DOWN__", _ARROW_DOWN_URL)
 
 
 def ask_pomo_int(parent, title: str, label: str,

@@ -376,19 +376,36 @@ class TestSettingsDialogWhiteDropdown:
                 f"{type(w).__name__} QSS 缺 QAbstractItemView::item"
 
     def test_v426_qspinbox_arrows_styled(self):
-        """v4.26: QSpinBox 上下箭头用 CSS 三角形（避免系统位图黑色）
+        """v4.26: QComboBox/QSpinBox 箭头用 base64 内联 SVG（避免系统位图黑色）
 
-        修复前：系统默认 up-arrow/down-arrow 是黑色位图，暗色主题下完全看不见。
-        修复后：用 CSS border 画 Iris 紫色三角。
+        修复前：image: none + CSS border 三角 hack 在 Qt 上不稳定，
+        仍渲染默认黑色方块位图。改用 base64 内联 SVG（Iris 紫）。
         """
-        from gui.settings_dialog import SettingsDialog, _POMO_INPUT_DIALOG_QSS
-        # 1) SettingsDialog 的 INPUT_WIDGET_QSS 含箭头样式
-        assert "QSpinBox::up-arrow" in SettingsDialog.INPUT_WIDGET_QSS
-        assert "QSpinBox::down-arrow" in SettingsDialog.INPUT_WIDGET_QSS
-        assert "border-top: 5px solid #5B4A8C" in SettingsDialog.INPUT_WIDGET_QSS
-        # 2) Pomo 输入 dialog 的 QSS 也含
-        assert "QSpinBox::up-arrow" in _POMO_INPUT_DIALOG_QSS
-        assert "QSpinBox::down-arrow" in _POMO_INPUT_DIALOG_QSS
+        from gui.settings_dialog import (
+            SettingsDialog, _POMO_INPUT_DIALOG_QSS,
+            _ARROW_DOWN_URL, _ARROW_UP_URL,
+        )
+        # 1) SettingsDialog QSS 含 QComboBox::down-arrow + QSpinBox 上下箭头
+        for arrow in ["QComboBox::down-arrow", "QSpinBox::up-arrow", "QSpinBox::down-arrow"]:
+            assert arrow in SettingsDialog.INPUT_WIDGET_QSS
+        # 2) Pomo dialog 只有 QSpinBox（无 QComboBox）
+        for arrow in ["QSpinBox::up-arrow", "QSpinBox::down-arrow"]:
+            assert arrow in _POMO_INPUT_DIALOG_QSS
+        # 2) URL 是 base64 SVG (Iris 紫 #5B4A8C)
+        import base64
+        assert "data:image/svg+xml;base64" in _ARROW_DOWN_URL
+        assert "data:image/svg+xml;base64" in _ARROW_UP_URL
+        # 解码后含 #5B4A8C 填充色
+        b64_down = _ARROW_DOWN_URL.split("base64,")[1]
+        b64_up = _ARROW_UP_URL.split("base64,")[1]
+        assert "#5B4A8C" in base64.b64decode(b64_down).decode("utf-8")
+        assert "#5B4A8C" in base64.b64decode(b64_up).decode("utf-8")
+        # 3) QSS 实际渲染时含 data: URL（被 .replace() 替换后）
+        assert "data:image/svg+xml;base64" in SettingsDialog.INPUT_WIDGET_QSS
+        assert "data:image/svg+xml;base64" in _POMO_INPUT_DIALOG_QSS
+        # 4) 不应再有 image: none + border hack 残留
+        assert "image: none" not in SettingsDialog.INPUT_WIDGET_QSS
+        assert "image: none" not in _POMO_INPUT_DIALOG_QSS
 
     def test_v426_settings_dialog_qss_extra_states(self):
         """v4.26: SettingsDialog QDialog 级别 QSS 补 QPushButton 状态 + QCheckBox indicator + QGroupBox::title color"""
@@ -438,3 +455,30 @@ class TestSettingsDialogWhiteDropdown:
             # 检查实际调用模式：QInputDialog.getInt( 不应出现（注释里可以提）
             assert "QInputDialog.getInt(" not in content, \
                 f"{path} 还在调用 QInputDialog.getInt（黑底 bug）"
+
+    def test_v426_api_key_uses_unified_container(self):
+        """v4.26: API Key 输入 + 切换按钮用 QFrame 容器统一边框（去双黑边）
+
+        修复前：QLineEdit 1px border + QPushButton 1px border + spacing=4 → 双黑边
+        修复后：QFrame#apiKeyContainer 统一边框，内部控件透明无 border，
+                focus 时容器高亮 Iris 紫
+        """
+        from PyQt5.QtWidgets import QFrame
+        from gui.settings_dialog import SettingsDialog
+        dlg = SettingsDialog()
+        container = dlg.findChild(QFrame, "apiKeyContainer")
+        assert container is not None, "API Key 容器 QFrame#apiKeyContainer 应存在"
+        # 容器 QSS 关键规则
+        qss = container.styleSheet()
+        assert "QFrame#apiKeyContainer" in qss
+        assert "border: 1px solid #D0D0D0" in qss
+        assert "border-radius: 4px" in qss
+        # focus 高亮
+        assert ":focus-within" in qss
+        # 内部 QLineEdit 无 border / QPushButton 无 border
+        assert "QFrame#apiKeyContainer QLineEdit" in qss
+        assert "border: none" in qss
+        assert "QFrame#apiKeyContainer QPushButton" in qss
+        # API Key 行的两个子控件
+        assert dlg._ai_api_key.parent() is container
+        assert dlg._api_key_toggle_btn.parent() is container
