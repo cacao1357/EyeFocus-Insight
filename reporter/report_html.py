@@ -817,19 +817,21 @@ class HTMLReportGenerator:
         """v4.15: 数据分析 Tab（v4.24: 增加 AI 分析摘要）"""
         parts = []
 
-        # ── AI 分析摘要 ──
+        # ── AI 分析摘要（始终显示卡片，无数据时显示提示）──
         try:
             summary = self._generate_ai_summary()
-            if summary:
-                parts.append(f'''
+            if not summary:
+                summary = '<span style="color:#9E9A96;">数据不足，暂无法生成分析报告。</span>'
+        except Exception as e:
+            logger.warning("AI 分析摘要异常: %s", e)
+            summary = '<span style="color:#B55C5C;">分析生成异常，请查看下方图表数据。</span>'
+        parts.append(f'''
             <div class="card" style="background:linear-gradient(135deg,#F4F2EE,#FFFFFF);border-left:4px solid #5B4A8C;">
                 <h2>🤖 专注度分析报告</h2>
                 <div class="card-desc" style="font-size:15px;line-height:1.8;color:#23201E;padding:8px 0;">
                     {summary}
                 </div>
             </div>''')
-        except Exception:
-            pass
 
         sections = [
             ("专注度趋势",
@@ -858,11 +860,90 @@ class HTMLReportGenerator:
         return "\n".join(parts)
 
     def _generate_ai_summary(self) -> str:
-        """基于会话数据生成 AI 分析摘要（模板版，零依赖）"""
+        """生成 AI 分析摘要
+
+        优先使用已配置的 LLM 后端（API/本地），不可用时回退到内置模板。
+        """
         data = self._data if hasattr(self, '_data') and self._data else None
         if not data or not data.session:
             return ""
 
+        # ── 尝试 LLM 后端 ──
+        try:
+            from config import get_yaml_value
+            from concurrent.futures import ThreadPoolExecutor as _TPE, TimeoutError as _TO
+            from analyzer.llm_client import create_llm_client
+
+            backend = get_yaml_value("ai", "backend", default="template")
+            if backend != "template":
+                api_key = get_yaml_value("ai", "api_key", default="")
+                base_url = get_yaml_value("ai", "base_url", default="")
+                provider = get_yaml_value("ai", "provider", default="openai")
+
+                kwargs = {"api_key": api_key}
+                if backend == "openai":
+                    kwargs["provider"] = provider
+                    kwargs["base_url"] = base_url
+                elif backend == "ollama":
+                    kwargs["base_url"] = get_yaml_value("ai", "ollama_url",
+                                                         default="http://127.0.0.1:11434")
+
+                client = create_llm_client(backend, **kwargs)
+                if client.available:
+                    # 构造分析数据
+                    fr = data.focus_records or []
+                    dur = data.total_duration or 0.0
+                    avg = data.avg_focus or 50.0
+
+                    # 三段式专注趋势
+                    third = max(1, len(fr) // 3)
+                    seg_start = self._calc_avg_focus(fr[:third]) if len(fr) >= third else avg
+                    seg_mid = self._calc_avg_focus(fr[third:2*third]) if len(fr) >= 2*third else avg
+                    seg_end = self._calc_avg_focus(fr[-third:]) if len(fr) >= third else avg
+
+                    # 分心统计（近似）
+                    dist_count = len(getattr(data, 'distraction_records', None) or [])
+                    head_pct = 50 if dist_count > 0 else 0  # 近似值
+                    gaze_pct = 50 if dist_count > 0 else 0
+
+                    # 疲劳等级（带空值保护）
+                    fl = getattr(data, 'fatigue_level', None)
+                    if fl is None:
+                        fatigue_str = "LOW"
+                    else:
+                        fatigue_str = fl.name.upper() if hasattr(fl, 'name') else str(fl).upper()
+
+                    llm_data = {
+                        "duration": int(dur / 60),
+                        "avg_focus": avg,
+                        "baseline": 60,
+                        "seg_start": seg_start,
+                        "seg_mid": seg_mid,
+                        "seg_end": seg_end,
+                        "distractions": dist_count,
+                        "head_pct": head_pct,
+                        "gaze_pct": gaze_pct,
+                        "fatigue": fatigue_str,
+                        "pomo_count": 0,
+                        "streak": 0,
+                    }
+                    # 超时保护：LLM 调用最多等 15 秒
+                    with _TPE(max_workers=1) as _pool:
+                        _fut = _pool.submit(client.analyze, llm_data)
+                        result = _fut.result(timeout=15)
+                    if result and result.strip():
+                        logger.info("AI 分析: LLM 后端 (%s) 生成成功", client.name)
+                        return result.strip()
+                    logger.info("AI 分析: LLM 后端返回空结果，回退模板")
+
+        except ImportError:
+            pass  # 模块不存在 → 回退模板
+        except _TO:
+            logger.warning("AI 分析: LLM 调用超时 (15s)，回退模板")
+        except Exception:
+            logger.debug("AI 分析: LLM 异常，回退模板", exc_info=True)
+
+        # ── 内置模板（零依赖，始终可用）──
         import html as _html
         session = data.session
         fr = data.focus_records or []

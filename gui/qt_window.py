@@ -385,11 +385,11 @@ class EyeFocusWindow(QMainWindow):
             elif action == "settings":
                 from PyQt5.QtWidgets import QInputDialog
                 work, ok = QInputDialog.getInt(
-                    None, "设置番茄", "工作分钟数 (1-120):", value=pomo._work_minutes, min=1, max=120)
+                    self, "设置番茄", "工作分钟数 (1-120):", value=pomo._work_minutes, min=1, max=120)
                 if not ok:
                     return
                 rest, ok = QInputDialog.getInt(
-                    None, "设置番茄", "休息分钟数 (1-60):", value=pomo._break_minutes, min=1, max=60)
+                    self, "设置番茄", "休息分钟数 (1-60):", value=pomo._break_minutes, min=1, max=60)
                 if not ok:
                     return
                 pomo.set_duration(work, rest)

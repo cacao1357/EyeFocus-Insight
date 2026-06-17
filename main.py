@@ -40,6 +40,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, Callable
 
+# v4.24: 提前加载 llama_cpp DLL，避免后续与 PyQt5/mediapipe DLL 冲突
+try:
+    import llama_cpp  # noqa: F401
+except Exception:
+    pass
+
 import cv2
 import numpy as np
 
@@ -509,12 +515,13 @@ class EyeFocusApp:
         logger.debug("Qt 事件循环启动 (timer_active=%s)", self._qt_timer.isActive())
         exit_code = self._qt_app.exec_()
 
-        # 事件循环结束后清理
-        logger.info("Qt 事件循环结束 exit_code=%s", exit_code)
+        # 事件循环结束后清理（带诊断日志）
+        logger.info("Qt 事件循环结束 exit_code=%s — 开始清理", exit_code)
         self._running = False
-        self._qt_timer.stop()
-        self._camera_manager.release()
-        self._cleanup()
+        self._qt_timer.stop(); logger.debug("Step 1/4: 定时器已停")
+        self._camera_manager.release(); logger.debug("Step 2/4: 摄像头已释放")
+        self._cleanup(); logger.debug("Step 3/4: 资源清理完成")
+        logger.info("Step 4/4: _start_qt_monitoring 返回，进程将退出")
 
     def _load_last_calibration(self) -> None:
         """v4.13: 从数据库加载最近一次校准数据，避免每次启动提示未校准。"""
@@ -654,14 +661,21 @@ class EyeFocusApp:
 
             # 直接推送帧到窗口显示（绕过 FrameBuffer timer 时序依赖）
             if hasattr(self, '_qt_window') and self._qt_window is not None:
-                self._qt_window.show_frame(frame)
+                try:
+                    self._qt_window.show_frame(frame)
+                except RuntimeError:
+                    # 窗口已在 C++ 层销毁 → 跳过（竞态保护）
+                    return
 
             # 更新 Qt 窗口的数据面板（圆环 + 卡片）
             if hasattr(self, '_qt_window') and self._qt_window is not None:
                 # v4.17: 修复专注时长一直显示 "--" 的问题
                 elapsed_min = (time.time() - self._session_start_time) / 60.0 if self._session_start_time else 0.0
                 self._frame_processor.focus_duration_minutes = elapsed_min
-                self._qt_window.update_data_from_processor(self._frame_processor, self._fps)
+                try:
+                    self._qt_window.update_data_from_processor(self._frame_processor, self._fps)
+                except RuntimeError:
+                    return
 
             # FPS
             self._update_fps()
@@ -800,13 +814,23 @@ class EyeFocusApp:
             logger.debug("托盘图标移除异常 (忽略): %s", e)
 
     def _on_qt_exit(self) -> None:
-        """Qt 退出信号处理"""
-        logger.info("用户请求退出 (Qt)")
-        # 先移除托盘图标，避免残留在系统托盘中
+        """Qt 退出信号处理
+
+        停止顺序至关重要：先停定时器 → 再移除图标 → 最后 quit。
+        如果先 quit 再停定时器，窗口 closeEvent 完成 → 定时器回调
+        访问已销毁的 QWidget → C 层段错误（try/except 抓不住）。
+        """
+        logger.info("用户请求退出 (Qt) — 开始关闭顺序")
+        # 0) 必须最先停定时器，否则后续 frame 回调访问已销毁窗口
+        if hasattr(self, '_qt_timer') and self._qt_timer is not None:
+            self._qt_timer.stop()
+            logger.debug("Qt 定时器已停止")
+        # 1) 移除托盘图标，避免残留在系统托盘中
         if hasattr(self, '_qt_window') and self._qt_window is not None:
             if hasattr(self._qt_window, '_tray_icon') and self._qt_window._tray_icon is not None:
                 self._qt_window._tray_icon.hide()
                 logger.info("托盘图标已移除")
+        # 2) 退出事件循环
         self._qt_app.quit()
 
     def _handle_keyboard(self, key: int) -> None:
@@ -1510,45 +1534,102 @@ class EyeFocusApp:
 
 
 def _check_single_instance() -> bool:
-    """v4.16: 单实例锁 — PID + 时间戳双重验证。
+    """v4.25: 单实例锁 — 三重验证
 
-    锁文件格式: "PID TIMESTAMP"
-    1) PID 仍存活 → 拒绝
-    2) 锁文件超过 30 秒且 PID 已死 → 视为残留锁，覆盖
-    3) 任一检查失败 → 允许启动（不阻塞）
+    1. Named Mutex（内核级别，进程崩溃自动释放）
+    2. PID 文件（交叉验证进程 exe 名，防 PID 重用误判）
+    3. 兜底：任一验证失败 → 放行（不阻塞启动）
     """
-    import atexit
     import ctypes
-    import time as _time
-    tmp = os.environ.get('TEMP', os.path.expanduser('~'))
-    lock_file = os.path.join(tmp, 'eyefocus_instance.lock')
+    import os as _os
     try:
-        if os.path.exists(lock_file):
-            with open(lock_file, 'r') as f:
-                content = f.read().strip()
-            parts = content.split()
-            old_pid = int(parts[0]) if parts else None
-            old_ts = float(parts[1]) if len(parts) > 1 else 0
-            if old_pid:
-                alive = False
-                try:
-                    kernel32 = ctypes.windll.kernel32
-                    h = kernel32.OpenProcess(0x0400, False, old_pid)
-                    if h:
-                        kernel32.CloseHandle(h)
-                        alive = True
-                except Exception:
-                    pass
-                # v4.21: PID 存活即拒绝，时间戳仅用于 stale 锁清理
-                if alive:
-                    return False
-        # 写新锁
-        with open(lock_file, 'w') as f:
-            f.write(f"{os.getpid()} {_time.time()}")
-        atexit.register(lambda: os.path.exists(lock_file) and os.remove(lock_file))
+        kernel32 = ctypes.windll.kernel32
+        MUTEX_NAME = "Local\\EyeFocus-Insight-Instance"
+
+        # ── 1) Named Mutex ──
+        mutex = kernel32.CreateMutexW(None, False, MUTEX_NAME)
+        if not mutex:
+            return True  # 创建失败 → 放行
+        exists = kernel32.GetLastError() == 183  # ERROR_ALREADY_EXISTS
+
+        if not exists:
+            # 首次运行：写 PID 文件供交叉验证
+            _write_instance_pid()
+            return True
+
+        # ── 2) Mutex 已存在 → PID 交叉验证 ──
+        kernel32.CloseHandle(mutex)
+        if _verify_previous_instance():
+            return False  # 前一个实例确实还活着
+        # 3) 前一个实例已死（僵尸/崩溃）→ 覆盖
+        _write_instance_pid()
         return True
+
     except Exception:
-        return True
+        return True  # 兜底：放行
+
+
+def _instance_pid_path() -> str:
+    """PID 文件路径（系统临时目录）"""
+    import os
+    tmp = os.environ.get('TEMP', os.path.expanduser('~'))
+    return os.path.join(tmp, '.eyefocus_pid')
+
+
+def _write_instance_pid() -> None:
+    """写入当前 PID 到文件"""
+    import os
+    try:
+        pid_path = _instance_pid_path()
+        os.makedirs(os.path.dirname(pid_path), exist_ok=True)
+        with open(pid_path, 'w') as f:
+            f.write(str(os.getpid()))
+    except Exception:
+        pass
+
+
+def _verify_previous_instance() -> bool:
+    """验证前一个实例是否仍在运行
+
+    读取 PID 文件 → 检查进程是否存在 → 检查 exe 名是否匹配。
+    只有三者都匹配才视为"前一个实例还活着"。
+    """
+    import os
+    import ctypes
+    pid_path = _instance_pid_path()
+
+    if not os.path.exists(pid_path):
+        return False  # 无 PID 文件 → 旧实例已退出
+
+    try:
+        with open(pid_path, 'r') as f:
+            old_pid_str = f.read().strip()
+        old_pid = int(old_pid_str)
+    except (ValueError, OSError):
+        return False
+
+    if old_pid == os.getpid():
+        return True  # 同一进程（不应发生）
+
+    # 检查进程是否存在 — PROCESS_QUERY_LIMITED_INFORMATION
+    kernel32 = ctypes.windll.kernel32
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    h = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, old_pid)
+    if not h:
+        return False  # 进程已不存在
+
+    try:
+        # 检查 exe 路径是否包含 eyefocus
+        buf = ctypes.create_unicode_buffer(260)
+        size = ctypes.c_ulong(260)
+        if kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+            exe_path = buf.value[:size.value]
+            if 'eyefocus' in exe_path.lower() or 'EyeFocus' in exe_path:
+                return True  # 确实是前一个 EyeFocus 实例
+    finally:
+        kernel32.CloseHandle(h)
+
+    return False  # PID 被其他程序复用
 
 
 def main() -> None:
@@ -1592,6 +1673,9 @@ def main() -> None:
         logger.info("键盘中断")
     finally:
         app.shutdown()
+    # 强制退出进程（防止非 daemon 线程 / Qt 引用环阻塞退出）
+    logger.info("应用关闭完成，退出进程")
+    sys.exit(0)
 
 
 if __name__ == "__main__":

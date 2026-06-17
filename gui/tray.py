@@ -61,6 +61,25 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
     def _create_context_menu(self):
         """创建右键菜单"""
         menu = QMenu()
+        # 防止暗色系统主题导致菜单文字不可见
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #FFFFFF; color: #23201E;
+                border: 1px solid #D0D0D0; padding: 4px;
+            }
+            QMenu::item {
+                color: #23201E; padding: 6px 24px; font-size: 13px;
+            }
+            QMenu::item:selected {
+                background-color: #5B4A8C; color: #FFFFFF;
+            }
+            QMenu::item:disabled {
+                color: #BDBDBD;
+            }
+            QMenu::separator {
+                height: 1px; background: #E0E0E0; margin: 4px 8px;
+            }
+        """)
 
         # 状态标题（不可交互）
         self._status_action = menu.addAction("专注度: --")
@@ -436,11 +455,12 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         """设置番茄工作/休息时间"""
         try:
             from PyQt5.QtWidgets import QInputDialog
-            work, ok = QInputDialog.getInt(None, "设置番茄",
+            parent_widget = self._window if self._window is not None else None
+            work, ok = QInputDialog.getInt(parent_widget, "设置番茄",
                 "工作分钟数 (1-120):", value=25, min=1, max=120)
             if not ok:
                 return
-            rest, ok = QInputDialog.getInt(None, "设置番茄",
+            rest, ok = QInputDialog.getInt(parent_widget, "设置番茄",
                 "休息分钟数 (1-60):", value=5, min=1, max=60)
             if not ok:
                 return
@@ -481,9 +501,15 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
 
     def _show_settings(self):
         """打开设置对话框"""
-        from gui.settings_dialog import SettingsDialog
-        dlg = SettingsDialog(self._window)
-        dlg.exec_()
+        try:
+            from gui.settings_dialog import SettingsDialog
+            dlg = SettingsDialog(self._window)
+            dlg.exec_()
+        except Exception as e:
+            logger.error("设置对话框异常: %s", e)
+            import traceback
+            traceback.print_exc()
+            return
         # 保存后刷新语音开关状态
         try:
             from config import get_yaml_value
@@ -562,15 +588,22 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             self.showMessage("API 测试", f"❌ 测试失败: {e}", QSystemTrayIcon.Critical, 3000)
 
     def _switch_ai_backend(self, backend: str):
-        """切换 AI 分析后端"""
-        from config import set_yaml_value, save_yaml_config
-        set_yaml_value("ai", "backend", value=backend)
-        save_yaml_config()
-        # 更新子菜单勾选状态
-        for a in self._ai_backends.actions():
-            a.setChecked(a.data() == backend)
-        logger.info("AI 后端已切换: %s", backend)
-        self.showMessage("AI 分析", f"已切换至 {backend}", QSystemTrayIcon.Information, 2000)
+        """切换 AI 分析后端（blockSignals 防止 setChecked 信号重入）"""
+        try:
+            from config import set_yaml_value, save_yaml_config
+            set_yaml_value("ai", "backend", value=backend)
+            save_yaml_config()
+            # blockSignals 防止 setChecked 触发 toggled 信号导致重入
+            for a in self._ai_backends.actions():
+                a.blockSignals(True)
+                a.setChecked(a.data() == backend)
+                a.blockSignals(False)
+            logger.info("AI 后端已切换: %s", backend)
+            self.showMessage("AI 分析", f"已切换至 {backend}", QSystemTrayIcon.Information, 2000)
+        except Exception as e:
+            logger.error("AI 后端切换异常: %s", e)
+            import traceback
+            traceback.print_exc()
 
     def _exit_app(self):
         """完全退出程序"""

@@ -73,7 +73,18 @@ class SettingsDialog(QDialog):
                 border: 1px solid #D0D0D0; border-radius: 4px;
                 padding: 4px 8px;
             }
+            QComboBox QAbstractItemView {
+                background: #FFFFFF; color: #23201E;
+                selection-background-color: #5B4A8C;
+                selection-color: #FFFFFF;
+                border: 1px solid #D0D0D0;
+            }
             QSpinBox {
+                background: #FFFFFF; color: #23201E;
+                border: 1px solid #D0D0D0; border-radius: 4px;
+                padding: 4px 8px;
+            }
+            QLineEdit {
                 background: #FFFFFF; color: #23201E;
                 border: 1px solid #D0D0D0; border-radius: 4px;
                 padding: 4px 8px;
@@ -166,7 +177,33 @@ class SettingsDialog(QDialog):
         self._ai_api_key = QLineEdit()
         self._ai_api_key.setPlaceholderText("API Key...")
         self._ai_api_key.setEchoMode(QLineEdit.Password)
-        ai_layout.addRow("API Key：", self._ai_api_key)
+        # 密码可见性切换
+        from PyQt5.QtWidgets import QPushButton as _QPB
+        self._api_key_toggle_btn = _QPB("👁")
+        self._api_key_toggle_btn.setFixedWidth(32)
+        self._api_key_toggle_btn.setToolTip("显示/隐藏 API Key")
+        self._api_key_toggle_btn.setCheckable(True)
+        self._api_key_toggle_btn.setStyleSheet("""
+            QPushButton {
+                background: #F0F0F0; color: #666;
+                border: 1px solid #D0D0D0; border-radius: 4px;
+                padding: 4px 2px; font-size: 14px;
+            }
+            QPushButton:checked {
+                background: #E0E0E0; color: #333;
+            }
+            QPushButton:hover {
+                background: #E5E5E5;
+            }
+        """)
+        self._api_key_toggle_btn.clicked.connect(self._toggle_api_key_visibility)
+        api_key_row = QWidget()
+        api_key_row_layout = QHBoxLayout(api_key_row)
+        api_key_row_layout.setContentsMargins(0, 0, 0, 0)
+        api_key_row_layout.setSpacing(4)
+        api_key_row_layout.addWidget(self._ai_api_key)
+        api_key_row_layout.addWidget(self._api_key_toggle_btn)
+        ai_layout.addRow("API Key：", api_key_row)
 
         self._ai_base_url = QLineEdit("https://api.openai.com/v1")
         self._ai_base_url.setPlaceholderText("自定义 API 地址")
@@ -256,6 +293,15 @@ class SettingsDialog(QDialog):
                 w = self._ai_url_row.itemAt(i)
                 if w and w.widget():
                     w.widget().setVisible(is_openai)
+
+    def _toggle_api_key_visibility(self) -> None:
+        """切换 API Key 可见性"""
+        if self._ai_api_key.echoMode() == QLineEdit.Password:
+            self._ai_api_key.setEchoMode(QLineEdit.Normal)
+            self._api_key_toggle_btn.setText("🙈")
+        else:
+            self._ai_api_key.setEchoMode(QLineEdit.Password)
+            self._api_key_toggle_btn.setText("👁")
 
     def _on_save(self) -> None:
         """保存设置并关闭"""

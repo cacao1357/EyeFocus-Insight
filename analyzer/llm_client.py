@@ -314,8 +314,9 @@ class OllamaClient(LLMClient):
 
 # ── llama-cpp-python 本地版 ──
 
+
 class LocalClient(LLMClient):
-    """llama-cpp-python 本地推理（模型文件需提前下载）"""
+    """llama-cpp-python 本地推理（模型需提前通过 scripts/download_model.py 下载）"""
 
     def __init__(self, model_path: Optional[str] = None):
         self._model_path = model_path or self._default_path()
@@ -325,7 +326,7 @@ class LocalClient(LLMClient):
     def _default_path() -> str:
         import os
         return os.path.join(os.path.dirname(__file__), "..", "models",
-                            "qwen2.5-1.5b-q4_k_m.gguf")
+                            "qwen2.5-1.5b-instruct-q4_k_m.gguf")
 
     @property
     def name(self) -> str:
@@ -342,25 +343,52 @@ class LocalClient(LLMClient):
         except ImportError:
             return False
 
-    def analyze(self, data: Dict[str, Any]) -> str:
+    def _load_model(self) -> bool:
+        """加载 Llama 模型（CPU 模式 — 当前为 CPU-only 构建）
+
+        模型文件需提前下载，请运行:
+            python scripts/download_model.py
+        """
+        import os
+        if not os.path.exists(self._model_path):
+            logger.error("模型文件不存在: %s", self._model_path)
+            logger.info("请先运行 python scripts/download_model.py 下载模型文件")
+            return False
         from llama_cpp import Llama
 
-        if self._llm is None:
+        try:
             self._llm = Llama(
                 model_path=self._model_path,
                 n_ctx=2048,
-                n_threads=4,
+                n_threads=16,
+                n_gpu_layers=0,
                 verbose=False,
             )
+            logger.info("本地模型已加载（CPU 模式）")
+            return True
+        except Exception as e:
+            logger.error("模型加载失败: %s", e)
+            return False
+
+    def analyze(self, data: Dict[str, Any]) -> str:
+        if self._llm is None:
+            if not self._load_model():
+                return "（本地模型加载失败，请检查模型文件或切换到其他后端）"
 
         user_msg = ANALYSIS_USER_TEMPLATE.format(**data)
-        prompt = f"System: {ANALYSIS_SYSTEM_PROMPT}\n\nUser: {user_msg}\n\nAssistant:"
+
+        # Qwen2.5-Instruct 使用 ChatML 格式
+        prompt = (
+            f"<|im_start|>system\n{ANALYSIS_SYSTEM_PROMPT}<|im_end|>\n"
+            f"<|im_start|>user\n{user_msg}<|im_end|>\n"
+            f"<|im_start|>assistant\n"
+        )
 
         resp = self._llm(
             prompt,
             max_tokens=300,
             temperature=0.7,
-            stop=["User:", "\n\n"],
+            stop=["<|im_end|>", "<|im_start|>"],
         )
         return resp["choices"][0]["text"].strip()
 

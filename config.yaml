@@ -1,45 +1,48 @@
-# EyeFocus Insight 配置文件
-# YAML 格式配置文件
-
+ai:
+  backend: local
+baseline:
+  collection_duration: 7.0
+  cqs_threshold: 0.6
+  min_valid_frames: 30
+  trim_ratio: 0.1
+benchmark:
+  fps_window_size: 30
+  min_duration: 120.0
 camera:
   index: 0
   min_fps: 25.0
-
-face_mesh:
-  model_filename: face_landmarker.task
-  num_faces: 1
-  min_detection_confidence: 0.5
-  min_presence_confidence: 0.5
-  min_tracking_confidence: 0.5
-
-head_pose:
-  yaw_thresh: 10.0
-  pitch_thresh: 20.0
-  frontal_yaw_std_thresh: 3.0
-  frontal_pitch_std_thresh: 3.0
-
-eye:
-  left_indices: [33, 160, 158, 133, 153, 144]
-  right_indices: [362, 385, 387, 263, 380, 373]
-  ear_min: 0.08
-
-baseline:
-  collection_duration: 7.0
-  trim_ratio: 0.10
-  min_valid_frames: 30
-  cqs_threshold: 0.60
-
-benchmark:
-  min_duration: 120.0
-  fps_window_size: 30
-
 data:
   db_path: data/eyefocus.db
   export_dir: data/exports
-
+eye:
+  ear_min: 0.08
+  left_indices:
+  - 33
+  - 160
+  - 158
+  - 133
+  - 153
+  - 144
+  right_indices:
+  - 362
+  - 385
+  - 387
+  - 263
+  - 380
+  - 373
+face_mesh:
+  min_detection_confidence: 0.5
+  min_presence_confidence: 0.5
+  min_tracking_confidence: 0.5
+  model_filename: face_landmarker.task
+  num_faces: 1
+head_pose:
+  frontal_pitch_std_thresh: 3.0
+  frontal_yaw_std_thresh: 3.0
+  pitch_thresh: 20.0
+  yaw_thresh: 10.0
+logging:
+  format: '[%(levelname)s] %(name)s: %(message)s'
+  level: INFO
 voice:
   enabled: true
-
-logging:
-  level: INFO
-  format: "[%(levelname)s] %(name)s: %(message)s"

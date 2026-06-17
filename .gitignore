@@ -45,6 +45,7 @@ tmp_*/
 *.tmp
 /test_*_temp.py
 /test_*_flow.py
+/test_ai.py
 
 # ── 覆盖率 ──
 .coverage
@@ -65,6 +66,19 @@ spike/results/**/*.png
 
 # ── brainstorm ──
 .superpowers/
+
+# ── 本地模型文件（手动下载，不入仓）──
+/models/
+scripts/models/
+# 模型二进制文件（防止误提交）
+*.gguf
+*.bin
+*.ggml
+
+# ── 历史归档文档（不纳入工作树）──
+docs/archive/
+docs/old_schemes/
+docs/superpowers/
 
 # ── 跨平台行尾符锁定 ──
 .gitattributes tracked in repo
