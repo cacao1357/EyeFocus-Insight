@@ -511,8 +511,7 @@ class ChartGenerator:
             zmax=max(1, max_min),
             showscale=True,
             colorbar=dict(
-                title="分钟",
-                titleside="right",
+                title=dict(text="分钟", side="right"),
                 thickness=10,
                 len=0.6,
                 tickfont=dict(size=9, color=C_QUIET),

@@ -252,6 +252,8 @@ class EyeFocusApp:
 
             # v4.22: Web 仪表盘（后台线程，不阻塞主程序）
             self._web_dashboard = WebDashboard(port=8080)
+            if self._db is not None:
+                self._web_dashboard.set_db(self._db)
             self._web_dashboard.start()
             logger.info("Web 仪表盘: http://127.0.0.1:8080")
 
@@ -1178,17 +1180,8 @@ class EyeFocusApp:
     # ── v4.17: 提醒引擎托盘回调 ──
 
     def _reminder_tray_notify(self, title: str, message: str) -> None:
-        """提醒引擎的托盘通知回调（延迟绑定，运行时再取托盘引用）"""
-        try:
-            if hasattr(self, '_qt_window') and self._qt_window is not None:
-                if hasattr(self._qt_window, '_tray_icon') and self._qt_window._tray_icon is not None:
-                    self._qt_window._tray_icon.showMessage(
-                        title, message,
-                        self._qt_window._tray_icon.Information,
-                        5000,
-                    )
-        except Exception:
-            pass
+        """v4.22: 提醒引擎通知已移除（正常操作不弹窗），仅保留日志"""
+        logger.debug("提醒引擎: [%s] %s", title, message)
 
     # ── v4.18: 周报 ──
 

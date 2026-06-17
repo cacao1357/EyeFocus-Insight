@@ -160,7 +160,7 @@ class GamificationEngine:
     def _check_achievements(self, session: Session, avg_focus: float,
                             duration_min: float) -> List[Achievement]:
         """检查成就解锁条件"""
-        today = self._today
+        today = self._today_str()
         unlocked = []
 
         # 首次会话

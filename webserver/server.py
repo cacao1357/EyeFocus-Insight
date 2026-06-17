@@ -39,6 +39,11 @@ class WebDashboard:
         self._latest_data: Dict[str, Any] = {"status": "initializing"}
         self._history: list = []  # 最近 120 个数据点
         self._running: bool = False
+        self._db: Any = None  # 数据库引用，供历史查询用
+
+    def set_db(self, db: Any) -> None:
+        """设置数据库引用（用于历史会话查询）"""
+        self._db = db
 
     # ── 公共 API ──
 
@@ -109,6 +114,8 @@ class WebDashboard:
         self._app.router.add_get("/", self._handle_index)
         self._app.router.add_get("/ws", self._handle_websocket)
         self._app.router.add_get("/data", self._handle_data)
+        self._app.router.add_get("/api/sessions", self._handle_api_sessions)
+        self._app.router.add_get("/api/session/{sid}", self._handle_api_session_detail)
         self._app.router.add_static(
             "/static",
             os.path.join(os.path.dirname(__file__), "static"),
@@ -146,6 +153,65 @@ class WebDashboard:
             "current": self._latest_data,
             "history": self._history[-60:],
         })
+
+    async def _handle_api_sessions(self, request):
+        """REST: 获取历史会话列表"""
+        if not self._db:
+            return aiohttp.web.json_response({"sessions": [], "error": "数据库未就绪"})
+        try:
+            sessions = self._db.list_sessions()[:50]  # 最近 50 条
+            result = []
+            for s in sessions:
+                result.append({
+                    "id": s.session_id,
+                    "start": s.start_time.isoformat() if s.start_time else None,
+                    "end": s.end_time.isoformat() if s.end_time else None,
+                    "duration": s.duration_seconds() if s.end_time else None,
+                    "is_active": s.is_active,
+                    "is_calibrated": s.is_calibrated,
+                    "baseline_ear": s.baseline_ear,
+                })
+            return aiohttp.web.json_response({"sessions": result})
+        except Exception as e:
+            logger.warning("获取会话列表失败: %s", e)
+            return aiohttp.web.json_response({"sessions": [], "error": str(e)})
+
+    async def _handle_api_session_detail(self, request):
+        """REST: 获取指定会话的详细数据"""
+        sid = request.match_info.get("sid", "")
+        if not self._db or not sid:
+            return aiohttp.web.json_response({"error": "参数不足"}, status=400)
+        try:
+            session = self._db.get_session(sid)
+            if not session:
+                return aiohttp.web.json_response({"error": "会话不存在"}, status=404)
+
+            focus_records = self._db.get_focus_records(sid)
+            fatigue_records = self._db.get_fatigue_records(sid)
+
+            return aiohttp.web.json_response({
+                "session": {
+                    "id": session.session_id,
+                    "start": session.start_time.isoformat() if session.start_time else None,
+                    "end": session.end_time.isoformat() if session.end_time else None,
+                    "duration": session.duration_seconds() if session.end_time else None,
+                    "is_active": session.is_active,
+                    "avg_focus": session.avg_focus,
+                    "fatigue_level": session.fatigue_level,
+                },
+                "focus_records": [
+                    {"t": r.window_start, "score": r.focus_score,
+                     "eye": r.eye_score, "head": r.head_score}
+                    for r in (focus_records or [])
+                ],
+                "fatigue_records": [
+                    {"t": r.timestamp, "level": r.fatigue_level, "blink_rate": r.blink_rate}
+                    for r in (fatigue_records or [])
+                ],
+            })
+        except Exception as e:
+            logger.warning("获取会话详情失败: %s", e)
+            return aiohttp.web.json_response({"error": str(e)}, status=500)
 
     async def _handle_websocket(self, request):
         """WebSocket 端点 — 实时推送"""

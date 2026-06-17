@@ -44,8 +44,7 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         # 左键双击事件
         self.activated.connect(self._on_activated)
 
-        # 启动后 2s 显示启动通知
-        QTimer.singleShot(2000, self._show_startup_notification)
+        # v4.22: 移除启动通知（正常操作不弹窗）
 
     def _create_icon(self, color_hex: str) -> QIcon:
         """程序化生成 16x16 圆形图标"""
@@ -203,25 +202,14 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         return self._do_not_disturb
 
     def show_fatigue_notification(self, message: str = "检测到疲劳，建议休息"):
-        """显示疲劳提醒气泡（3s 自动消失）"""
-        if not self._do_not_disturb:
-            self.showMessage(
-                "EyeFocus Insight - 疲劳提醒",
-                message,
-                QSystemTrayIcon.Information,
-                3000,
-            )
+        """v4.22: 疲劳提醒已移除（正常操作不弹窗）"""
+        pass
 
     # ── 内部方法 ──
 
     def _show_startup_notification(self):
-        """启动通知（2s 自动消失）"""
-        self.showMessage(
-            "EyeFocus Insight",
-            "程序已启动，正在后台监测您的专注状态",
-            QSystemTrayIcon.Information,
-            2000,
-        )
+        """v4.22: 启动通知已移除（正常操作不弹窗）"""
+        pass
 
     def _on_activated(self, reason):
         """处理托盘图标激活事件"""
@@ -256,11 +244,7 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             logger.warning("无法生成报告: _app 无 generate_report_snapshot")
             return
 
-        self.showMessage(
-            "EyeFocus Insight", "报告生成中（首次生成可能较慢）...",
-            QSystemTrayIcon.Information, 3000,
-        )
-
+        # v4.22: 移除"报告生成中"进度通知（正常操作不弹窗）
         report_path = self._app.generate_report_snapshot()
         if report_path and os.path.exists(report_path):
             try:
@@ -386,12 +370,7 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             import os
             out_dir = os.path.abspath("reports/exports")
             self._app._db.export_csv(sid, out_dir)
-            self.showMessage(
-                "EyeFocus Insight - 导出完成",
-                f"数据已导出到 reports/exports/",
-                QSystemTrayIcon.Information,
-                3000,
-            )
+            # v4.22: 移除导出成功通知（正常操作不弹窗）
             logger.info("CSV 导出完成: %s", out_dir)
         except Exception as e:
             logger.warning("导出数据失败: %s", e)

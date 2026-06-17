@@ -339,7 +339,13 @@ class EyeFocusWindow(QMainWindow):
         if pomo is None:
             return
 
-        menu = QMenu(self)
+        menu = QMenu()
+        # 菜单样式：防止继承父窗口黑背景
+        menu.setStyleSheet(
+            "QMenu { background-color: #FFFFFF; border: 1px solid #D0D0D0; border-radius: 6px; padding: 4px; }"
+            "QMenu::item { color: #23201E; padding: 8px 28px; font-size: 13px; }"
+            "QMenu::item:selected { background-color: #5B4A8C; color: #FFFFFF; border-radius: 4px; }"
+        )
         state = pomo.state
 
         if state == "IDLE":
