@@ -172,6 +172,34 @@ class TestChartGenerator:
         assert isinstance(result, str)
         assert '无数据' in result
 
+    def test_v426_charts_xaxis_not_rotated(
+        self, chart_generator, sample_focus_records, sample_fatigue_records,
+    ):
+        """v4.26: 时间序列图表 x 轴文字不应旋转（修复"侧倒"bug）
+
+        Plotly 默认 tickangle='auto' 在标签多时会自动 -45° 旋转以防重叠。
+        但腕表美学要求水平显示 —— 强制 tickangle=0 + nticks=6 限制数量。
+        """
+        # 至少 3 个时间序列图都应含 tickangle=0
+        trend = chart_generator.generate_focus_trend_chart(sample_focus_records)
+        blink = chart_generator.generate_blink_rate_chart(sample_focus_records)
+        fatigue = chart_generator.generate_fatigue_timeline(sample_fatigue_records)
+        # Plotly 序列化 tickangle 时输出 "tickangle":0
+        for name, html in [
+            ("focus_trend", trend),
+            ("blink_rate", blink),
+            ("fatigue_timeline", fatigue),
+        ]:
+            assert '"tickangle":0' in html, \
+                f"{name} 应强制 tickangle=0 防止文字侧倒"
+
+    def test_v426_charts_xticks_limited(self, chart_generator, sample_focus_records):
+        """v4.26: x 轴 tick 数量应被 nticks=6 限制，避免标签拥挤"""
+        trend = chart_generator.generate_focus_trend_chart(sample_focus_records)
+        # Plotly 序列化 nticks 时输出 "nticks":6
+        assert '"nticks":6' in trend, \
+            "focus_trend 应限制 x 轴最多 6 个标签"
+
     def test_generate_blink_rate_chart(self, chart_generator, sample_focus_records):
         """v4.16: 测试 Plotly 眨眼频率图生成"""
         result = chart_generator.generate_blink_rate_chart(sample_focus_records)

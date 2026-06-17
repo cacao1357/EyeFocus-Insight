@@ -28,11 +28,13 @@ C_LINE  = "#E6E2DC"
 C_BG    = "#FEFDFB"
 
 # Plotly 布局模板
+# v4.26 修复: x 轴 tickangle=0 + nticks=6，强制水平显示时间标签
+# (Plotly 默认 -45° 自动旋转以防重叠，但 "侧倒" 不符合腕表仪表美学)
 _LAYOUT_BASE = dict(
     paper_bgcolor=C_BG,
     plot_bgcolor=C_BG,
     font=dict(family="Microsoft YaHei, SimHei, sans-serif", size=11, color=C_INK),
-    margin=dict(l=40, r=20, t=30, b=40),
+    margin=dict(l=40, r=20, t=30, b=48),
     hovermode="x unified",
     hoverlabel=dict(bgcolor="white", font_size=12, font_family="Microsoft YaHei, SimHei, sans-serif"),
     legend=dict(
@@ -43,6 +45,10 @@ _LAYOUT_BASE = dict(
         showgrid=False, zeroline=False,
         tickfont=dict(size=10, color=C_QUIET),
         linecolor=C_LINE,
+        tickangle=0,        # v4.26: 强制水平，不旋转
+        nticks=6,           # v4.26: 限制 x 轴标签最多 6 个，避免拥挤
+        automargin=True,    # v4.26: Plotly 自动调整 margin 防裁切
+        title_standoff=12,  # v4.26: 标题与轴距离，避免压字
     ),
     yaxis=dict(
         showgrid=False, zeroline=False,
@@ -453,7 +459,7 @@ class ChartGenerator:
         fig.update_layout(
             title=dict(text=title_text, font_size=11, x=0),
             height=120, margin=dict(l=10, r=10, t=30, b=40),
-            xaxis=dict(showgrid=False, tickfont_size=9, nticks=10),
+            xaxis=dict(showgrid=False, tickfont_size=9, nticks=10, tickangle=0),
             yaxis=dict(showgrid=False, showticklabels=False),
             showlegend=False,
         )
@@ -570,6 +576,7 @@ class ChartGenerator:
                 ticktext=date_labels,
                 tickfont=dict(size=9, color=C_QUIET),
                 side="top",
+                tickangle=0,  # v4.26: 月份标签水平显示，不旋转
             ),
             yaxis=dict(
                 showgrid=False, zeroline=False,
