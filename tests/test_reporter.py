@@ -5,6 +5,7 @@ tests/test_reporter.py — reporter 模块测试
 - 图表生成
 - 建议引擎
 - HTML 报告生成
+- v4.26: 字体加载器 + Hero 刻度盘 + 设计 token
 """
 
 import sys
@@ -30,6 +31,7 @@ from storage.models import (
 from reporter.charts import ChartGenerator, create_chart_generator
 from reporter.insights import InsightsEngine, Insight, create_insights_engine
 from reporter.report_html import HTMLReportGenerator, ReportData, create_html_generator
+from reporter import font_loader
 
 
 # ============ Fixtures ============
@@ -670,6 +672,280 @@ class TestHTMLReportGenerator:
         # 实际渲染的 div 标签 — 不是 CSS 规则
         assert '<div class="chart-error">' not in html, \
             "图表正常生成时不应渲染 chart-error div"
+
+    # ===== v4.26: 设计 token + Hero 刻度盘 + 字体加载器 =====
+
+    def test_v426_css_contains_new_tokens(self):
+        """v4.26: CSS_STYLE 包含新设计 token（Quiet Focus v2）"""
+        css = HTMLReportGenerator.CSS_STYLE
+        # 多级墨色
+        assert "--ink-900" in css
+        assert "--ink-700" in css
+        assert "--ink-400" in css
+        # 多级石色
+        assert "--stone-50" in css
+        assert "--stone-100" in css
+        assert "--stone-200" in css
+        assert "--stone-300" in css
+        # 语义色
+        assert "--iris-600" in css
+        assert "--sage-600" in css
+        assert "--amber-600" in css
+        assert "--rose-600" in css
+        # 仪表渐变
+        assert "--gauge-low" in css
+        assert "--gauge-mid" in css
+        assert "--gauge-high" in css
+        # 排版尺度
+        assert "--text-hero" in css
+        assert "--text-h1" in css
+        assert "--text-body" in css
+        # 字体回退
+        assert "--font-display" in css
+        assert "--font-body" in css
+        assert "--font-mono" in css
+        # Fraunces/Inter/JetBrains Mono 必须在字体回退链
+        assert "Fraunces" in css
+        assert "Inter" in css
+        assert "JetBrains Mono" in css
+
+    def test_v426_body_has_dot_grid(self):
+        """v4.26: body 背景含 0.5px 灰色点阵（仪表底盘纹理）"""
+        css = HTMLReportGenerator.CSS_STYLE
+        assert "radial-gradient(circle," in css, "body 应有 radial-gradient 点阵"
+        assert "0.5px" in css, "点阵应为 0.5px 直径"
+        assert "var(--stone-300)" in css, "点阵色应为 --stone-300"
+
+    def test_v426_old_focus_hero_removed(self):
+        """v4.26: 旧 .focus-hero / .hero-ring / .hero-value 应不再出现在 _render_overview_tab 输出
+
+        Step A 仅替换 Hero 区，CSS 中的旧类保留（向后兼容），
+        但实际渲染时不应再使用 focus-hero div。
+        """
+        html_gen = HTMLReportGenerator(db_manager=None)
+        session = Session(
+            session_id="t", start_time=datetime.now() - timedelta(minutes=10),
+            end_time=datetime.now(), is_calibrated=True,
+            glasses_mode=GlassesMode.WITHOUT_GLASSES,
+        )
+        fr = [FocusRecord(
+            session_id="t", window_start=i*60.0, window_end=(i+1)*60.0,
+            focus_score=70.0, eye_score=70.0, head_score=70.0, gaze_score=70.0,
+            blink_rate=15.0, avg_ear=0.25, avg_yaw=0.0, avg_pitch=0.0,
+        ) for i in range(5)]
+        html = html_gen.generate_report_from_data(
+            session=session, focus_records=fr, fatigue_records=[], blink_records=[],
+        )
+        # 新 gauge 应出现
+        assert 'class="gauge-hero"' in html, "应渲染 .gauge-hero"
+        # 旧 focus-hero div 应不出现（CSS 规则本身可能仍保留）
+        assert '<div class="focus-hero">' not in html, \
+            "旧的 .focus-hero div 应已被替换"
+
+    def test_v426_gauge_hero_renders_svg(self, html_generator):
+        """v4.26: _render_hero_gauge 返回有效 SVG 包含所有视觉元素"""
+        from reporter.report_html import ReportData
+        session = Session(
+            session_id="abc12345",
+            start_time=datetime.now() - timedelta(minutes=30),
+            end_time=datetime.now(),
+            glasses_mode=GlassesMode.WITHOUT_GLASSES,
+            is_calibrated=True,
+        )
+        fr = [FocusRecord(
+            session_id="abc12345", window_start=i*60.0, window_end=(i+1)*60.0,
+            focus_score=70.0 + (i%3), eye_score=70.0, head_score=70.0, gaze_score=70.0,
+            blink_rate=15.0, avg_ear=0.25, avg_yaw=0.0, avg_pitch=0.0,
+        ) for i in range(20)]
+        data = ReportData(
+            session=session, focus_records=fr, fatigue_records=[],
+            blink_records=[], frame_records=[],
+            avg_focus=70.0, avg_blink_rate=15.0,
+            total_duration=1200.0, fatigue_level=FatigueLevel.LOW,
+        )
+        stats = {"avg_focus": 70.0, "focus_change": 3.0, "hist_avg_focus": 67.0}
+        out = html_generator._render_hero_gauge(data, stats)
+
+        # 基本结构
+        assert '<svg class="gauge-svg"' in out
+        assert 'viewBox="0 0 240 240"' in out
+        assert 'gauge-gradient' in out  # 渐变定义
+        assert 'class="gauge-track"' in out  # 背景轨道
+        assert 'class="gauge-arc"' in out  # 填充弧
+        assert 'class="gauge-center-num"' in out  # 中心数字
+        assert 'class="gauge-time-row"' in out  # 时间刻度行
+        # 60 刻度（12 主刻度 + 48 普通）
+        # 用 'class="gauge-tick' 作子串：major 和 minor 都以这个前缀开头
+        assert out.count('class="gauge-tick major"') == 12
+        assert out.count('class="gauge-tick') == 60
+        # 数据属性（JS 动画用）
+        assert 'data-focus="70"' in out
+        assert 'data-fill="' in out
+        # 旋转 135° 把 270° 弧的缺口放到 12 点钟
+        assert 'rotate(135' in out
+        # 历史对比箭头
+        assert 'gauge-compare' in out
+        assert '↑' in out  # 上升箭头
+
+    def test_v426_gauge_clamps_out_of_range(self, html_generator):
+        """v4.26: avg_focus 越界（<0 或 >100）应被 clamp"""
+        from reporter.report_html import ReportData
+        session = Session(
+            session_id="t", start_time=datetime.now(), end_time=datetime.now(),
+        )
+        data = ReportData(
+            session=session, focus_records=[], fatigue_records=[],
+            blink_records=[], frame_records=[],
+            avg_focus=150.0, avg_blink_rate=0.0,
+            total_duration=0.0, fatigue_level=FatigueLevel.LOW,
+        )
+        stats = {"avg_focus": 150.0, "focus_change": None, "hist_avg_focus": None}
+        out = html_generator._render_hero_gauge(data, stats)
+        # 应被 clamp 到 100
+        assert 'data-focus="100"' in out
+
+    def test_v426_gauge_handles_empty_focus_records(self, html_generator):
+        """v4.26: focus_records 为空时不崩，应输出 0 仪表"""
+        from reporter.report_html import ReportData
+        session = Session(
+            session_id="t", start_time=datetime.now(), end_time=datetime.now(),
+        )
+        data = ReportData(
+            session=session, focus_records=[], fatigue_records=[],
+            blink_records=[], frame_records=[],
+            avg_focus=0.0, avg_blink_rate=0.0,
+            total_duration=0.0, fatigue_level=FatigueLevel.LOW,
+        )
+        stats = {"avg_focus": 0.0, "focus_change": None, "hist_avg_focus": None}
+        out = html_generator._render_hero_gauge(data, stats)
+        assert 'data-focus="0"' in out
+        # data-fill 也应是 0（无填充）
+        assert 'data-fill="0.00"' in out
+        # 峰值时刻空时，中间用时长替代
+        assert 'gauge-time-row' in out
+
+    def test_v426_gauge_compare_decline(self, html_generator):
+        """v4.26: 下降时 gauge-compare 应有 .down 类 + ↓ 箭头"""
+        from reporter.report_html import ReportData
+        session = Session(
+            session_id="t", start_time=datetime.now(), end_time=datetime.now(),
+        )
+        data = ReportData(
+            session=session, focus_records=[], fatigue_records=[],
+            blink_records=[], frame_records=[],
+            avg_focus=60.0, avg_blink_rate=0.0,
+            total_duration=0.0, fatigue_level=FatigueLevel.LOW,
+        )
+        stats = {"avg_focus": 60.0, "focus_change": -5.0, "hist_avg_focus": 65.0}
+        out = html_generator._render_hero_gauge(data, stats)
+        assert 'gauge-compare down' in out
+        assert '↓' in out
+        assert '5.0' in out  # 变化量绝对值
+
+    def test_v426_stat_row_replaces_stats_grid(self, html_generator):
+        """v4.26: 4 关键指标卡应使用新 .stat-row 而非旧 .stats-grid"""
+        session = Session(
+            session_id="t", start_time=datetime.now() - timedelta(minutes=30),
+            end_time=datetime.now(), glasses_mode=GlassesMode.WITHOUT_GLASSES,
+            is_calibrated=True,
+        )
+        fr = [FocusRecord(
+            session_id="t", window_start=i*60.0, window_end=(i+1)*60.0,
+            focus_score=70.0, eye_score=70.0, head_score=70.0, gaze_score=70.0,
+            blink_rate=15.0, avg_ear=0.25, avg_yaw=0.0, avg_pitch=0.0,
+        ) for i in range(10)]
+        html = html_generator.generate_report_from_data(
+            session=session, focus_records=fr, fatigue_records=[], blink_records=[],
+        )
+        assert 'class="stat-row"' in html, "应使用新 .stat-row 横排"
+        assert 'class="stat-cell"' in html, "单元格应为 .stat-cell"
+        # 旧 .stats-grid 不应再被使用
+        assert '<div class="stats-grid">' not in html, "旧 .stats-grid 应被替换"
+
+    def test_v426_gauge_animation_js_present(self, html_generator):
+        """v4.26: JS_SCRIPT 应包含 animateGauges 函数"""
+        assert "function animateGauges" in HTMLReportGenerator.JS_SCRIPT
+        # count-up
+        assert "requestAnimationFrame" in HTMLReportGenerator.JS_SCRIPT
+        # 减动效尊重
+        assert "prefers-reduced-motion" in HTMLReportGenerator.JS_SCRIPT
+        # stroke-dasharray 动画
+        assert "strokeDasharray" in HTMLReportGenerator.JS_SCRIPT or \
+               "stroke-dasharray" in HTMLReportGenerator.JS_SCRIPT
+
+    def test_font_loader_force_offline(self):
+        """font_loader: force_offline() 钩子应能强制覆盖探测结果"""
+        font_loader.force_offline(True)   # 强制离线
+        try:
+            assert font_loader.is_online() is False
+            assert font_loader.get_link_tag() == "", \
+                "强制离线时不应返回 <link>"
+        finally:
+            font_loader.force_offline(None)  # 还原
+
+        font_loader.force_offline(False)  # 强制在线
+        try:
+            assert font_loader.is_online() is True
+            link = font_loader.get_link_tag()
+            assert "<link" in link, "强制在线时应返回 <link> 标签"
+            assert "fonts.googleapis.com" in link
+            assert "Fraunces" in link
+            assert "Inter" in link
+            assert "JetBrains+Mono" in link or "JetBrains Mono" in link
+        finally:
+            font_loader.force_offline(None)  # 还原
+
+    def test_font_loader_get_link_tag_no_io_when_forced(self):
+        """font_loader: 强制模式下不应触发真实网络探测
+
+        性能 + 稳定性：避免在 CI/测试时因网络阻塞导致报告生成卡死。
+        """
+        import time
+        font_loader.force_offline(True)
+        try:
+            t0 = time.time()
+            font_loader.get_link_tag()
+            elapsed = time.time() - t0
+            assert elapsed < 0.1, \
+                f"强制离线应 <100ms, 实测 {elapsed*1000:.0f}ms"
+        finally:
+            font_loader.force_offline(None)
+
+    def test_v426_font_html_in_rendered_head(self):
+        """v4.26: 渲染的 HTML <head> 应包含字体 link 标签（如果在线）"""
+        session = Session(
+            session_id="t", start_time=datetime.now() - timedelta(minutes=10),
+            end_time=datetime.now(), glasses_mode=GlassesMode.WITHOUT_GLASSES,
+            is_calibrated=True,
+        )
+        fr = [FocusRecord(
+            session_id="t", window_start=i*60.0, window_end=(i+1)*60.0,
+            focus_score=70.0, eye_score=70.0, head_score=70.0, gaze_score=70.0,
+            blink_rate=15.0, avg_ear=0.25, avg_yaw=0.0, avg_pitch=0.0,
+        ) for i in range(5)]
+        font_loader.force_offline(False)  # 强制在线以便测试
+        try:
+            html_gen = HTMLReportGenerator(db_manager=None)
+            html = html_gen.generate_report_from_data(
+                session=session, focus_records=fr, fatigue_records=[], blink_records=[],
+            )
+            # 在线时 <head> 应有 <link rel="preconnect" + <link rel="stylesheet"
+            assert '<link rel="preconnect" href="https://fonts.googleapis.com">' in html
+            assert 'fonts.googleapis.com/css2' in html
+            assert 'Fraunces' in html  # link URL 包含字体名
+        finally:
+            font_loader.force_offline(None)
+
+        # 离线时 <head> 不应有 link 标签
+        font_loader.force_offline(True)
+        try:
+            html_gen2 = HTMLReportGenerator(db_manager=None)
+            html2 = html_gen2.generate_report_from_data(
+                session=session, focus_records=fr, fatigue_records=[], blink_records=[],
+            )
+            assert 'fonts.googleapis.com' not in html2
+        finally:
+            font_loader.force_offline(None)
 
 
 # ============ Integration Tests ============
