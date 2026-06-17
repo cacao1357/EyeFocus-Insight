@@ -53,6 +53,12 @@
 | 🎤 **语音反馈** | pyttsx3 TTS 语音播报：阶段提醒、里程碑、疲劳预警、番茄完成提示 |
 | ⏰ **智能提醒** | 定时休息提醒、长时间分心提醒、可配置间隔时间 |
 
+### 扩展
+| 功能 | 描述 |
+|------|------|
+| 🌐 **Web 仪表盘** | aiohttp 后台 HTTP + WebSocket 服务器，浏览器实时查看专注度圆环/指标/波线/番茄状态 |
+| ⚙️ **设置面板** | 图形化 QDialog 配置（摄像头、语音、番茄时间），替代 config.yaml 手动编辑 |
+
 ### 报告与数据
 | 功能 | 描述 |
 |------|------|
@@ -248,9 +254,14 @@ EyeFocus Insight/
 │   ├── gamification.py         # 🔥 游戏化激励（连续天数/今日时长）
 │   ├── baseline.py             # EAR 自动基线校准
 │   └── insights/               # 离线分析（PELT/IF/KMeans/STL）
+├── app/                        # main.py 拆分包（strangler 模式）
+│   ├── camera.py               # 摄像头管理类
+│   ├── processor.py            # 帧处理流水线
+│   └── calibration.py          # 校准流程回调与协调器
 ├── gui/                        # PyQt5 图形界面
 │   ├── qt_window.py            # 监测主窗口（50:50 面板布局）
 │   ├── qt_overlay.py           # FocusRing 专注圆环 + 状态波线
+│   ├── settings_dialog.py      # ⚙️ 图形化设置面板（v4.22）
 │   ├── tray.py                 # 系统托盘（番茄菜单/语音开关/会话历史）
 │   ├── calibration_dialog.py   # 校准对话框
 │   └── video_label.py          # QLabel 视频渲染
@@ -261,6 +272,9 @@ EyeFocus Insight/
 │   ├── report_html.py          # 报告生成 + 周报
 │   ├── charts.py               # Plotly 图表（日历热力图/饼图/柱状图/波线）
 │   └── insights.py             # 建议生成
+├── webserver/                  # 🌐 Web 仪表盘（aiohttp + WebSocket, v4.22）
+│   ├── server.py               #    HTTP + WebSocket 服务器
+│   └── static/index.html       #    前端仪表盘（FocusRing/波线/指标）
 ├── calibration/                # 校准模块（Qt 对话框引导 4 步骤）
 ├── tests/                      # 测试（606+ 用例）
 └── docs/                       # 文档
@@ -288,6 +302,7 @@ EyeFocus Insight/
 | **v4.19** | 代码审查修复 + 文件归档 + 路径管理 + UI 修复 | 606 |
 | **v4.20** | 报告修复 + 卡片去字 + 番茄增强 + 按钮美化 | 606 |
 | **v4.21** | 面板 50:50 布局重设计 + FocusRing + QLabel 大字体 | 606 |
+| **v4.22** | main.py 拆分（strangler）+ 设置面板 + Web 仪表盘 | 606 |
 
 ---
 
