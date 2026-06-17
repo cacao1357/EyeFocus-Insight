@@ -184,6 +184,8 @@ class EyeFocusApp:
         # v4.4: Qt UI 模式
         self._frame_buffer = None
         self._qt_window = None
+        # v4.22: 会话启动时间（提前初始化，防 _qt_process_frame 竞态）
+        self._session_start_time: float = 0.0
 
     def initialize(self) -> bool:
         """初始化所有模块
@@ -423,7 +425,9 @@ class EyeFocusApp:
         # v4.22: 强制 Fusion 风格 + 浅色调色板（防止系统暗色模式导致黑背景不可读）
         from PyQt5.QtGui import QColor, QPalette
         from PyQt5.QtWidgets import QStyleFactory
-        self._qt_app.setStyle(QStyleFactory.create("Fusion"))
+        _fusion = QStyleFactory.create("Fusion")
+        if _fusion is not None:
+            self._qt_app.setStyle(_fusion)
         _p = self._qt_app.palette()
         _p.setColor(QPalette.Window, QColor(255, 255, 255))
         _p.setColor(QPalette.WindowText, QColor(35, 32, 30))       # Warm Ink
@@ -756,8 +760,8 @@ class EyeFocusApp:
                             "session_start": getattr(self, '_session_start_time', None),
                             "pomodoro": pomo,
                         })
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("Web 仪表盘广播异常: %s", e)
 
                 # 游戏化（每 60s）
                 gamify_update = getattr(self, '_gamify_update_time', 0)
@@ -768,8 +772,8 @@ class EyeFocusApp:
                         streak = self._gamification.get_streak_days()
                         today_min = self._gamification.get_today_minutes()
                         self._qt_window.update_gamification(streak, today_min)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("语音/提醒/游戏化处理异常: %s", e)
         finally:
             self._qt_frame_busy = False
 

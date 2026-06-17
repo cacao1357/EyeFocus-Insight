@@ -18,3 +18,5 @@ pandas>=2.0.0
 # Phase 3: 生产环境依赖
 PyQt5>=5.15.0
 absl-py>=2.0.0
+# v4.22: Web 仪表盘
+aiohttp>=3.9.0

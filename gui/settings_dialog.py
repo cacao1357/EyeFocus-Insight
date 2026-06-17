@@ -96,9 +96,11 @@ class SettingsDialog(QDialog):
         """尝试从运行中的 EyeFocusApp 读取番茄设置"""
         try:
             # 从 parent window 链路上找 app
-            app = getattr(self.parent(), '_app', None) or getattr(
-                getattr(self.parent(), 'parent', None), '_app', None
-            )
+            app = getattr(self.parent(), '_app', None)
+            if app is None and self.parent() is not None:
+                grandparent = self.parent().parent()
+                if grandparent is not None:
+                    app = getattr(grandparent, '_app', None)
             if app and hasattr(app, '_pomodoro') and app._pomodoro is not None:
                 st = app._pomodoro.get_status()
                 self._pomo_work = st.get("work_min", 25)

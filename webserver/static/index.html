@@ -560,14 +560,14 @@ async function loadSessions() {
 
 async function switchSession(sid) {
   if (!sid) {
-    // 切回实时模式
+    // 切回实时模式 — 重新连接 WebSocket
     viewingHistory = false;
     document.getElementById('modeBadge').textContent = '实时';
     sessionTime._start = null;
-    // 重置显示（等待下一次 WebSocket 推送）
     history = [];
     updateDashboard({});
     drawSparkline();
+    connect();  // 重新建立 WebSocket 连接
     return;
   }
   viewingHistory = true;

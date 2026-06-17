@@ -212,11 +212,13 @@ class FocusRing(QWidget):
         painter.drawText(QRectF(cx - tw / 2, cy - th / 2 - 2, tw, th),
                          Qt.AlignCenter, center_text)
 
-        # 底部疲劳圆点 (v4.6: 使用新标签)
+        # 底部疲劳圆点 (v4.22: 根据键格式选择正确的标签集)
         fatigue_key = self._fatigue_indicator or self._fatigue_level
         if fatigue_key:
-            dot_labels = {"RESTED": "清醒", "ATTENTION": "关注", "TIRED": "疲劳",
-                          "LOW": "清醒", "MEDIUM": "关注", "HIGH": "疲劳"}
+            if fatigue_key in ("LOW", "MEDIUM", "HIGH"):
+                dot_labels = {"LOW": "低", "MEDIUM": "中", "HIGH": "高"}
+            else:
+                dot_labels = {"RESTED": "清醒", "ATTENTION": "关注", "TIRED": "疲劳"}
         else:
             dot_labels = {"LOW": "低", "MEDIUM": "中", "HIGH": "高"}
         self._draw_fatigue_dots_v46(painter, cx, ring.bottom() + 18, fatigue_key, dot_labels)
@@ -235,9 +237,8 @@ class FocusRing(QWidget):
         for i, key in enumerate(keys):
             dx = start_x + i * (dot_r * 2 + spacing) + dot_r
             if key == current:
-                color = C_FATIGUE_COLORS.get("LOW" if "RESTED" in str(key) else
-                                             "MEDIUM" if "ATTENTION" in str(key) else "HIGH",
-                                             C_DOT_INACTIVE)
+                # v4.22: 直接使用 key 查颜色（兼容 LOW/MEDIUM/HIGH 和 RESTED/ATTENTION/TIRED）
+                color = C_FATIGUE_COLORS.get(key, C_DOT_INACTIVE)
             else:
                 color = C_DOT_INACTIVE
             painter.setPen(Qt.NoPen)

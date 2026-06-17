@@ -112,7 +112,8 @@ def load_yaml_config(config_path: Optional[str] = None) -> Dict[str, Any]:
         )
 
     if not os.path.exists(config_path):
-        return {}
+        _yaml_config = {}
+        return _yaml_config
 
     try:
         import yaml
@@ -120,11 +121,12 @@ def load_yaml_config(config_path: Optional[str] = None) -> Dict[str, Any]:
             _yaml_config = yaml.safe_load(f)
         return _yaml_config or {}
     except ImportError:
-        # PyYAML 未安装，使用默认配置
-        return {}
+        _yaml_config = {}
+        return _yaml_config
     except Exception as e:
         print(f"Warning: Failed to load config.yaml: {e}")
-        return {}
+        _yaml_config = {}
+        return _yaml_config
 
 
 def get_yaml_value(*keys, default: Any = None) -> Any:

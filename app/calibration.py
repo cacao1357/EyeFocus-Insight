@@ -95,12 +95,15 @@ class CalibrationFlowCallbacks:
 
     def _apply_calibration_result(self, result: CalibrationResult) -> None:
         """应用校准结果到各模块"""
-        if hasattr(self.app, '_eye_detector') and self.app._eye_detector:
-            self.app._eye_detector.set_baseline(result.signal.ear_mean)
+        eye = getattr(self.app, '_eye_detector', None)
+        if eye is not None:
+            eye.set_baseline(result.signal.ear_mean)
 
-        if result.baseline_blink_rate is not None and self.app._fatigue_analyzer is not None:
-            self.app._fatigue_analyzer.set_baseline_blink_rate(result.baseline_blink_rate)
-            logger.info("疲劳基线已应用: %.1f 次/分钟", result.baseline_blink_rate)
+        if result.baseline_blink_rate is not None:
+            fatigue = getattr(self.app, '_fatigue_analyzer', None)
+            if fatigue is not None:
+                fatigue.set_baseline_blink_rate(result.baseline_blink_rate)
+                logger.info("疲劳基线已应用: %.1f 次/分钟", result.baseline_blink_rate)
 
         if self.app._db and self.app._session_id:
             self.app._db.update_session(
@@ -146,8 +149,10 @@ class CalibrationCoordinator:
         return 0.0
 
     def _get_head_pose(self) -> tuple:
-        fp = self._app._frame_processor
-        return (fp._latest_yaw, fp._latest_pitch)
+        fp = getattr(self._app, '_frame_processor', None)
+        if fp is not None and hasattr(fp, 'get_head_pose'):
+            return fp.get_head_pose()
+        return (0.0, 0.0)
 
     def start(self) -> None:
         self._input_buffer = ""

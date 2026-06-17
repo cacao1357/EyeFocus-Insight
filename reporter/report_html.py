@@ -1049,16 +1049,22 @@ class HTMLReportGenerator:
         return base64.b64encode(data).decode('utf-8')
 
     def _calc_avg_focus(self, focus_records: List[FocusRecord]) -> float:
-        """计算平均专注度"""
+        """计算平均专注度（过滤 None 值）"""
         if not focus_records:
             return 0.0
-        return sum(r.focus_score for r in focus_records) / len(focus_records)
+        scores = [r.focus_score for r in focus_records if r.focus_score is not None]
+        if not scores:
+            return 0.0
+        return sum(scores) / len(scores)
 
     def _calc_avg_blink_rate(self, focus_records: List[FocusRecord]) -> float:
-        """计算平均眨眼频率"""
+        """计算平均眨眼频率（过滤 None 值）"""
         if not focus_records:
             return 0.0
-        return sum(r.blink_rate for r in focus_records) / len(focus_records)
+        rates = [r.blink_rate for r in focus_records if r.blink_rate is not None]
+        if not rates:
+            return 0.0
+        return sum(rates) / len(rates)
 
     def _determine_fatigue_level(self, fatigue_records: List[FatigueRecord]) -> FatigueLevel:
         """确定主要疲劳等级"""
@@ -1107,7 +1113,8 @@ class HTMLReportGenerator:
             total_minutes += dur / 60.0
             records = self.db.get_focus_records(sess.session_id)
             if records:
-                avg = sum(r.focus_score for r in records if r.focus_score) / max(1, len(records))
+                valid = [r.focus_score for r in records if r.focus_score is not None]
+                avg = sum(valid) / max(1, len(valid)) if valid else 0.0
                 total_score += avg
                 score_count += 1
                 session_list.append({"date": sess.start_time.strftime("%m-%d"),

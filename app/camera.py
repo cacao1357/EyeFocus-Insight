@@ -67,12 +67,20 @@ class CameraManager:
     def _camera_read_loop(self) -> None:
         """后台线程读取摄像头"""
         while self._running:
-            if self._cap is None:
+            cap = self._cap  # 本地引用，防止 release() 在读取中置 None
+            if cap is None:
                 break
-            ret, frame = self._cap.read()
-            with self._frame_lock:
-                self._latest_ret = ret
-                self._latest_frame = frame
+            try:
+                ret, frame = cap.read()
+                with self._frame_lock:
+                    self._latest_ret = ret
+                    self._latest_frame = frame
+            except Exception as e:
+                logger.error("摄像头读取循环异常: %s", e, exc_info=True)
+                with self._frame_lock:
+                    self._latest_ret = False
+                    self._latest_frame = None
+                break
             time.sleep(0.01)  # 避免过度占用 CPU
 
     def get_frame(self) -> tuple:

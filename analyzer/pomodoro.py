@@ -156,8 +156,8 @@ class PomodoroEngine:
             logger.info("🍅 休息结束，开始第 %d 个番茄", self._count + 1)
             if self._voice:
                 self._voice("休息结束，开始新的番茄")
-            if self._resume:
-                self._resume()
+            if self._resume_cb:
+                self._resume_cb()
 
     def get_status(self) -> dict:
         """获取当前状态（供 UI 显示）
