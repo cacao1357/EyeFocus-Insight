@@ -439,14 +439,18 @@ class EyeFocusWindow(QMainWindow):
 
     # ── v4.17: 游戏化 ──
 
-    def update_gamification(self, streak_days: int = 0, today_minutes: float = 0.0) -> None:
-        """更新游戏化状态显示（专注天数 + 今日时长）"""
+    def update_gamification(self, streak_days: int = 0, today_minutes: float = 0.0,
+                            trend_arrow: str = "") -> None:
+        """更新游戏化状态显示（专注天数 + 今日时长 + 趋势）"""
         parts = []
         if streak_days > 0:
             fire = "🔥" if streak_days >= 3 else ""
             parts.append(f"{fire}连续 {streak_days} 天")
         if today_minutes > 0:
             parts.append(f"今日 {today_minutes:.0f} 分钟")
+        if trend_arrow:
+            color = {"↑": "#5A8A6D", "↓": "#B55C5C", "→": "#9E9A96"}.get(trend_arrow, "#9E9A96")
+            parts.append(f'<span style="color:{color};font-weight:700;font-size:16px">{trend_arrow}</span>')
         if parts:
             self._gamification_bar.setText(" | ".join(parts))
             self._gamification_bar.setVisible(True)

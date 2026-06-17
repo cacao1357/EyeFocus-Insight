@@ -52,6 +52,7 @@ from analyzer.voice_assistant import create_voice_assistant
 from analyzer.reminder_engine import create_reminder_engine
 from analyzer.gamification import create_gamification_engine
 from analyzer.pomodoro import create_pomodoro_engine
+from analyzer.predictor import create_focus_predictor
 from analyzer.glasses import GlassesDetector, create_glasses_detector
 from analyzer.fatigue import FatigueAnalyzer, create_fatigue_analyzer
 from detector.face_mesh import FaceMeshDetector, create_face_mesh_detector
@@ -251,6 +252,9 @@ class EyeFocusApp:
                 pause_callback=lambda: self._pomodoro_pause(),
                 resume_callback=lambda: self._pomodoro_resume(),
             )
+
+            # v4.24: 专注度趋势预测器
+            self._focus_predictor = create_focus_predictor()
 
             # v4.22: Web 仪表盘（后台线程，不阻塞主程序）
             self._web_dashboard = WebDashboard(port=8080)
@@ -735,6 +739,9 @@ class EyeFocusApp:
                     self._spark_update_time = time.time()
                     if hasattr(self, '_qt_window') and self._qt_window is not None:
                         self._qt_window.update_sparkline(focus_score)
+                    # v4.24: 专注度趋势预测
+                    if hasattr(self, '_focus_predictor') and self._focus_predictor is not None:
+                        self._focus_predictor.add_score(focus_score)
                     # 番茄 tick + UI 更新 + 托盘同步
                     if hasattr(self, '_pomodoro') and self._pomodoro is not None:
                         self._pomodoro.tick()
@@ -751,6 +758,7 @@ class EyeFocusApp:
                     try:
                         pomo = self._pomodoro.get_status() if hasattr(self, '_pomodoro') and self._pomodoro is not None else None
                         ear = getattr(self._frame_processor, '_latest_ear', None)
+                        pred = self._focus_predictor.get_stats() if hasattr(self, '_focus_predictor') and self._focus_predictor is not None else None
                         self._web_dashboard.broadcast({
                             "focus_score": focus_score,
                             "ear": ear,
@@ -759,6 +767,8 @@ class EyeFocusApp:
                             "session_minutes": session_min,
                             "session_start": getattr(self, '_session_start_time', None),
                             "pomodoro": pomo,
+                            "trend": pred["arrow"] if pred else None,
+                            "suggest_break": pred["suggest_break"] if pred else False,
                         })
                     except Exception as e:
                         logger.warning("Web 仪表盘广播异常: %s", e)
@@ -771,7 +781,8 @@ class EyeFocusApp:
                             and hasattr(self, '_qt_window') and self._qt_window is not None):
                         streak = self._gamification.get_streak_days()
                         today_min = self._gamification.get_today_minutes()
-                        self._qt_window.update_gamification(streak, today_min)
+                        trend = self._focus_predictor.trend_arrow if hasattr(self, '_focus_predictor') else ""
+                        self._qt_window.update_gamification(streak, today_min, trend)
             except Exception as e:
                 logger.warning("语音/提醒/游戏化处理异常: %s", e)
         finally:
@@ -1279,10 +1290,7 @@ class EyeFocusApp:
                 session = self._db.get_session(self._session_id)
                 fr = self._frame_processor.latest_focus_result
                 avg_focus = fr.focus_score if fr and fr.focus_score else 50.0
-                new_ach = self._gamification.on_session_end(session, avg_focus)
-                if new_ach:
-                    names = ", ".join(f"{a.icon} {a.name}" for a in new_ach)
-                    logger.info("🏅 新成就: %s", names)
+                self._gamification.on_session_end(session, avg_focus)
 
             # 2. 生成含 insights 的 HTML 报告
             from reporter.report_html import create_html_generator

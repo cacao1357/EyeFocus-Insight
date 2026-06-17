@@ -1,70 +1,53 @@
 """
-analyzer/gamification.py — 游戏化引擎 (v4.17)
+analyzer/gamification.py — 游戏化引擎 (v4.24)
 
-提供专注成就系统、每日统计、连续天数追踪。
+移除成就系统，保留：
+- 每日专注统计持久化
+- 连续使用天数追踪
+- 今日累计时长
 
 用法：
     engine = GamificationEngine(db)
-    new_achievements = engine.on_session_end(session, avg_focus)
+    engine.on_session_end(session, avg_focus)
     streak = engine.get_streak_days()
 """
 
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 
-from storage.models import Achievement, DailyStats, Session
+from storage.models import DailyStats, Session
 
 logger = logging.getLogger("eyefocus.analyzer")
-
-# ── 成就定义 ──
-
-ALL_ACHIEVEMENTS = [
-    Achievement("first_session", "初次专注", "完成首个专注会话", "🌟"),
-    Achievement("focus_30min", "专注入门", "单次会话专注≥30分钟", "⏱"),
-    Achievement("focus_1h", "专注达人", "单次会话专注≥60分钟", "💪"),
-    Achievement("focus_3h", "专注大师", "单次会话专注≥180分钟", "🏆"),
-    Achievement("total_10h", "累积进步", "总专注时长≥10小时", "📈"),
-    Achievement("total_50h", "专注强者", "总专注时长≥50小时", "🚀"),
-    Achievement("streak_3", "初露锋芒", "连续使用≥3天", "🔥"),
-    Achievement("streak_7", "坚持不懈", "连续使用≥7天", "💎"),
-    Achievement("streak_30", "专注满贯", "连续使用≥30天", "👑"),
-    Achievement("morning_person", "早起鸟", "最佳专注时段在上午", "☀️"),
-]
 
 
 class GamificationEngine:
     """游戏化引擎
 
-    跟踪每日专注统计、检查成就解锁条件。
+    跟踪每日专注统计、连续天数。
     所有状态持久化到数据库 daily_stats 表。
     """
 
     def __init__(self, db):
         self._db = db
-        self._logged_achievements: set = set()  # 防重复通知
 
     def _today_str(self) -> str:
-        """获取当前日期字符串（v4.18: 每次调用实时计算，防跨午夜）"""
+        """获取当前日期字符串（每次调用实时计算，防跨午夜）"""
         return datetime.now().strftime("%Y-%m-%d")
 
-    def on_session_end(self, session: Session, avg_focus: float) -> List[Achievement]:
-        """会话结束时更新统计并检查成就
+    def on_session_end(self, session: Session, avg_focus: float) -> None:
+        """会话结束时更新每日统计
 
         Args:
             session: 已结束的会话
             avg_focus: 会话平均专注度
-
-        Returns:
-            本次新解锁的成就列表
         """
         if not session.end_time:
-            return []
+            return
 
         duration_min = session.duration_seconds() / 60.0 if session.duration_seconds() else 0.0
-
-        # v4.18: 实时计算日期，防跨午夜错误归日
         today = self._today_str()
+
         try:
             existing = self._db.get_daily_stats(today)
         except Exception as e:
@@ -94,22 +77,11 @@ class GamificationEngine:
             self._db.save_daily_stats(stats)
         except Exception as e:
             logger.warning("保存每日统计失败: %s", e)
-            return []
-
-        # 检查成就解锁（去重：仅首次通知）
-        new_achievements = self._check_achievements(session, avg_focus, duration_min)
-        first_time = [a for a in new_achievements if a.id not in self._logged_achievements]
-        for a in first_time:
-            self._logged_achievements.add(a.id)
-            logger.info("🏅 新成就解锁: %s %s", a.icon, a.name)
-
-        return first_time
 
     def get_streak_days(self) -> int:
         """计算连续使用天数
 
         从今天往前数，连续有记录的"天"的数量。
-        今天的记录也会被计入。
         """
         try:
             all_stats = self._db.get_all_daily_stats()
@@ -132,9 +104,7 @@ class GamificationEngine:
                 streak += 1
                 check_date -= timedelta(days=1)
             elif stat_date < check_date:
-                # 日期不连续或跳过，终止
                 break
-            # stat_date > check_date 表示未来数据，也终止
 
         return streak
 
@@ -145,78 +115,6 @@ class GamificationEngine:
             return stats.total_focus_minutes if stats else 0.0
         except Exception:
             return 0.0
-
-    def get_achievements(self) -> List[Achievement]:
-        """获取所有成就及其解锁状态
-
-        根据 _logged_achievements 标记已解锁状态。
-        """
-        return [
-            Achievement(a.id, a.name, a.description, a.icon,
-                        unlocked=(a.id in self._logged_achievements))
-            for a in ALL_ACHIEVEMENTS
-        ]
-
-    def _check_achievements(self, session: Session, avg_focus: float,
-                            duration_min: float) -> List[Achievement]:
-        """检查成就解锁条件"""
-        today = self._today_str()
-        unlocked = []
-
-        # 首次会话
-        if self._is_first_session():
-            unlocked.append(Achievement("first_session", "初次专注",
-                                        "完成首个专注会话", "🌟", True, today))
-
-        # 时长成就
-        if duration_min >= 180:
-            unlocked.append(Achievement("focus_3h", "专注大师",
-                                        "单次会话专注≥180分钟", "🏆", True, today))
-        elif duration_min >= 60:
-            unlocked.append(Achievement("focus_1h", "专注达人",
-                                        "单次会话专注≥60分钟", "💪", True, today))
-        elif duration_min >= 30:
-            unlocked.append(Achievement("focus_30min", "专注入门",
-                                        "单次会话专注≥30分钟", "⏱", True, today))
-
-        # 总时长成就
-        total_minutes = self._get_total_minutes()
-        if total_minutes >= 50 * 60:
-            unlocked.append(Achievement("total_50h", "专注强者",
-                                        "总专注时长≥50小时", "🚀", True, today))
-        elif total_minutes >= 10 * 60:
-            unlocked.append(Achievement("total_10h", "累积进步",
-                                        "总专注时长≥10小时", "📈", True, today))
-
-        # 连续天数成就
-        streak = self.get_streak_days()
-        if streak >= 30:
-            unlocked.append(Achievement("streak_30", "专注满贯",
-                                        "连续使用≥30天", "👑", True, today))
-        elif streak >= 7:
-            unlocked.append(Achievement("streak_7", "坚持不懈",
-                                        "连续使用≥7天", "💎", True, today))
-        elif streak >= 3:
-            unlocked.append(Achievement("streak_3", "初露锋芒",
-                                        "连续使用≥3天", "🔥", True, today))
-
-        # 早起鸟（最高效时段在上午）
-        if session.start_time.hour < 12 and avg_focus >= 75:
-            unlocked.append(Achievement("morning_person", "早起鸟",
-                                        "最佳专注时段在上午", "☀️", True, today))
-
-        return unlocked
-
-    def _is_first_session(self) -> bool:
-        """判断是否是首个完整会话"""
-        all_stats = self._db.get_all_daily_stats()
-        total = sum(s.session_count for s in all_stats)
-        return total <= 1
-
-    def _get_total_minutes(self) -> float:
-        """获取所有时间累计专注分钟数"""
-        all_stats = self._db.get_all_daily_stats()
-        return sum(s.total_focus_minutes for s in all_stats)
 
 
 def create_gamification_engine(db) -> GamificationEngine:
