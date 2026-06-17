@@ -452,17 +452,17 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             logger.warning("番茄暂停失败: %s", e)
 
     def _set_pomodoro(self) -> None:
-        """设置番茄工作/休息时间"""
+        """设置番茄工作/休息时间（v4.26: 用白底 wrapper 替代 QInputDialog.getInt）"""
         try:
-            from PyQt5.QtWidgets import QInputDialog
+            from gui.settings_dialog import ask_pomo_int
             parent_widget = self._window if self._window is not None else None
-            work, ok = QInputDialog.getInt(parent_widget, "设置番茄",
-                "工作分钟数 (1-120):", value=25, min=1, max=120)
-            if not ok:
+            work = ask_pomo_int(parent_widget, "设置番茄",
+                                 "工作分钟数 (1-120):", value=25, min_val=1, max_val=120)
+            if work is None:
                 return
-            rest, ok = QInputDialog.getInt(parent_widget, "设置番茄",
-                "休息分钟数 (1-60):", value=5, min=1, max=60)
-            if not ok:
+            rest = ask_pomo_int(parent_widget, "设置番茄",
+                                 "休息分钟数 (1-60):", value=5, min_val=1, max_val=60)
+            if rest is None:
                 return
             pomo = getattr(self._app, '_pomodoro', None)
             if pomo:

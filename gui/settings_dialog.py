@@ -21,6 +21,7 @@ from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QInputDialog,
     QLineEdit,
     QDialogButtonBox,
     QFormLayout,
@@ -109,6 +110,24 @@ class SettingsDialog(QDialog):
         QSpinBox::up-button:hover, QSpinBox::down-button:hover {
             background: #F0EBF8;
         }
+        QSpinBox::up-button:pressed, QSpinBox::down-button:pressed {
+            background: #E0E0E0;
+        }
+        /* v4.26: 上下箭头用 CSS 三角形，避免依赖系统位图（位图常是黑色） */
+        QSpinBox::up-arrow {
+            image: none;
+            width: 0; height: 0;
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            border-bottom: 5px solid #5B4A8C;
+        }
+        QSpinBox::down-arrow {
+            image: none;
+            width: 0; height: 0;
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            border-top: 5px solid #5B4A8C;
+        }
     """
 
     def __init__(self, parent: Optional[QWidget] = None):
@@ -120,6 +139,7 @@ class SettingsDialog(QDialog):
         self.setModal(True)
         # v4.22: 强制白底（防止系统暗色模式导致全黑不可读）
         # 注：QComboBox/QSpinBox/QLineEdit 规则不在这里（绑在实例上才能覆盖 popup）
+        # v4.26: 补 QPushButton 全状态、QGroupBox::title 颜色、QCheckBox::indicator
         self.setStyleSheet("""
             QDialog { background-color: #FFFFFF; }
             QGroupBox {
@@ -133,9 +153,41 @@ class SettingsDialog(QDialog):
                 subcontrol-origin: margin;
                 left: 12px;
                 padding: 0 6px;
+                color: #23201E;
+                background-color: transparent;
             }
             QLabel { background: transparent; color: #23201E; }
-            QCheckBox { background: transparent; color: #23201E; }
+            QCheckBox {
+                background: transparent; color: #23201E;
+                spacing: 6px;
+            }
+            QCheckBox::indicator {
+                width: 14px; height: 14px;
+                background-color: #FFFFFF;
+                border: 1px solid #D0D0D0;
+                border-radius: 2px;
+            }
+            QCheckBox::indicator:hover { border: 1px solid #5B4A8C; }
+            QCheckBox::indicator:checked {
+                background-color: #5B4A8C;
+                border: 1px solid #5B4A8C;
+            }
+            QCheckBox::indicator:disabled {
+                background-color: #F0F0F0;
+                border: 1px solid #D0D0D0;
+            }
+            QPushButton {
+                background-color: #F0F0F0;
+                color: #23201E;
+                border: 1px solid #D0D0D0;
+                border-radius: 6px;
+                padding: 8px 24px;
+                font-size: 14px;
+                min-width: 80px;
+            }
+            QPushButton:hover { background-color: #E5E5E5; }
+            QPushButton:pressed { background-color: #D8D8D8; }
+            QPushButton:disabled { background-color: #F8F6F2; color: #8B8680; }
         """)
 
     def _load_config(self) -> None:
@@ -397,3 +449,128 @@ class SettingsDialog(QDialog):
                 logger.info("番茄时间已应用: 工作%d分, 休息%d分", work, brake)
         except Exception as e:
             logger.warning("番茄设置应用失败: %s", e)
+
+
+# ════════════════════════════════════════
+# v4.26: 白底 QInputDialog wrapper
+# 背景：tray.py _set_pomodoro + qt_window.py _pomodoro_action("settings")
+# 之前都用 QInputDialog.getInt(...) 静态方法，Qt 自带 dialog 从未 setStyleSheet，
+# 在系统暗色主题下完全黑底、白字（看不出字）。重写为非静态、可 setStyleSheet 的版本。
+# ════════════════════════════════════════
+
+# 番茄设置 dialog 专用 QSS：白底 + Iris 紫主按钮，与项目色板一致
+_POMO_INPUT_DIALOG_QSS = """
+    QDialog {
+        background-color: #FFFFFF;
+    }
+    QLabel {
+        color: #23201E;
+        background: transparent;
+        font-size: 14px;
+    }
+    QSpinBox, QLineEdit {
+        background-color: #FFFFFF;
+        color: #23201E;
+        border: 1px solid #D0D0D0;
+        border-radius: 4px;
+        padding: 4px 8px;
+        selection-background-color: #5B4A8C;
+        selection-color: #FFFFFF;
+        font-size: 14px;
+        min-height: 22px;
+    }
+    QSpinBox:focus, QLineEdit:focus {
+        border: 1px solid #5B4A8C;
+        outline: 0;
+    }
+    QSpinBox::up-button, QSpinBox::down-button {
+        background: #F8F6F2;
+        border: 1px solid #D0D0D0;
+        width: 20px;
+    }
+    QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+        background: #F0EBF8;
+    }
+    QSpinBox::up-button:pressed, QSpinBox::down-button:pressed {
+        background: #E0E0E0;
+    }
+    /* v4.26: 上下箭头用 CSS 三角形（避免系统位图黑色） */
+    QSpinBox::up-arrow {
+        image: none;
+        width: 0; height: 0;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-bottom: 5px solid #5B4A8C;
+    }
+    QSpinBox::down-arrow {
+        image: none;
+        width: 0; height: 0;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-top: 5px solid #5B4A8C;
+    }
+    QPushButton {
+        background-color: #F0F0F0;
+        color: #23201E;
+        border: 1px solid #D0D0D0;
+        border-radius: 4px;
+        padding: 6px 18px;
+        font-size: 13px;
+        min-width: 70px;
+    }
+    QPushButton:hover {
+        background-color: #E5E5E5;
+    }
+    QPushButton:pressed {
+        background-color: #D8D8D8;
+    }
+    QPushButton:default {
+        background-color: #5B4A8C;
+        color: #FFFFFF;
+        border: 1px solid #4A3A7A;
+        font-weight: 600;
+    }
+    QPushButton:default:hover {
+        background-color: #4A3A7A;
+    }
+    QPushButton:default:pressed {
+        background-color: #3A2A6A;
+    }
+"""
+
+
+def ask_pomo_int(parent, title: str, label: str,
+                 value: int, min_val: int, max_val: int) -> Optional[int]:
+    """白底番茄分钟数输入框
+
+    替代 QInputDialog.getInt(...)，应用项目白底 QSS，
+    避免 Qt 自带 dialog 在暗色系统下的黑底不可读 bug。
+
+    Args:
+        parent: 父 widget（用于模态定位）
+        title: 窗口标题
+        label: 输入框上方说明文字
+        value: 初始值
+        min_val, max_val: 整数范围
+
+    Returns:
+        用户输入的整数，或 None（取消）
+    """
+    dlg = QInputDialog(parent)
+    dlg.setStyleSheet(_POMO_INPUT_DIALOG_QSS)
+    dlg.setWindowTitle(title)
+    dlg.setLabelText(label)
+    dlg.setIntRange(min_val, max_val)
+    dlg.setIntValue(value)
+    # 默认按钮（OK）走 :default 样式
+    try:
+        ok_btn = dlg.findChild(QPushButton)
+        # QInputDialog 内部 buttonBox：尝试标记 OK 为 default
+        bb = dlg.findChild(QDialogButtonBox)
+        if bb is not None:
+            bb.setStyleSheet("QPushButton { background: #5B4A8C; color: white; }")
+    except Exception:
+        pass
+    if dlg.exec_() == QInputDialog.Accepted:
+        return dlg.intValue()
+    return None

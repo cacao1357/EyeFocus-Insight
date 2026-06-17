@@ -374,3 +374,67 @@ class TestSettingsDialogWhiteDropdown:
                 f"{type(w).__name__} QSS 缺 ::drop-down"
             assert "QAbstractItemView::item" in w.styleSheet(), \
                 f"{type(w).__name__} QSS 缺 QAbstractItemView::item"
+
+    def test_v426_qspinbox_arrows_styled(self):
+        """v4.26: QSpinBox 上下箭头用 CSS 三角形（避免系统位图黑色）
+
+        修复前：系统默认 up-arrow/down-arrow 是黑色位图，暗色主题下完全看不见。
+        修复后：用 CSS border 画 Iris 紫色三角。
+        """
+        from gui.settings_dialog import SettingsDialog, _POMO_INPUT_DIALOG_QSS
+        # 1) SettingsDialog 的 INPUT_WIDGET_QSS 含箭头样式
+        assert "QSpinBox::up-arrow" in SettingsDialog.INPUT_WIDGET_QSS
+        assert "QSpinBox::down-arrow" in SettingsDialog.INPUT_WIDGET_QSS
+        assert "border-top: 5px solid #5B4A8C" in SettingsDialog.INPUT_WIDGET_QSS
+        # 2) Pomo 输入 dialog 的 QSS 也含
+        assert "QSpinBox::up-arrow" in _POMO_INPUT_DIALOG_QSS
+        assert "QSpinBox::down-arrow" in _POMO_INPUT_DIALOG_QSS
+
+    def test_v426_settings_dialog_qss_extra_states(self):
+        """v4.26: SettingsDialog QDialog 级别 QSS 补 QPushButton 状态 + QCheckBox indicator + QGroupBox::title color"""
+        from gui.settings_dialog import SettingsDialog
+        dlg = SettingsDialog()
+        dlg_qss = dlg.styleSheet()
+        # QPushButton 状态
+        for s in ["QPushButton:hover", "QPushButton:pressed", "QPushButton:disabled"]:
+            assert s in dlg_qss, f"SettingsDialog 缺 {s}"
+        # QCheckBox::indicator
+        for s in ["QCheckBox::indicator", "QCheckBox::indicator:checked", "QCheckBox::indicator:hover"]:
+            assert s in dlg_qss, f"SettingsDialog 缺 {s}"
+        # QGroupBox::title 颜色
+        assert "QGroupBox::title" in dlg_qss
+        assert "color: #23201E" in dlg_qss.split("QGroupBox::title")[1].split("}")[0]
+
+    def test_v426_pomo_input_dialog_qss_white(self):
+        """v4.26: 番茄设置 dialog QSS 是白底（替代黑底的 QInputDialog.getInt）
+
+        关键：tray.py _set_pomodoro + qt_window.py _pomodoro_action("settings")
+        之前都用 QInputDialog.getInt(...) → Qt 自带 dialog 在暗色系统下黑底
+        修法：写 ask_pomo_int() wrapper，setStyleSheet 白底 QSS
+        """
+        from gui.settings_dialog import _POMO_INPUT_DIALOG_QSS, ask_pomo_int
+        # 1) QSS 是白底
+        assert _POMO_INPUT_DIALOG_QSS.count("#FFFFFF") >= 3, \
+            "Pomo input dialog QSS 应多处用 #FFFFFF（底+按钮默认态+文字）"
+        # 2) QSS 含 QPushButton 全状态
+        for s in ["QPushButton:hover", "QPushButton:pressed", "QPushButton:default"]:
+            assert s in _POMO_INPUT_DIALOG_QSS
+        # 3) QSS 含 QSpinBox 上下按钮
+        for s in ["QSpinBox::up-button", "QSpinBox::down-button"]:
+            assert s in _POMO_INPUT_DIALOG_QSS
+        # 4) 函数存在
+        assert callable(ask_pomo_int)
+
+    def test_v426_tray_and_window_use_ask_pomo_int(self):
+        """v4.26: tray.py 和 qt_window.py 都用 ask_pomo_int（不再用 QInputDialog.getInt）"""
+        import os
+        for path in ["gui/tray.py", "gui/qt_window.py"]:
+            with open(os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                path
+            ), encoding="utf-8") as f:
+                content = f.read()
+            assert "ask_pomo_int" in content, f"{path} 未引用 ask_pomo_int"
+            # 检查实际调用模式：QInputDialog.getInt( 不应出现（注释里可以提）
+            assert "QInputDialog.getInt(" not in content, \
+                f"{path} 还在调用 QInputDialog.getInt（黑底 bug）"
