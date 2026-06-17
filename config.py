@@ -147,3 +147,55 @@ def get_yaml_value(*keys, default: Any = None) -> Any:
         if value is None:
             return default
     return value
+
+
+def set_yaml_value(*keys, value: Any) -> None:
+    """设置 YAML 配置值（运行时，不立即写盘）
+
+    Args:
+        keys: 配置键路径，例如 set_yaml_value("voice", "enabled", value=False)
+        value: 要设置的值
+    """
+    config = load_yaml_config()
+    d = config
+    for key in keys[:-1]:
+        if key not in d or not isinstance(d[key], dict):
+            d[key] = {}
+        d = d[key]
+    d[keys[-1]] = value
+
+
+def save_yaml_config(config_path: Optional[str] = None) -> bool:
+    """将当前运行时配置持久化到 YAML 文件
+
+    Args:
+        config_path: 目标路径，默认为 config.yaml
+
+    Returns:
+        True 保存成功
+    """
+    global _yaml_config
+
+    if _yaml_config is None:
+        return False
+
+    if config_path is None:
+        config_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "config.yaml"
+        )
+
+    try:
+        import yaml
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(_yaml_config, f, allow_unicode=True, default_flow_style=False)
+        return True
+    except Exception as e:
+        print(f"Warning: Failed to save config.yaml: {e}")
+        return False
+
+
+def reset_yaml_cache() -> None:
+    """重置 YAML 缓存，下次 load 重新读取文件"""
+    global _yaml_config
+    _yaml_config = None

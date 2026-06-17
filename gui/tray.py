@@ -127,6 +127,10 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         self._dnd_action.setChecked(False)
         self._dnd_action.triggered.connect(self._toggle_dnd)
 
+        # v4.22: 设置面板
+        settings_action = menu.addAction("设置...")
+        settings_action.triggered.connect(self._show_settings)
+
         menu.addSeparator()
 
         # 退出
@@ -444,6 +448,19 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         """切换免打扰模式"""
         self._do_not_disturb = checked
         logger.info("免打扰模式: %s", "ON" if checked else "OFF")
+
+    def _show_settings(self):
+        """打开设置对话框"""
+        from gui.settings_dialog import SettingsDialog
+        dlg = SettingsDialog(self._window)
+        dlg.exec_()
+        # 保存后刷新语音开关状态
+        try:
+            from config import get_yaml_value
+            voice_enabled = get_yaml_value("voice", "enabled", default=True)
+            self.set_voice_enabled(voice_enabled)
+        except Exception:
+            pass
 
     def _exit_app(self):
         """完全退出程序"""
