@@ -142,19 +142,35 @@ class SettingsDialog(QDialog):
         ai_layout = QFormLayout(ai_group)
         self._ai_backend = QComboBox()
         self._ai_backend.addItem("内置分析（模板）", "template")
+        self._ai_backend.addItem("OpenAI 兼容 (GPT/DeepSeek/Kimi...)", "openai")
         self._ai_backend.addItem("Claude API", "claude")
+        self._ai_backend.addItem("Google Gemini", "gemini")
         self._ai_backend.addItem("Ollama 本地", "ollama")
         self._ai_backend.addItem("本地模型 (Qwen2.5)", "local")
+        self._ai_backend.currentIndexChanged.connect(self._on_ai_backend_changed)
         ai_layout.addRow("分析引擎：", self._ai_backend)
 
+        # 存储标签引用以便显示/隐藏
+        self._ai_provider = QComboBox()
+        self._ai_provider.addItem("OpenAI GPT-4o", "openai")
+        self._ai_provider.addItem("DeepSeek V4", "deepseek")
+        self._ai_provider.addItem("Moonshot Kimi", "moonshot")
+        self._ai_provider.addItem("智谱 GLM", "zhipu")
+        self._ai_provider.addItem("通义千问 Qwen", "qwen")
+        self._ai_provider.addItem("OpenRouter", "openrouter")
+        self._ai_provider.addItem("Together AI", "together")
+        self._ai_provider.addItem("Groq", "groq")
+        self._ai_provider.addItem("自定义", "__custom__")
+        self._ai_provider_row = ai_layout.addRow("提供商：", self._ai_provider)
+
         self._ai_api_key = QLineEdit()
-        self._ai_api_key.setPlaceholderText("sk-ant-...（仅 Claude 需要）")
+        self._ai_api_key.setPlaceholderText("API Key...")
         self._ai_api_key.setEchoMode(QLineEdit.Password)
         ai_layout.addRow("API Key：", self._ai_api_key)
 
-        self._ai_ollama_url = QLineEdit("http://127.0.0.1:11434")
-        self._ai_ollama_url.setPlaceholderText("Ollama 服务地址")
-        ai_layout.addRow("Ollama 地址：", self._ai_ollama_url)
+        self._ai_base_url = QLineEdit("https://api.openai.com/v1")
+        self._ai_base_url.setPlaceholderText("自定义 API 地址")
+        self._ai_url_row = ai_layout.addRow("API 地址：", self._ai_base_url)
         layout.addWidget(ai_group)
 
         # ── 番茄工作法 ──
@@ -224,6 +240,23 @@ class SettingsDialog(QDialog):
 
         layout.addLayout(btn_layout)
 
+    def _on_ai_backend_changed(self, idx: int) -> None:
+        """切换 AI 后端时显示/隐藏相关字段"""
+        backend = self._ai_backend.itemData(idx)
+        is_openai = (backend == "openai")
+        self._ai_provider.setVisible(is_openai)
+        self._ai_base_url.setVisible(is_openai)
+        if hasattr(self, '_ai_provider_row'):
+            for i in range(self._ai_provider_row.count()):
+                w = self._ai_provider_row.itemAt(i)
+                if w and w.widget():
+                    w.widget().setVisible(is_openai)
+        if hasattr(self, '_ai_url_row'):
+            for i in range(self._ai_url_row.count()):
+                w = self._ai_url_row.itemAt(i)
+                if w and w.widget():
+                    w.widget().setVisible(is_openai)
+
     def _on_save(self) -> None:
         """保存设置并关闭"""
         from config import set_yaml_value, save_yaml_config
@@ -238,8 +271,9 @@ class SettingsDialog(QDialog):
         set_yaml_value("camera", "index", value=camera_idx)
         set_yaml_value("voice", "enabled", value=voice_on)
         set_yaml_value("ai", "backend", value=self._ai_backend.currentData())
+        set_yaml_value("ai", "provider", value=self._ai_provider.currentData())
         set_yaml_value("ai", "api_key", value=self._ai_api_key.text())
-        set_yaml_value("ai", "ollama_url", value=self._ai_ollama_url.text())
+        set_yaml_value("ai", "base_url", value=self._ai_base_url.text())
 
         # 番茄时间不持久化到 config.yaml（但应用到运行中引擎）
         self._apply_pomodoro_settings(pomo_work, pomo_break)

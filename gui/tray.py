@@ -126,6 +126,27 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         self._dnd_action.setChecked(False)
         self._dnd_action.triggered.connect(self._toggle_dnd)
 
+        # v4.24: AI 分析子菜单
+        self._ai_menu = menu.addMenu("🤖 AI 分析")
+        self._ai_menu.addAction("生成分析摘要").triggered.connect(self._generate_ai_analysis)
+        self._ai_menu.addAction("测试 API 连接").triggered.connect(self._test_ai_connection)
+        self._ai_menu.addSeparator()
+        # 后端切换子菜单
+        self._ai_backends = QMenu("切换后端", self._ai_menu)
+        for backend, label in [("template", "内置分析（模板）"),
+                               ("openai", "OpenAI 兼容"),
+                               ("claude", "Claude API"),
+                               ("gemini", "Google Gemini"),
+                               ("ollama", "Ollama 本地"),
+                               ("local", "本地模型 (Qwen2.5)")]:
+            a = self._ai_backends.addAction(label)
+            a.setCheckable(True)
+            a.setData(backend)
+            a.triggered.connect(lambda checked, b=backend: self._switch_ai_backend(b))
+        self._ai_menu.addMenu(self._ai_backends)
+        self._ai_menu.addSeparator()
+        self._ai_menu.addAction("API 设置...").triggered.connect(self._show_settings)
+
         # v4.22: 设置面板
         settings_action = menu.addAction("设置...")
         settings_action.triggered.connect(self._show_settings)
@@ -470,6 +491,86 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             self.set_voice_enabled(voice_enabled)
         except Exception:
             pass
+
+    # ── v4.24: AI 分析 ──
+
+    def _generate_ai_analysis(self):
+        """立即生成 AI 分析摘要"""
+        try:
+            from analyzer.llm_client import create_llm_client
+            from config import get_yaml_value
+
+            backend = get_yaml_value("ai", "backend", default="template")
+            api_key = get_yaml_value("ai", "api_key", default="")
+            base_url = get_yaml_value("ai", "base_url", default="")
+            provider = get_yaml_value("ai", "provider", default="openai")
+
+            kwargs = {"api_key": api_key}
+            if backend == "openai":
+                kwargs["provider"] = provider
+                kwargs["base_url"] = base_url
+            elif backend == "ollama":
+                kwargs["base_url"] = get_yaml_value("ai", "ollama_url", default="http://127.0.0.1:11434")
+
+            client = create_llm_client(backend, **kwargs)
+            if not client.available:
+                self.showMessage("AI 分析", f"{client.name} 不可用，请检查配置", QSystemTrayIcon.Critical, 3000)
+                return
+
+            # 收集当前会话数据
+            app = getattr(self, '_app', None)
+            if not app or not hasattr(app, '_frame_processor'):
+                return
+            fp = app._frame_processor
+            score = fp.latest_focus_result.focus_score if fp.latest_focus_result else 50
+            data = {
+                "duration": 0, "avg_focus": score, "baseline": 60,
+                "seg_start": score, "seg_mid": score, "seg_end": score,
+                "distractions": 0, "head_pct": 0, "gaze_pct": 0,
+                "fatigue": "LOW", "pomo_count": 0, "streak": 0,
+            }
+            result = client.analyze(data)
+            self.showMessage("AI 分析结果", result[:120], QSystemTrayIcon.Information, 5000)
+        except Exception as e:
+            logger.warning("AI 分析失败: %s", e)
+            self.showMessage("AI 分析", f"生成失败: {e}", QSystemTrayIcon.Critical, 3000)
+
+    def _test_ai_connection(self):
+        """测试当前 AI 后端的连通性"""
+        try:
+            from analyzer.llm_client import create_llm_client
+            from config import get_yaml_value
+
+            backend = get_yaml_value("ai", "backend", default="template")
+            api_key = get_yaml_value("ai", "api_key", default="")
+            base_url = get_yaml_value("ai", "base_url", default="")
+            provider = get_yaml_value("ai", "provider", default="openai")
+
+            kwargs = {"api_key": api_key}
+            if backend == "openai":
+                kwargs["provider"] = provider
+                kwargs["base_url"] = base_url
+            elif backend == "ollama":
+                kwargs["base_url"] = get_yaml_value("ai", "ollama_url", default="http://127.0.0.1:11434")
+
+            client = create_llm_client(backend, **kwargs)
+            if client.available:
+                self.showMessage("API 测试", f"✅ {client.name} 连接正常", QSystemTrayIcon.Information, 3000)
+            else:
+                self.showMessage("API 测试", f"❌ {client.name} 不可用，请检查配置", QSystemTrayIcon.Critical, 3000)
+        except Exception as e:
+            self.showMessage("API 测试", f"❌ 测试失败: {e}", QSystemTrayIcon.Critical, 3000)
+
+    def _switch_ai_backend(self, backend: str):
+        """切换 AI 分析后端"""
+        from config import set_yaml_value, save_yaml_config
+        set_yaml_value("ai", "backend", value=backend)
+        save_yaml_config()
+        # 更新子菜单勾选状态
+        for a in self._ai_backends.actions():
+            a.setChecked(a.data() == backend)
+        logger.info("AI 后端已切换: %s", backend)
+        self.showMessage("AI 分析", f"已切换至 {backend}", QSystemTrayIcon.Information, 2000)
 
     def _exit_app(self):
         """完全退出程序"""
