@@ -418,6 +418,24 @@ class EyeFocusApp:
 
         # ⚠️ QApplication 只能创建一次
         self._qt_app = QApplication(sys.argv)
+        # v4.22: 强制 Fusion 风格 + 浅色调色板（防止系统暗色模式导致黑背景不可读）
+        from PyQt5.QtGui import QColor, QPalette
+        from PyQt5.QtWidgets import QStyleFactory
+        self._qt_app.setStyle(QStyleFactory.create("Fusion"))
+        _p = self._qt_app.palette()
+        _p.setColor(QPalette.Window, QColor(255, 255, 255))
+        _p.setColor(QPalette.WindowText, QColor(35, 32, 30))       # Warm Ink
+        _p.setColor(QPalette.Base, QColor(255, 255, 255))
+        _p.setColor(QPalette.AlternateBase, QColor(244, 242, 238)) # Stone
+        _p.setColor(QPalette.ToolTipBase, QColor(255, 255, 255))
+        _p.setColor(QPalette.ToolTipText, QColor(35, 32, 30))
+        _p.setColor(QPalette.Text, QColor(35, 32, 30))
+        _p.setColor(QPalette.Button, QColor(240, 240, 240))
+        _p.setColor(QPalette.ButtonText, QColor(35, 32, 30))
+        _p.setColor(QPalette.BrightText, QColor(255, 255, 255))
+        _p.setColor(QPalette.Highlight, QColor(91, 74, 140))       # Iris
+        _p.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
+        self._qt_app.setPalette(_p)
 
         # ── Qt 校准对话框（自有摄像头，释放后等待足够时间）──
         if self.config.enable_calibration:
@@ -1197,6 +1215,45 @@ class EyeFocusApp:
             logger.info("周报已生成: %s", path)
         except Exception as e:
             logger.warning("生成周报失败: %s", e)
+
+    def generate_report_snapshot(self) -> Optional[str]:
+        """生成当前会话的报告快照（不终止会话）
+
+        与 _finalize_session 不同：不设置 end_time/is_active=False。
+        用于托盘"打开报告"操作，让用户在不中断监测的前提下查看数据。
+
+        Returns:
+            报告文件路径，失败返回 None
+        """
+        if not self._db or not getattr(self, '_session_id', None):
+            logger.warning("generate_report_snapshot: 无活动会话")
+            return None
+
+        try:
+            from reporter.report_html import create_html_generator
+            import os
+
+            generator = create_html_generator(self._db)
+            try:
+                html = generator.generate_report_with_insights(self._session_id)
+            except Exception as e:
+                logger.warning("Insights 快照失败，回退到基础报告: %s", e)
+                try:
+                    html = generator.generate_report(self._session_id)
+                except Exception as e2:
+                    logger.error("基础报告也失败: %s", e2)
+                    html = self._error_report_html(str(e2))
+
+            os.makedirs("reports", exist_ok=True)
+            report_path = f"reports/{self._session_id}.html"
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(html)
+
+            logger.info("报告快照已生成: %s (会话继续)", report_path)
+            return os.path.abspath(report_path)
+        except Exception as e:
+            logger.warning("生成报告快照失败: %s", e)
+            return None
 
     def _finalize_session(self) -> None:
         """结束当前会话并生成含 insights 的 HTML 报告。

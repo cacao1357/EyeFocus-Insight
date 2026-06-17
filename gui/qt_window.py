@@ -65,6 +65,9 @@ class DataPanel(QWidget):
         super().__init__(parent)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMinimumHeight(200)
+        # v4.22: 显式白底（防止系统暗色模式导致透明背景透出黑色）
+        self.setAutoFillBackground(True)
+        self.setStyleSheet("background-color: #FFFFFF;")
 
     def paintEvent(self, event):
         painter = QPainter(self)

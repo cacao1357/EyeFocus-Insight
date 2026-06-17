@@ -246,33 +246,38 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         self.set_paused_state(paused)
 
     def _generate_report(self):
-        """生成报告并自动打开"""
+        """生成报告快照（不终止会话）并自动打开
+
+        v4.22 修复: 改用 generate_report_snapshot 而非 _finalize_session，
+        避免托盘"打开报告"意外结束当前会话。
+        """
         logger.info("托盘菜单: 打开报告")
-        if not hasattr(self._app, '_finalize_session'):
-            logger.warning("无法生成报告: _app 无 _finalize_session")
+        if not hasattr(self._app, 'generate_report_snapshot'):
+            logger.warning("无法生成报告: _app 无 generate_report_snapshot")
             return
-        # v4.19: 通知用户报告生成中
+
         self.showMessage(
             "EyeFocus Insight", "报告生成中（首次生成可能较慢）...",
             QSystemTrayIcon.Information, 3000,
         )
-        try:
-            self._app._finalize_session()
-        except Exception as e:
-            logger.warning("生成报告异常: %s", e)
-            self.showMessage("EyeFocus Insight", "报告生成失败", QSystemTrayIcon.Critical, 3000)
-            return
-        # 自动在浏览器中打开报告
-        sid = getattr(self._app, '_session_id', None)
-        if sid:
-            report_path = os.path.abspath(f"reports/{sid}.html")
-            if os.path.exists(report_path):
-                try:
-                    os.startfile(report_path)
-                    logger.info("报告已打开: %s", report_path)
-                except Exception as e:
-                    logger.warning("打开报告失败: %s", e)
-                    self.showMessage("EyeFocus Insight", f"打开报告失败", QSystemTrayIcon.Critical, 3000)
+
+        report_path = self._app.generate_report_snapshot()
+        if report_path and os.path.exists(report_path):
+            try:
+                os.startfile(report_path)
+                logger.info("报告已打开（会话继续）: %s", report_path)
+            except Exception as e:
+                logger.warning("打开报告失败: %s", e)
+                self.showMessage(
+                    "EyeFocus Insight", "打开报告失败，请手动打开 reports/ 目录",
+                    QSystemTrayIcon.Critical, 3000,
+                )
+        else:
+            logger.warning("报告生成失败或文件不存在")
+            self.showMessage(
+                "EyeFocus Insight", "报告生成失败，数据不足或系统错误",
+                QSystemTrayIcon.Critical, 3000,
+            )
 
     # ── v4.18: 最近会话 ──
 
@@ -329,13 +334,38 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
                 os.startfile(report_path)
                 logger.info("已打开报告: %s", report_path)
             else:
-                # 尝试先生成报告再打开
-                if hasattr(self._app, '_finalize_session'):
-                    # 切换到指定会话（如果当前会话不同需要先加载）
-                    pass
-                logger.warning("报告文件不存在: %s", report_path)
+                # 报告文件不存在 → 尝试重新生成（不终止会话）
+                logger.warning("报告文件不存在，尝试重新生成: %s", report_path)
+                self._try_regenerate_report(session_id)
         except Exception as e:
             logger.warning("打开报告失败: %s", e)
+
+    def _try_regenerate_report(self, session_id: str) -> None:
+        """尝试为指定会话重新生成报告文件"""
+        try:
+            from reporter.report_html import create_html_generator
+            import os
+            if not hasattr(self._app, '_db') or self._app._db is None:
+                logger.warning("无法重新生成报告: 数据库未就绪")
+                return
+            generator = create_html_generator(self._app._db)
+            html = None
+            try:
+                html = generator.generate_report_with_insights(session_id)
+            except Exception:
+                try:
+                    html = generator.generate_report(session_id)
+                except Exception as e2:
+                    logger.warning("重新生成报告失败 (基础报告也失败): %s", e2)
+            if html:
+                path = os.path.abspath(f"reports/{session_id}.html")
+                os.makedirs("reports", exist_ok=True)
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(html)
+                os.startfile(path)
+                logger.info("报告已重新生成并打开: %s", session_id)
+        except Exception as e:
+            logger.warning("重新生成报告失败: %s", e)
 
     # ── v4.18: 导出数据 ──
 

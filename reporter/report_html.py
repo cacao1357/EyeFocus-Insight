@@ -384,8 +384,8 @@ class HTMLReportGenerator:
         all_frames = self.db.get_frame_records(session_id)
         frame_records = all_frames[::max(1, len(all_frames) // 500)] if len(all_frames) > 500 else all_frames
 
-        # v4.11: 数据不足时显示占位页
-        if len(focus_records) < 3:
+        # v4.11: 数据不足时显示占位页（v4.22: 阈值 3→2，因生成报告不再终止会话）
+        if len(focus_records) < 2:
             return self._render_insufficient_data(session_id)
 
         # 计算统计信息
@@ -1514,11 +1514,13 @@ class HTMLReportGenerator:
             <div class="icon">⏳</div>
             <h2>数据收集中</h2>
             <p>
-                当前会话数据尚不足（< 3 个采样周期），请稍后查看。<br>
-                监测运行约 2 分钟后数据将自动可用。
+                当前会话数据尚不足（< 2 个采样周期），请稍后查看。<br>
+                监测运行约 1 分钟后数据将自动可用。<br><br>
+                提示：点击"打开报告"<strong>不会中断正在进行的监测</strong>，
+                您可以随时回来查看最新数据。
             </p>
             <p style="margin-top:16px;font-size:13px;color:#bbb;">
-                您也可以关闭窗口继续监测，之后再次点击"打开报告"
+                继续监测，待数据充足后重新点击"打开报告"
             </p>
         </div>
         <div class="footer">EyeFocus Insight | 自动生成的专注度分析报告</div>

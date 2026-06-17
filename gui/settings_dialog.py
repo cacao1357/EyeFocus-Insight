@@ -50,6 +50,34 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("EyeFocus 设置")
         self.setMinimumWidth(420)
         self.setModal(True)
+        # v4.22: 强制白底（防止系统暗色模式导致全黑不可读）
+        self.setStyleSheet("""
+            QDialog { background-color: #FFFFFF; }
+            QGroupBox {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E0E0;
+                border-radius: 8px;
+                margin-top: 10px;
+                font-weight: 600;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 6px;
+            }
+            QLabel { background: transparent; color: #23201E; }
+            QCheckBox { background: transparent; color: #23201E; }
+            QComboBox {
+                background: #FFFFFF; color: #23201E;
+                border: 1px solid #D0D0D0; border-radius: 4px;
+                padding: 4px 8px;
+            }
+            QSpinBox {
+                background: #FFFFFF; color: #23201E;
+                border: 1px solid #D0D0D0; border-radius: 4px;
+                padding: 4px 8px;
+            }
+        """)
 
     def _load_config(self) -> None:
         """从 config.yaml 读取当前值"""
