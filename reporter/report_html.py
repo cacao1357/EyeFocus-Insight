@@ -25,6 +25,7 @@ from storage.models import FocusRecord, FatigueRecord, FatigueLevel, BlinkRecord
 
 from reporter.charts import ChartGenerator, create_chart_generator
 from reporter.insights import InsightsEngine, Insight, create_insights_engine
+from reporter.font_loader import get_link_tag as _font_link_tag
 
 # v4.1: 可选 insights 集成
 try:
@@ -59,33 +60,82 @@ class HTMLReportGenerator:
         html_content = generator.generate_report(session_id)
     """
 
-    # CSS 样式 (v4.8: 多 Tab 布局)
+    # CSS 样式 (v4.26: 腕表背透视图 · Quiet Focus v2)
     CSS_STYLE = """
         <style>
             /* ═══════════════════════════════════════
-               Quiet Focus · 精密仪器美学
+               Quiet Focus · 精密仪器美学 v4.26
+               "腕表背透视图"
                Palette: Warm Ink · Stone · Iris · Sage
+               Typography: Fraunces · Inter · JetBrains Mono
                ═══════════════════════════════════════ */
+
+            /* 字体回退链 —— 在最前，离线时浏览器自然落到系统字体 */
             :root {
-                --ink: #23201E;
-                --stone: #F4F2EE;
-                --card: #FEFDFB;
-                --iris: #5B4A8C;
-                --sage: #5A8A6D;
-                --amber: #C9843A;
-                --rose: #B55C5C;
-                --quiet: #8B8680;
-                --line: #E6E2DC;
+                --font-display: 'Fraunces', Georgia, 'Times New Roman', 'Source Han Serif SC', 'Noto Serif SC', 'SimSun', serif;
+                --font-body:    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', sans-serif;
+                --font-mono:    'JetBrains Mono', 'Cascadia Mono', Consolas, 'SF Mono', 'Courier New', monospace;
+            }
+
+            /* 调色板（分层：墨 / 石 / 语义） */
+            :root {
+                /* 墨 · 文本 */
+                --ink-900: #1A1816;
+                --ink-700: #23201E;
+                --ink-400: #5A5650;
+                /* 石 · 背景 */
+                --stone-50:  #F8F6F2;
+                --stone-100: #F4F2EE;
+                --stone-200: #E6E2DC;
+                --stone-300: #D4D0CA;
+                --card:      #FEFDFB;
+                /* 语义色 */
+                --iris-600:  #4A3A7A;
+                --sage-600:  #4A7A5A;
+                --amber-600: #B87333;
+                --rose-600:  #A04A4A;
+                --quiet:     #8B8680;
+                /* 仪表渐变（rose → amber → sage，70+ 为佳） */
+                --gauge-low:  var(--rose-600);
+                --gauge-mid:  var(--amber-600);
+                --gauge-high: var(--sage-600);
+                /* 别名（兼容 v4.15- 旧 CSS） */
+                --ink:        var(--ink-700);
+                --stone:      var(--stone-100);
+                --iris:       var(--iris-600);
+                --sage:       var(--sage-600);
+                --amber:      var(--amber-600);
+                --rose:       var(--rose-600);
+                --line:       var(--stone-200);
                 --line-light: #F0EDE8;
             }
+
+            /* 排版尺度 */
+            :root {
+                --text-hero:    7rem;
+                --text-h1:      1.4rem;
+                --text-h2:      1rem;
+                --text-body:    0.875rem;
+                --text-caption: 0.75rem;
+                --text-micro:   0.6875rem;
+            }
+
             * { margin: 0; padding: 0; box-sizing: border-box; }
 
             body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
-                line-height: 1.55; color: var(--ink); background: var(--stone);
-                padding: 32px 20px; -webkit-font-smoothing: antialiased;
+                font-family: var(--font-body);
+                font-size: var(--text-body);
+                line-height: 1.55;
+                color: var(--ink-700);
+                background-color: var(--stone-100);
+                background-image: radial-gradient(circle, var(--stone-300) 0.5px, transparent 0.5px);
+                background-size: 28px 28px;
+                background-position: 0 0;
+                padding: 32px 20px;
+                -webkit-font-smoothing: antialiased;
+                -moz-osx-font-smoothing: grayscale;
             }
-            .container { max-width: 780px; margin: 0 auto; }
+            .container { max-width: 880px; margin: 0 auto; }
 
             /* ── Header · 顶部 Iris accent 条 ── */
             .header {
@@ -98,9 +148,9 @@ class HTMLReportGenerator:
                 background: var(--iris); margin-bottom: 24px;
             }
             .header h1 {
-                font-family: Georgia, 'Times New Roman', 'SimSun', serif;
-                font-size: 22px; font-weight: 400; color: var(--ink);
-                letter-spacing: -0.3px; margin-bottom: 4px;
+                font-family: var(--font-display);
+                font-size: var(--text-h1); font-weight: 500; color: var(--ink-900);
+                letter-spacing: -0.5px; margin-bottom: 4px;
             }
             .header .subtitle {
                 font-size: 12px; color: var(--quiet); font-weight: 400;
@@ -188,8 +238,8 @@ class HTMLReportGenerator:
                 box-shadow: 0 1px 6px rgba(0,0,0,0.03);
             }
             .card h2 {
-                font-family: Georgia, 'Times New Roman', 'SimSun', serif;
-                font-size: 15px; font-weight: 400; color: var(--ink);
+                font-family: var(--font-display);
+                font-size: var(--text-h2); font-weight: 500; color: var(--ink-900);
                 margin-bottom: 16px; padding-bottom: 10px;
                 border-bottom: 1px solid var(--line-light);
                 letter-spacing: -0.1px;
@@ -295,8 +345,132 @@ class HTMLReportGenerator:
             .collecting .icon { font-size: 48px; margin-bottom: 16px; }
             .collecting h2 { font-size: 18px; color: var(--ink); margin-bottom: 8px; }
             .collecting p { font-size: 13px; color: var(--quiet); line-height: 1.7; }
+
+            /* ═══════════════════════════════════════
+               v4.26: 腕表背透视图 — 新增组件
+               ═══════════════════════════════════════ */
+
+            /* ── Hero 刻度盘（270° SVG 仪表） ── */
+            .gauge-hero {
+                text-align: center;
+                padding: 56px 0 36px;
+                position: relative;
+            }
+            .gauge-svg {
+                width: 240px;
+                height: 240px;
+                display: block;
+                margin: 0 auto;
+            }
+            .gauge-track {
+                fill: none;
+                stroke: var(--stone-200);
+                stroke-width: 2;
+            }
+            .gauge-arc {
+                fill: none;
+                stroke: url(#gauge-gradient);
+                stroke-width: 6;
+                stroke-linecap: round;
+                transition: stroke-dasharray 900ms cubic-bezier(0.16, 1, 0.3, 1);
+            }
+            .gauge-tick {
+                stroke: var(--stone-300);
+                stroke-width: 1;
+                stroke-linecap: round;
+            }
+            .gauge-tick.major {
+                stroke: var(--quiet);
+                stroke-width: 1.5;
+            }
+            .gauge-center-num {
+                font-family: var(--font-display);
+                font-size: 88px;
+                font-weight: 500;
+                fill: var(--ink-900);
+                letter-spacing: -3px;
+                text-anchor: middle;
+                dominant-baseline: central;
+            }
+            .gauge-center-label {
+                font-family: var(--font-body);
+                font-size: 11px;
+                letter-spacing: 2.5px;
+                fill: var(--quiet);
+                text-anchor: middle;
+                font-weight: 500;
+                text-transform: uppercase;
+            }
+            .gauge-center-unit {
+                font-family: var(--font-body);
+                font-size: 11px;
+                fill: var(--quiet);
+                text-anchor: middle;
+            }
+            .gauge-time-row {
+                display: flex;
+                justify-content: space-between;
+                width: 280px;
+                margin: 10px auto 0;
+                font-family: var(--font-mono);
+                font-size: 10px;
+                color: var(--quiet);
+                letter-spacing: 1px;
+            }
+            .gauge-compare {
+                margin-top: 12px;
+                font-family: var(--font-body);
+                font-size: 13px;
+                font-weight: 500;
+                color: var(--iris-600);
+            }
+            .gauge-compare.down { color: var(--rose-600); }
+
+            /* ── 横排 stat row（替换 .stats-grid） ── */
+            .stat-row {
+                display: grid;
+                grid-template-columns: repeat(4, 1fr);
+                gap: 1px;
+                background: var(--stone-200);
+                border: 1px solid var(--stone-200);
+                margin-bottom: 32px;
+            }
+            .stat-row .stat-cell {
+                background: var(--card);
+                padding: 18px 20px;
+                text-align: left;
+            }
+            .stat-row .stat-value {
+                font-family: var(--font-mono);
+                font-size: 1.5rem;
+                font-weight: 500;
+                color: var(--ink-900);
+                line-height: 1.1;
+                letter-spacing: -0.5px;
+            }
+            .stat-row .stat-label {
+                font-size: 10px;
+                color: var(--quiet);
+                text-transform: uppercase;
+                letter-spacing: 1.5px;
+                margin-top: 8px;
+                font-weight: 500;
+            }
+            .stat-row .stat-sub {
+                font-size: 11px;
+                color: var(--ink-400);
+                margin-top: 4px;
+            }
+
+            /* ── 减少动效尊重 ── */
+            @media (prefers-reduced-motion: reduce) {
+                .gauge-arc { transition: none; }
+                * { animation-duration: 0.001ms !important; }
+            }
         </style>
     """
+
+    # v4.26: 字体 link 标签（实例属性 self._font_html 在 __init__ 中探测并缓存）
 
     # Tab 切换 JS
     PLOTLY_JS = '<script src="plotly.min.js"></script>'
@@ -335,6 +509,55 @@ class HTMLReportGenerator:
                 });
             }, 100);
         }
+
+        // v4.26: Hero 刻度盘 mount 动画
+        // 1) 数字 0 → target (count-up, 900ms ease-out cubic)
+        // 2) 弧形 stroke-dasharray 0 → target (CSS transition 900ms)
+        // 尊重 prefers-reduced-motion: 直接跳到目标值
+        function animateGauges() {
+            var prefersReduce = window.matchMedia &&
+                window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            document.querySelectorAll('.gauge-hero').forEach(function(hero) {
+                var target = parseFloat(hero.dataset.focus) || 0;
+
+                // 弧形填充
+                var arc = hero.querySelector('.gauge-arc');
+                if (arc) {
+                    var fillLen = parseFloat(arc.dataset.fill) || 0;
+                    var circ = parseFloat(arc.getAttribute('stroke-dasharray').split(' ')[1]) || 565.49;
+                    if (prefersReduce) {
+                        arc.style.strokeDasharray = fillLen + ' ' + (circ - fillLen);
+                    } else {
+                        requestAnimationFrame(function() {
+                            arc.style.strokeDasharray = fillLen + ' ' + (circ - fillLen);
+                        });
+                    }
+                }
+
+                // 数字 count-up
+                var num = hero.querySelector('.gauge-center-num');
+                if (!num) return;
+                if (prefersReduce) {
+                    num.textContent = Math.round(target);
+                    return;
+                }
+                var duration = 900;
+                var startTime = performance.now();
+                function step(now) {
+                    var t = Math.min((now - startTime) / duration, 1);
+                    var eased = 1 - Math.pow(1 - t, 3);
+                    num.textContent = Math.round(target * eased);
+                    if (t < 1) requestAnimationFrame(step);
+                }
+                requestAnimationFrame(step);
+            });
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', animateGauges);
+        } else {
+            animateGauges();
+        }
         </script>
     """
 
@@ -346,6 +569,9 @@ class HTMLReportGenerator:
     ):
         """初始化报告生成器
 
+        v4.26: 实例化时探测 Google Fonts 可达性，缓存到 self._font_html
+        （一次性，后续 _render_html 复用，不重复探测）
+
         Args:
             db_manager: 数据库管理器实例
             chart_generator: 图表生成器实例
@@ -355,6 +581,8 @@ class HTMLReportGenerator:
         self.chart_gen = chart_generator or create_chart_generator()
         # v4.10: 传递 db 给建议引擎（用于历史对比）
         self.insights_engine = insights_engine or create_insights_engine(db=db_manager)
+        # v4.26: 探测 Google Fonts 可达性，结果缓存到 <head>
+        self._font_html = _font_link_tag()
 
     def generate_report(self, session_id: str) -> str:
         """生成完整 HTML 报告
@@ -594,6 +822,7 @@ class HTMLReportGenerator:
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>EyeFocus Insight 专注度分析报告</title>
     {self.CSS_STYLE}
+    {self._font_html}
     {self.PLOTLY_JS}
 </head>
 <body>
@@ -657,35 +886,134 @@ class HTMLReportGenerator:
 
         return stats
 
+    def _render_hero_gauge(self, data: ReportData, stats: dict) -> str:
+        """v4.26: Hero 刻度盘 — 270° SVG 仪表，腕表背透视觉锚点
+
+        设计意图：让 72 分不再是裸数字，而是一个真正的仪表盘——
+        270° 真实刻度 + 渐变填充（rose→amber→sage 分段）
+        + 60 刻度（含 12 主刻度）+ 时间刻度行 + 历史对比箭头。
+
+        数字 mount 时由 JS count-up 0→target（900ms ease-out），
+        弧形 stroke-dasharray 由 CSS transition 同步动画。
+        """
+        import math
+        from datetime import timedelta as _td
+
+        score = max(0, min(100, round(stats["avg_focus"])))
+
+        # SVG 数学
+        cx, cy, r = 120, 120, 90
+        circ = 2 * math.pi * r          # ≈ 565.49
+        full_270 = circ * 0.75          # ≈ 424.12 (270° 弧长)
+        fill_len = full_270 * (score / 100.0)
+        gap_270 = circ - full_270       # 90° 缺口
+
+        # 60 刻度（每 4.5° 一格，12 主刻度 = 每 5 格）
+        tick_lines = []
+        for i in range(60):
+            angle = i * (270.0 / 60)    # 0 → 265.5
+            is_major = (i % 5 == 0)
+            cls = "gauge-tick major" if is_major else "gauge-tick"
+            # 短刻度 y=36→44；主刻度 y=32→44
+            y1, y2 = (32, 44) if is_major else (36, 44)
+            tick_lines.append(
+                f'<line class="{cls}" x1="120" y1="{y1}" x2="120" y2="{y2}" '
+                f'transform="rotate({angle:.1f} 120 120)" />'
+            )
+        ticks_svg = "\n                ".join(tick_lines)
+
+        # 峰值时刻（focus_score 最高的窗口）
+        peak_str = ""
+        try:
+            if data.focus_records and data.session.start_time:
+                best = max(data.focus_records, key=lambda r: (r.focus_score or 0))
+                if best.window_start is not None:
+                    peak_dt = data.session.start_time + _td(seconds=best.window_start)
+                    peak_str = f"★ {peak_dt.strftime('%H:%M')} 峰值"
+        except Exception:
+            pass
+
+        # 时间刻度行：开始 / 峰值(或时长) / 结束
+        sess = data.session
+        start_str = sess.start_time.strftime('%H:%M') if sess.start_time else "--:--"
+        if sess.end_time:
+            end_str = sess.end_time.strftime('%H:%M')
+        elif sess.start_time and data.total_duration:
+            end_dt = sess.start_time + _td(seconds=data.total_duration)
+            end_str = end_dt.strftime('%H:%M')
+        else:
+            end_str = "--:--"
+        middle_str = peak_str if peak_str else f"{int(data.total_duration/60)} min"
+
+        # 历史对比箭头
+        compare_html = ""
+        change = stats.get("focus_change")
+        if change is not None and stats.get("hist_avg_focus") is not None:
+            hist = stats["hist_avg_focus"]
+            if change >= 0:
+                compare_html = (
+                    f'<div class="gauge-compare">'
+                    f'↑ +{change:.0f}  vs  历史 {hist:.0f}'
+                    f'</div>'
+                )
+            else:
+                compare_html = (
+                    f'<div class="gauge-compare down">'
+                    f'↓ {change:.0f}  vs  历史 {hist:.0f}'
+                    f'</div>'
+                )
+
+        return f'''
+            <div class="gauge-hero" data-focus="{score}">
+                <svg class="gauge-svg" viewBox="0 0 240 240" xmlns="http://www.w3.org/2000/svg"
+                     role="img" aria-label="专注指数仪表盘 {score} / 100">
+                    <defs>
+                        <linearGradient id="gauge-gradient" x1="0%" y1="100%" x2="100%" y2="0%">
+                            <stop offset="0%"   stop-color="#A04A4A" />
+                            <stop offset="50%"  stop-color="#B87333" />
+                            <stop offset="100%" stop-color="#4A7A5A" />
+                        </linearGradient>
+                    </defs>
+
+                    <!-- 背景轨道（270° 静态，缺口朝上） -->
+                    <circle class="gauge-track" cx="{cx}" cy="{cy}" r="{r}"
+                            stroke-dasharray="{full_270:.2f} {gap_270:.2f}"
+                            transform="rotate(135 {cx} {cy})" />
+
+                    <!-- 填充弧（JS 动画 stroke-dasharray） -->
+                    <circle class="gauge-arc" cx="{cx}" cy="{cy}" r="{r}"
+                            stroke-dasharray="0 {circ:.2f}"
+                            data-fill="{fill_len:.2f}"
+                            transform="rotate(135 {cx} {cy})" />
+
+                    <!-- 60 刻度（含 12 主刻度） -->
+                    <g transform="rotate(135 {cx} {cy})">
+                        {ticks_svg}
+                    </g>
+
+                    <!-- 中心数字（JS count-up 0→target） -->
+                    <text class="gauge-center-num" x="{cx}" y="{cy}">0</text>
+                    <text class="gauge-center-unit" x="{cx}" y="{cy + 32}">/ 100</text>
+                    <text class="gauge-center-label" x="{cx}" y="{cy + 56}">专注指数</text>
+                </svg>
+
+                <div class="gauge-time-row">
+                    <span>{start_str}</span>
+                    <span>{middle_str}</span>
+                    <span>{end_str}</span>
+                </div>
+
+                {compare_html}
+            </div>
+        '''
+
     def _render_overview_tab(self, data: ReportData, charts: dict) -> str:
-        """v4.15: Quiet Focus 美学 — Hero数字 + 精简卡片"""
+        """v4.26: Hero 刻度盘 + 4 横排指标 + 周报 + 成就"""
         stats = self._compute_overview_stats(data)
         parts = []
 
-        # ── Hero 数字 ──
-        avg_focus = stats["avg_focus"]
-        if avg_focus >= 70:
-            hero_color = "#5A8A6D"
-        elif avg_focus >= 50:
-            hero_color = "#C9843A"
-        else:
-            hero_color = "#B55C5C"
-
-        parts.append(f'''
-            <div class="focus-hero">
-                <div class="hero-ring"></div>
-                <div class="hero-value" style="color:{hero_color}">{avg_focus:.0f}</div>
-                <div class="hero-label">平均专注度</div>
-            </div>''')
-
-        if stats["focus_change"] is not None:
-            arrow = "↑" if stats["focus_change"] >= 0 else "↓"
-            dc = "#5A8A6D" if stats["focus_change"] >= 0 else "#B55C5C"
-            parts.append(
-                f'<div class="hero-compare" style="color:{dc}">'
-                f'{arrow} {abs(stats["focus_change"]):.0f} vs 历史平均 {stats["hist_avg_focus"]:.0f}'
-                f'</div>'
-            )
+        # ── v4.26: Hero 刻度盘（替换旧 .focus-hero）──
+        parts.append(self._render_hero_gauge(data, stats))
 
         # ── 统计卡片 ──
         duration_str = self._format_duration(stats["duration"])
@@ -704,11 +1032,11 @@ class HTMLReportGenerator:
             ("📊 有效专注率", f"{focus_rate:.0f}%", f"{focused_count}/{total_records} 段"),
         ]
 
-        parts.append('<div class="stats-grid">')
+        parts.append('<div class="stat-row">')
         for label, val, sub in cards:
             sub_html = f'<div class="stat-sub">{sub}</div>' if sub else ""
             parts.append(
-                f'<div class="stat-card">'
+                f'<div class="stat-cell">'
                 f'<div class="stat-value">{val}</div>'
                 f'<div class="stat-label">{label}</div>'
                 f'{sub_html}'

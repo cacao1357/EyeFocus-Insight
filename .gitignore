@@ -49,6 +49,9 @@ tmp_*/
 
 # ── 覆盖率 ──
 .coverage
+
+# ── 报告 UI 重构生成的示例 HTML（人眼审阅用，不入仓）──
+samples/
 htmlcov/
 .coverage.*
 
