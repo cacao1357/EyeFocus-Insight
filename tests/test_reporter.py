@@ -200,6 +200,36 @@ class TestChartGenerator:
         assert '"nticks":6' in trend, \
             "focus_trend 应限制 x 轴最多 6 个标签"
 
+    def test_v426_charts_y_title_horizontal(
+        self, chart_generator, sample_focus_records, sample_fatigue_records,
+    ):
+        """v4.26: y 轴标题应用 annotation + textangle=0 水平显示（修复"侧倒"）
+
+        Plotly 6.x 不支持 yaxis.title.textangle（Bad property path），
+        所以用 annotation 模拟水平标题。annotation 必含 textangle=0。
+        """
+        def _has_y_title_horizontal(html, chinese_text):
+            """检查 HTML 含 y 轴水平标题 annotation"""
+            # Plotly 把中文 unicode 转义为 \\uXXXX
+            escaped = ''.join(f'\\u{ord(c):04x}' for c in chinese_text)
+            # 1) annotation 含 textangle=0
+            if '"textangle":0' not in html:
+                return False
+            # 2) annotation 含目标文字（raw 或 unicode 转义）
+            if chinese_text in html or escaped in html:
+                return True
+            return False
+
+        # 3 个时间序列图
+        cases = [
+            ("focus_trend", chart_generator.generate_focus_trend_chart(sample_focus_records), "专注度"),
+            ("blink_rate", chart_generator.generate_blink_rate_chart(sample_focus_records), "次/分"),
+            ("fatigue_timeline", chart_generator.generate_fatigue_timeline(sample_fatigue_records), "疲劳分"),
+        ]
+        for name, html, text in cases:
+            assert _has_y_title_horizontal(html, text), \
+                f"{name}: y 轴标题 '{text}' 应用 annotation + textangle=0 水平显示"
+
     def test_generate_blink_rate_chart(self, chart_generator, sample_focus_records):
         """v4.16: 测试 Plotly 眨眼频率图生成"""
         result = chart_generator.generate_blink_rate_chart(sample_focus_records)

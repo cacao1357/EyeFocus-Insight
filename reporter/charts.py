@@ -34,7 +34,7 @@ _LAYOUT_BASE = dict(
     paper_bgcolor=C_BG,
     plot_bgcolor=C_BG,
     font=dict(family="Microsoft YaHei, SimHei, sans-serif", size=11, color=C_INK),
-    margin=dict(l=40, r=20, t=30, b=48),
+    margin=dict(l=64, r=20, t=30, b=48),  # l=64 给 y 轴水平标题 annotation 留位
     hovermode="x unified",
     hoverlabel=dict(bgcolor="white", font_size=12, font_family="Microsoft YaHei, SimHei, sans-serif"),
     legend=dict(
@@ -62,6 +62,23 @@ def _level_color(score):
     if score >= 70: return C_SAGE
     if score >= 40: return C_AMBER
     return C_ROSE
+
+
+# v4.26: 水平 y 轴标题（修复"侧倒"）
+# Plotly 6.x 不支持 yaxis.title.textangle（"Bad property path"），
+# 用 annotation 模拟水平标题 —— paper 坐标系，x 轴外侧居中。
+def _y_title_axis() -> dict:
+    """yaxis 配置：关闭原生 title，释放空间给 annotation"""
+    return dict(title=None, title_standoff=0)
+
+def _y_title_annotation(text: str) -> dict:
+    """y 轴水平标题 annotation（paper 坐标）"""
+    return dict(
+        xref="paper", yref="paper",
+        x=-0.04, y=0.5, xanchor="right", yanchor="middle",
+        text=text, showarrow=False, textangle=0,
+        font=dict(size=10, color=C_QUIET),
+    )
 
 
 class ChartGenerator:
@@ -134,8 +151,9 @@ class ChartGenerator:
 
         fig.update_layout(**_LAYOUT_BASE)
         fig.update_layout(
-            yaxis=dict(**_LAYOUT_BASE["yaxis"], range=[0, 105], title="专注度"),
+            yaxis=dict(**_LAYOUT_BASE["yaxis"], range=[0, 105], **_y_title_axis()),
             xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间"),
+            annotations=[_y_title_annotation("专注度")],
             showlegend=False,
         )
         return self._to_html(fig, height=240)
@@ -170,8 +188,9 @@ class ChartGenerator:
 
         fig.update_layout(**_LAYOUT_BASE)
         fig.update_layout(
-            yaxis=dict(**_LAYOUT_BASE["yaxis"], title="次/分"),
+            yaxis=dict(**_LAYOUT_BASE["yaxis"], **_y_title_axis()),
             xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间"),
+            annotations=[_y_title_annotation("次/分")],
             showlegend=False,
         )
         return self._to_html(fig, height=200)
@@ -201,8 +220,9 @@ class ChartGenerator:
 
         fig.update_layout(**_LAYOUT_BASE)
         fig.update_layout(
-            yaxis=dict(**_LAYOUT_BASE["yaxis"], title="疲劳分"),
+            yaxis=dict(**_LAYOUT_BASE["yaxis"], **_y_title_axis()),
             xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间"),
+            annotations=[_y_title_annotation("疲劳分")],
             showlegend=False,
         )
         return self._to_html(fig, height=220)
@@ -284,14 +304,16 @@ class ChartGenerator:
 
         fig.update_layout(**_LAYOUT_BASE)
         fig.update_layout(
-            yaxis=dict(**_LAYOUT_BASE["yaxis"], title="偏移度 (°)", range=[0, max(devs)*1.15]),
+            yaxis=dict(**_LAYOUT_BASE["yaxis"], **_y_title_axis(),
+                       range=[0, max(devs)*1.15]),
             xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间"),
             showlegend=False,
             annotations=(
                 _LAYOUT_BASE.get("annotations", []) + [
                     dict(x=1, y=0.98, xref="paper", yref="paper", xanchor="right", yanchor="top",
                          text=f"≤20° 舒适区占 {pct:.0f}%", showarrow=False,
-                         font=dict(size=11, color=C_SAGE), bgcolor="rgba(254,253,251,0.85)")
+                         font=dict(size=11, color=C_SAGE), bgcolor="rgba(254,253,251,0.85)"),
+                    _y_title_annotation("偏移度 (°)"),
                 ]
             ),
         )
@@ -410,9 +432,10 @@ class ChartGenerator:
                         pass
         fig.update_layout(**_LAYOUT_BASE)
         fig.update_layout(
-            yaxis=dict(**_LAYOUT_BASE["yaxis"], range=[0, 100], title="平均专注度"),
+            yaxis=dict(**_LAYOUT_BASE["yaxis"], range=[0, 100], **_y_title_axis()),
             xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时段",
                        tickvals=tick_vals, ticktext=[f"{h:02d}:00" for h in range(0, 24, 4)]),
+            annotations=[_y_title_annotation("平均专注度")],
             showlegend=False,
         )
         return self._to_html(fig, height=220)
@@ -556,7 +579,7 @@ class ChartGenerator:
             zmax=max(1, max_min),
             showscale=True,
             colorbar=dict(
-                title=dict(text="分钟/天", side="right"),
+                title=dict(text="分钟/天", side="top"),  # 水平放顶部，不侧倒
                 thickness=12,
                 len=0.65,
                 tickfont=dict(size=9, color=C_QUIET),
