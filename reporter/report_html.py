@@ -394,8 +394,8 @@ class HTMLReportGenerator:
         total_duration = session.duration_seconds() or 0.0
         fatigue_level = self._determine_fatigue_level(fatigue_records)
 
-        # 生成报告数据
-        report_data = ReportData(
+        # v4.24: 存储数据供 AI 摘要使用
+        report_data = self._data = ReportData(
             session=session,
             focus_records=focus_records,
             fatigue_records=fatigue_records,
@@ -448,8 +448,8 @@ class HTMLReportGenerator:
         total_duration = session.duration_seconds() or 0.0
         fatigue_level = self._determine_fatigue_level(fatigue_records)
 
-        # 生成报告数据
-        report_data = ReportData(
+        # v4.24: 存储数据供 AI 摘要使用
+        report_data = self._data = ReportData(
             session=session,
             focus_records=focus_records,
             fatigue_records=fatigue_records,
@@ -814,7 +814,23 @@ class HTMLReportGenerator:
             return ""
 
     def _render_analysis_tab(self, charts: dict) -> str:
-        """v4.15: 数据分析 Tab"""
+        """v4.15: 数据分析 Tab（v4.24: 增加 AI 分析摘要）"""
+        parts = []
+
+        # ── AI 分析摘要 ──
+        try:
+            summary = self._generate_ai_summary()
+            if summary:
+                parts.append(f'''
+            <div class="card" style="background:linear-gradient(135deg,#F4F2EE,#FFFFFF);border-left:4px solid #5B4A8C;">
+                <h2>🤖 专注度分析报告</h2>
+                <div class="card-desc" style="font-size:15px;line-height:1.8;color:#23201E;padding:8px 0;">
+                    {summary}
+                </div>
+            </div>''')
+        except Exception:
+            pass
+
         sections = [
             ("专注度趋势",
              "全程专注度变化。绿/橙/红背景对应专注/一般/分心，参考线 70 分为良好线。",
@@ -830,7 +846,6 @@ class HTMLReportGenerator:
              "head_pose_scatter"),
         ]
 
-        parts = []
         for title, desc, key in sections:
             chart_html = charts.get(key, '<div class="no-data">无数据</div>')
             parts.append(f'''
@@ -841,6 +856,67 @@ class HTMLReportGenerator:
             </div>''')
 
         return "\n".join(parts)
+
+    def _generate_ai_summary(self) -> str:
+        """基于会话数据生成 AI 分析摘要（模板版，零依赖）"""
+        data = self._data if hasattr(self, '_data') and self._data else None
+        if not data or not data.session:
+            return ""
+
+        import html as _html
+        session = data.session
+        fr = data.focus_records or []
+        fatigue = data.fatigue_records or []
+        dist = getattr(data, 'distraction_records', None) or []
+
+        avg = self._calc_avg_focus(fr)
+        if avg == 0 and not fr:
+            return ""
+
+        parts = []
+        # 整体评价
+        if avg >= 80:
+            parts.append(f"本次会话专注度 {avg:.0f} 分，表现优秀，保持了良好的工作状态。")
+        elif avg >= 65:
+            parts.append(f"本次会话专注度 {avg:.0f} 分，整体表现良好。")
+        elif avg >= 50:
+            parts.append(f"本次会话专注度 {avg:.0f} 分，适中水平，有一定提升空间。")
+        else:
+            parts.append(f"本次会话专注度 {avg:.0f} 分，偏低，建议调整工作节奏。")
+
+        # 时间分段
+        dur = session.duration_seconds() or 0
+        if dur > 180 and fr:
+            third = len(fr) // 3
+            start_avg = self._calc_avg_focus(fr[:third]) if third > 0 else avg
+            end_avg = self._calc_avg_focus(fr[-third:]) if third > 0 else avg
+            if start_avg - end_avg > 10:
+                parts.append(f"前段专注度 {start_avg:.0f} 分，后段降至 {end_avg:.0f} 分，"
+                             f"下降 {start_avg - end_avg:.0f} 分，中途可能需要休息。")
+            elif end_avg - start_avg > 10:
+                parts.append(f"后段专注度 {end_avg:.0f} 分高于前段 {start_avg:.0f} 分，渐入佳境。")
+
+        # 疲劳
+        if fatigue:
+            high_count = sum(1 for r in fatigue if r.fatigue_level.name == "HIGH")
+            if high_count > len(fatigue) * 0.3:
+                parts.append("疲劳信号较多，建议今晚保证充足睡眠。")
+            elif high_count > 0:
+                parts.append("有轻微疲劳迹象，注意适时放松眼部。")
+
+        # 时长
+        minutes = dur / 60
+        if minutes > 90:
+            parts.append(f"连续工作 {minutes:.0f} 分钟，建议使用番茄钟规律休息。")
+        elif minutes > 0:
+            parts.append(f"会话时长 {minutes:.0f} 分钟。")
+
+        # 分心
+        dist_count = len(dist)
+        if dist_count > 10:
+            parts.append(f"分心 {dist_count} 次偏多，可尝试排除环境干扰。")
+
+        return _html.escape("".join(parts))
 
     def _render_insights_tab(self, charts: dict, insights: List[Insight]) -> str:
         """v4.13: 改善建议 Tab（统一所有建议 + 高级图表）"""

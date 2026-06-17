@@ -21,6 +21,7 @@ from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QLineEdit,
     QDialogButtonBox,
     QFormLayout,
     QGroupBox,
@@ -136,6 +137,26 @@ class SettingsDialog(QDialog):
             QLabel("TTS 基于 pyttsx3 (仅 Windows SAPI5)"))
         layout.addWidget(voice_group)
 
+        # ── AI 分析 ──
+        ai_group = QGroupBox("🤖 AI 分析摘要")
+        ai_layout = QFormLayout(ai_group)
+        self._ai_backend = QComboBox()
+        self._ai_backend.addItem("内置分析（模板）", "template")
+        self._ai_backend.addItem("Claude API", "claude")
+        self._ai_backend.addItem("Ollama 本地", "ollama")
+        self._ai_backend.addItem("本地模型 (Qwen2.5)", "local")
+        ai_layout.addRow("分析引擎：", self._ai_backend)
+
+        self._ai_api_key = QLineEdit()
+        self._ai_api_key.setPlaceholderText("sk-ant-...（仅 Claude 需要）")
+        self._ai_api_key.setEchoMode(QLineEdit.Password)
+        ai_layout.addRow("API Key：", self._ai_api_key)
+
+        self._ai_ollama_url = QLineEdit("http://127.0.0.1:11434")
+        self._ai_ollama_url.setPlaceholderText("Ollama 服务地址")
+        ai_layout.addRow("Ollama 地址：", self._ai_ollama_url)
+        layout.addWidget(ai_group)
+
         # ── 番茄工作法 ──
         pomo_group = QGroupBox("🍅 番茄工作法")
         pomo_layout = QFormLayout(pomo_group)
@@ -216,6 +237,9 @@ class SettingsDialog(QDialog):
         # 写入运行时配置
         set_yaml_value("camera", "index", value=camera_idx)
         set_yaml_value("voice", "enabled", value=voice_on)
+        set_yaml_value("ai", "backend", value=self._ai_backend.currentData())
+        set_yaml_value("ai", "api_key", value=self._ai_api_key.text())
+        set_yaml_value("ai", "ollama_url", value=self._ai_ollama_url.text())
 
         # 番茄时间不持久化到 config.yaml（但应用到运行中引擎）
         self._apply_pomodoro_settings(pomo_work, pomo_break)
