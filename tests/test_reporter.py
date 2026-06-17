@@ -800,6 +800,47 @@ class TestHTMLReportGenerator:
         assert '<div class="focus-hero">' not in html, \
             "旧的 .focus-hero div 应已被替换"
 
+    def test_v426_gauge_center_text_no_overlap(self, html_generator):
+        """v4.26: Hero 大数字与 /100 / 专注指数 不重叠
+
+        数字 88px font 居中在 y=120（dominant-baseline=central）
+        → 视觉范围 y=76~164
+        /100 应在 y≥170（top 约 161）才能避开数字底部
+        专注指数 应在 y≥193（top 约 184）才能避开 /100 底部
+        """
+        from reporter.report_html import ReportData
+        session = Session(
+            session_id="t", start_time=datetime.now(), end_time=datetime.now(),
+        )
+        data = ReportData(
+            session=session, focus_records=[], fatigue_records=[],
+            blink_records=[], frame_records=[],
+            avg_focus=72.0, avg_blink_rate=0.0,
+            total_duration=0.0, fatigue_level=FatigueLevel.LOW,
+        )
+        stats = {"avg_focus": 72.0, "focus_change": None, "hist_avg_focus": None}
+        out = html_generator._render_hero_gauge(data, stats)
+
+        # 解析 /100 的 y 属性
+        import re
+        m_unit = re.search(r'class="gauge-center-unit"[^>]*y="(\d+)"', out)
+        m_lbl = re.search(r'class="gauge-center-label"[^>]*y="(\d+)"', out)
+        assert m_unit, "/100 标签应存在"
+        assert m_lbl, "专注指数 标签应存在"
+        y_unit = int(m_unit.group(1))
+        y_lbl = int(m_lbl.group(1))
+
+        # 数字中心 y=120 + 88/2 = 164 是数字底部
+        # /100 baseline 应 >= 170 才不重叠
+        assert y_unit >= 170, \
+            f"/100 baseline y={y_unit} 应 >= 170（避开数字底部 164）"
+        # 专注指数 baseline 应 >= 193 才不与 /100 重叠
+        assert y_lbl >= 193, \
+            f"专注指数 baseline y={y_lbl} 应 >= 193（避开 /100 底部）"
+        # 专注指数应在 /100 之下
+        assert y_lbl > y_unit, \
+            f"专注指数 y={y_lbl} 应在 /100 y={y_unit} 之下"
+
     def test_v426_gauge_hero_renders_svg(self, html_generator):
         """v4.26: _render_hero_gauge 返回有效 SVG 包含所有视觉元素"""
         from reporter.report_html import ReportData

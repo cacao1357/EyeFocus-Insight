@@ -993,8 +993,8 @@ class HTMLReportGenerator:
 
                     <!-- 中心数字（JS count-up 0→target） -->
                     <text class="gauge-center-num" x="{cx}" y="{cy}">0</text>
-                    <text class="gauge-center-unit" x="{cx}" y="{cy + 32}">/ 100</text>
-                    <text class="gauge-center-label" x="{cx}" y="{cy + 56}">专注指数</text>
+                    <text class="gauge-center-unit" x="{cx}" y="{cy + 58}">/ 100</text>
+                    <text class="gauge-center-label" x="{cx}" y="{cy + 80}">专注指数</text>
                 </svg>
 
                 <div class="gauge-time-row">
