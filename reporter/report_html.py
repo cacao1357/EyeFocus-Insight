@@ -970,7 +970,7 @@ class HTMLReportGenerator:
         if not data or not data.session:
             return ""
 
-        # ── 尝试 LLM 后端 ──
+        # ── 尝试 LLM 后端（仅本地） ──
         try:
             from config import get_yaml_value
             from concurrent.futures import ThreadPoolExecutor as _TPE, TimeoutError as _TO
@@ -978,15 +978,8 @@ class HTMLReportGenerator:
 
             backend = get_yaml_value("ai", "backend", default="template")
             if backend != "template":
-                api_key = get_yaml_value("ai", "api_key", default="")
-                base_url = get_yaml_value("ai", "base_url", default="")
-                provider = get_yaml_value("ai", "provider", default="openai")
-
-                kwargs = {"api_key": api_key}
-                if backend == "openai":
-                    kwargs["provider"] = provider
-                    kwargs["base_url"] = base_url
-                elif backend == "ollama":
+                kwargs = {}
+                if backend == "ollama":
                     kwargs["base_url"] = get_yaml_value("ai", "ollama_url",
                                                          default="http://127.0.0.1:11434")
 

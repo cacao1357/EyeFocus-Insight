@@ -75,6 +75,9 @@ scripts/models/
 *.bin
 *.ggml
 
+# ── 样本数据（不入仓）──
+/samples/
+
 # ── 历史归档文档（不纳入工作树）──
 docs/archive/
 docs/old_schemes/

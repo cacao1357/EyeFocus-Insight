@@ -427,9 +427,8 @@ class TestV426DropdownWhiteBg:
         """每个 QComboBox/QSpinBox/QLineEdit 都设了实例级 QSS"""
         from gui.settings_dialog import SettingsDialog
         dlg = SettingsDialog()
-        for w in [dlg._cam_combo, dlg._ai_backend, dlg._ai_provider,
-                  dlg._pomo_work_spin, dlg._pomo_break_spin,
-                  dlg._ai_api_key, dlg._ai_base_url]:
+        for w in [dlg._cam_combo, dlg._ai_backend,
+                  dlg._pomo_work_spin, dlg._pomo_break_spin]:
             assert w.styleSheet(), f"{type(w).__name__} 未 setStyleSheet"
 
     def test_pomo_input_dialog_qss_white(self):
@@ -451,47 +450,6 @@ class TestV426DropdownWhiteBg:
                 content = f.read()
             assert "ask_pomo_int" in content
             assert "QInputDialog.getInt(" not in content
-
-    def test_v426_4_api_key_toggle_no_border(self):
-        """v4.26.4: API key 切换按钮 border: none + outline: none，彻底去黑边
-
-        修复历史：
-          v4.26.1: per-widget QSS 被 QDialog 级覆盖 → QDialog 级 QSS
-          v4.26.2: QSS transparent + setFlat + WA_NoSystemBackground + Palette
-                    （Windows 暗色主题系统 Button 角色强制黑，4 道防线全败）
-          v4.26.3: 普通 QPushButton + per-instance 白底 QSS（背景白底成功）
-          v4.26.4: 加 border: none + outline: none，去掉：
-                    - 按钮自身的边框（Windows 主题下可能渲染偏暗）
-                    - Qt 默认 focus 矩形（点击后画的 1px 黑虚线框，QSS 管不到）
-                    → 按钮完全融入背景，只剩 input 的 1px 灰边作为分隔
-
-        验证项：
-          1. setObjectName('apiKeyToggle')
-          2. isFlat() == False
-          3. per-instance QSS 含 #FFFFFF 背景（白底）
-          4. per-instance QSS 含 border: none（无按钮边框）
-          5. per-instance QSS 含 outline: none（无 focus 矩形）
-          6. QSS 用 #apiKeyToggle id 选择器
-        """
-        from gui.settings_dialog import SettingsDialog
-        dlg = SettingsDialog()
-        btn = dlg._api_key_toggle_btn
-        # 1. objectName
-        assert btn.objectName() == "apiKeyToggle"
-        # 2. 不再 setFlat
-        assert btn.isFlat() is False
-        # 3. 白底
-        btn_qss = btn.styleSheet()
-        assert "background-color: #FFFFFF" in btn_qss
-        assert "background-color: transparent" not in btn_qss
-        # 4. 无按钮边框（避免 Windows 主题下边框偏暗）
-        # 检查 :focus 状态显式 border: none
-        assert "QPushButton#apiKeyToggle:focus" in btn_qss
-        assert "border: none" in btn_qss
-        # 5. outline: none（去掉 Qt 默认 focus 矩形）
-        assert "outline: none" in btn_qss
-        # 6. id 选择器保 specificity
-        assert "QPushButton#apiKeyToggle" in btn_qss
 
     def test_v426_1_pomo_dialog_no_help_button(self):
         """v4.26.1: ask_pomo_int 去掉标题栏 ? 帮助按钮"""

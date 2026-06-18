@@ -1,12 +1,12 @@
 """
-analyzer/llm_client.py — LLM 客户端抽象 (v4.24)
+analyzer/llm_client.py — LLM 客户端抽象 (v4.27)
 
-支持三种后端：
+仅保留本地 AI：
 1. TemplateClient — 规则模板生成（零依赖，始终可用）
-2. ClaudeClient — Claude API（需 api key）
-3. OllamaClient — 本地 Ollama 服务
+2. OllamaClient — 本地 Ollama 服务
+3. LocalClient — llama-cpp-python 本地推理
 
-所有客户端返回相同格式的中文分析文本。
+云端 API（Claude/OpenAI/Gemini）已移除。
 """
 
 import logging
@@ -123,146 +123,6 @@ class TemplateClient(LLMClient):
             parts.append("建议明天缩短单次工作时长，多设几个番茄钟试试。")
 
         return "。" if not parts else "".join(parts) + "。"
-
-
-# ── Claude API 版 ──
-
-class ClaudeClient(LLMClient):
-    """Claude API — 需 ANTHROPIC_API_KEY 环境变量或传入"""
-
-    def __init__(self, api_key: Optional[str] = None):
-        self._api_key = api_key or ""
-
-    @property
-    def name(self) -> str:
-        return "Claude AI"
-
-    @property
-    def available(self) -> bool:
-        key = self._api_key or ""
-        return bool(key) or bool(__import__("os").environ.get("ANTHROPIC_API_KEY", ""))
-
-    def _get_key(self) -> str:
-        return self._api_key or __import__("os").environ.get("ANTHROPIC_API_KEY", "")
-
-    def analyze(self, data: Dict[str, Any]) -> str:
-        from anthropic import Anthropic
-
-        client = Anthropic(api_key=self._get_key())
-        user_msg = ANALYSIS_USER_TEMPLATE.format(**data)
-
-        resp = client.messages.create(
-            model="claude-sonnet-4-6-20251001",
-            max_tokens=300,
-            system=ANALYSIS_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_msg}],
-        )
-        return resp.content[0].text
-
-
-# ── OpenAI 兼容版（覆盖 OpenAI / DeepSeek / Moonshot / 智谱GLM / Qwen / OpenRouter 等）──
-
-# 预定义提供商配置
-OPENAI_COMPATIBLE_PROVIDERS = {
-    "openai":     {"base_url": "https://api.openai.com/v1",          "model": "gpt-4o"},
-    "deepseek":   {"base_url": "https://api.deepseek.com/v1",        "model": "deepseek-chat"},
-    "moonshot":   {"base_url": "https://api.moonshot.cn/v1",         "model": "moonshot-v1-8k"},
-    "zhipu":      {"base_url": "https://open.bigmodel.cn/api/paas/v4","model": "glm-4-plus"},
-    "qwen":       {"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "model": "qwen-plus"},
-    "openrouter": {"base_url": "https://openrouter.ai/api/v1",       "model": "openai/gpt-4o"},
-    "together":   {"base_url": "https://api.together.xyz/v1",        "model": "mistralai/Mixtral-8x22B-Instruct"},
-    "groq":       {"base_url": "https://api.groq.com/openai/v1",     "model": "llama-3.3-70b-versatile"},
-}
-
-
-class OpenAICompatibleClient(LLMClient):
-    """OpenAI 兼容 API（覆盖大多数主流云端 LLM）
-
-    支持：OpenAI / DeepSeek / Moonshot / 智谱GLM / Qwen / OpenRouter 等
-    只需换 base_url + api_key + model_name。
-    """
-
-    def __init__(self, api_key: str = "",
-                 base_url: str = "https://api.openai.com/v1",
-                 model: str = "gpt-4o"):
-        self._api_key = api_key
-        self._base_url = base_url.rstrip("/")
-        self._model = model
-
-    @property
-    def name(self) -> str:
-        # 尝试匹配已知提供商
-        for provider, cfg in OPENAI_COMPATIBLE_PROVIDERS.items():
-            if cfg["base_url"].rstrip("/") == self._base_url:
-                return f"{provider} ({self._model})"
-        return f"OpenAI 兼容 ({self._base_url})"
-
-    @property
-    def available(self) -> bool:
-        return bool(self._api_key)
-
-    def analyze(self, data: Dict[str, Any]) -> str:
-        import urllib.request
-        import json as _json
-
-        user_msg = ANALYSIS_USER_TEMPLATE.format(**data)
-        payload = _json.dumps({
-            "model": self._model,
-            "messages": [
-                {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
-                {"role": "user", "content": user_msg},
-            ],
-            "max_tokens": 300,
-            "temperature": 0.7,
-        }).encode()
-
-        req = urllib.request.Request(
-            f"{self._base_url}/chat/completions",
-            data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._api_key}",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = _json.loads(resp.read())
-            return result["choices"][0]["message"]["content"]
-
-
-# ── Google Gemini 版 ──
-
-class GeminiClient(LLMClient):
-    """Google Gemini API — 需 GOOGLE_API_KEY"""
-
-    def __init__(self, api_key: Optional[str] = None):
-        self._api_key = api_key or ""
-
-    @property
-    def name(self) -> str:
-        return "Google Gemini"
-
-    @property
-    def available(self) -> bool:
-        key = self._api_key or __import__("os").environ.get("GOOGLE_API_KEY", "")
-        return bool(key)
-
-    def _get_key(self) -> str:
-        return self._api_key or __import__("os").environ.get("GOOGLE_API_KEY", "")
-
-    def analyze(self, data: Dict[str, Any]) -> str:
-        try:
-            import google.generativeai as genai
-        except ImportError:
-            logger.warning("google-generativeai 未安装，请 pip install google-generativeai")
-            return "（Gemini SDK 未安装，请安装 google-generativeai 包）"
-
-        genai.configure(api_key=self._get_key())
-        user_msg = ANALYSIS_USER_TEMPLATE.format(**data)
-        full_prompt = f"{ANALYSIS_SYSTEM_PROMPT}\n\n{user_msg}"
-
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        resp = model.generate_content(full_prompt)
-        return resp.text
 
 
 # ── Ollama 本地版 ──
@@ -399,7 +259,7 @@ def create_llm_client(client_type: str = "template", **kwargs) -> LLMClient:
     """创建 LLM 客户端
 
     Args:
-        client_type: "template" | "openai" | "claude" | "gemini" | "ollama" | "local"
+        client_type: "template" | "ollama" | "local"
         **kwargs: 传递给具体客户端的参数
 
     Returns:
@@ -407,18 +267,6 @@ def create_llm_client(client_type: str = "template", **kwargs) -> LLMClient:
     """
     if client_type == "template":
         return TemplateClient()
-    elif client_type == "openai":
-        provider = kwargs.get("provider", "openai")
-        cfg = OPENAI_COMPATIBLE_PROVIDERS.get(provider, {})
-        return OpenAICompatibleClient(
-            api_key=kwargs.get("api_key", ""),
-            base_url=kwargs.get("base_url", cfg.get("base_url", "https://api.openai.com/v1")),
-            model=kwargs.get("model", cfg.get("model", "gpt-4o")),
-        )
-    elif client_type == "claude":
-        return ClaudeClient(api_key=kwargs.get("api_key", ""))
-    elif client_type == "gemini":
-        return GeminiClient(api_key=kwargs.get("api_key", ""))
     elif client_type == "ollama":
         return OllamaClient(
             base_url=kwargs.get("base_url", "http://127.0.0.1:11434"),

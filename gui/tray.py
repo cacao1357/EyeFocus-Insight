@@ -153,9 +153,6 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         # 后端切换子菜单
         self._ai_backends = QMenu("切换后端", self._ai_menu)
         for backend, label in [("template", "内置分析（模板）"),
-                               ("openai", "OpenAI 兼容"),
-                               ("claude", "Claude API"),
-                               ("gemini", "Google Gemini"),
                                ("ollama", "Ollama 本地"),
                                ("local", "本地模型 (Qwen2.5)")]:
             a = self._ai_backends.addAction(label)
@@ -163,8 +160,6 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             a.setData(backend)
             a.triggered.connect(lambda checked, b=backend: self._switch_ai_backend(b))
         self._ai_menu.addMenu(self._ai_backends)
-        self._ai_menu.addSeparator()
-        self._ai_menu.addAction("API 设置...").triggered.connect(self._show_settings)
 
         # v4.22: 设置面板
         settings_action = menu.addAction("设置...")
@@ -527,15 +522,8 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             from config import get_yaml_value
 
             backend = get_yaml_value("ai", "backend", default="template")
-            api_key = get_yaml_value("ai", "api_key", default="")
-            base_url = get_yaml_value("ai", "base_url", default="")
-            provider = get_yaml_value("ai", "provider", default="openai")
-
-            kwargs = {"api_key": api_key}
-            if backend == "openai":
-                kwargs["provider"] = provider
-                kwargs["base_url"] = base_url
-            elif backend == "ollama":
+            kwargs = {}
+            if backend == "ollama":
                 kwargs["base_url"] = get_yaml_value("ai", "ollama_url", default="http://127.0.0.1:11434")
 
             client = create_llm_client(backend, **kwargs)
@@ -568,15 +556,8 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             from config import get_yaml_value
 
             backend = get_yaml_value("ai", "backend", default="template")
-            api_key = get_yaml_value("ai", "api_key", default="")
-            base_url = get_yaml_value("ai", "base_url", default="")
-            provider = get_yaml_value("ai", "provider", default="openai")
-
-            kwargs = {"api_key": api_key}
-            if backend == "openai":
-                kwargs["provider"] = provider
-                kwargs["base_url"] = base_url
-            elif backend == "ollama":
+            kwargs = {}
+            if backend == "ollama":
                 kwargs["base_url"] = get_yaml_value("ai", "ollama_url", default="http://127.0.0.1:11434")
 
             client = create_llm_client(backend, **kwargs)

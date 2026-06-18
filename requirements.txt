@@ -22,6 +22,3 @@ absl-py>=2.0.0
 aiohttp>=3.9.0
 # v4.24: 本地 AI 模型（可选，取消注释以启用）
 # llama-cpp-python>=0.3.0
-# v4.24: AI 云端 API（可选）
-# anthropic>=0.40.0
-# google-generativeai>=0.8.0

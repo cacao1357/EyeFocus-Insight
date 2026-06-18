@@ -275,16 +275,10 @@ class WebDashboard:
             backend = get_yaml_value("ai", "backend", default="template")
             result_text = ""
             if backend != "template":
-                api_key = get_yaml_value("ai", "api_key", default="")
-                base_url = get_yaml_value("ai", "base_url", default="")
-                provider = get_yaml_value("ai", "provider", default="openai")
                 from analyzer.llm_client import create_llm_client
 
-                kwargs = {"api_key": api_key}
-                if backend == "openai":
-                    kwargs["provider"] = provider
-                    kwargs["base_url"] = base_url
-                elif backend == "ollama":
+                kwargs = {}
+                if backend == "ollama":
                     kwargs["base_url"] = get_yaml_value("ai", "ollama_url",
                                                          default="http://127.0.0.1:11434")
 
@@ -318,7 +312,7 @@ class WebDashboard:
                         fut = pool.submit(client.analyze, llm_data)
                         result_text = fut.result(timeout=15) or ""
                 else:
-                    result_text = "（AI 后端不可用，请在设置中配置 API Key）"
+                    result_text = "（AI 后端不可用，请检查 Ollama 或本地模型配置）"
             else:
                 # 使用内置模板
                 result_text = generator._generate_ai_summary()

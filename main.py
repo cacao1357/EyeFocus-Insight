@@ -432,6 +432,8 @@ class EyeFocusApp:
 
         # ⚠️ QApplication 只能创建一次
         self._qt_app = QApplication(sys.argv)
+        # v4.27: 窗口隐藏到托盘后 settings dialog 关闭不退出
+        self._qt_app.setQuitOnLastWindowClosed(False)
         # v4.22: 强制 Fusion 风格 + 浅色调色板（防止系统暗色模式导致黑背景不可读）
         from PyQt5.QtGui import QColor, QPalette
         from PyQt5.QtWidgets import QStyleFactory
