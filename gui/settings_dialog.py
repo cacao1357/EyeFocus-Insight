@@ -16,7 +16,7 @@ import sys
 from typing import Optional
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont, QPalette, QColor
+from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -206,14 +206,8 @@ class SettingsDialog(QDialog):
             QPushButton:hover { background-color: #E5E5E5; }
             QPushButton:pressed { background-color: #D8D8D8; }
             QPushButton:disabled { background-color: #F8F6F2; color: #8B8680; }
-            /* v4.26.2: API key 切换按钮透明底（背景色 + 系统背景都禁用） */
-            QPushButton#apiKeyToggle {
-                background-color: transparent; color: #5A5650;
-                border: none; font-size: 15px;
-                padding: 4px 8px;
-            }
-            QPushButton#apiKeyToggle:hover { background-color: transparent; color: #5B4A8C; }
-            QPushButton#apiKeyToggle:checked { background-color: transparent; color: #5B4A8C; }
+            /* v4.26.3: API key 切换按钮 QSS 改在按钮实例上设置（QDialog 级 #apiKeyToggle 规则被系统主题覆盖，仍渲染为黑）
+               此处不再设置，由 _build_ui 里 per-instance QSS 强制白底 */
         """)
 
     def _load_config(self) -> None:
@@ -307,22 +301,41 @@ class SettingsDialog(QDialog):
         self._ai_api_key.setEchoMode(QLineEdit.Password)
         self._ai_api_key.setStyleSheet(self.INPUT_WIDGET_QSS)  # v4.26
         # 密码可见性切换
-        from PyQt5.QtWidgets import QPushButton as _QPB
-        self._api_key_toggle_btn = _QPB("👁")
-        self._api_key_toggle_btn.setObjectName("apiKeyToggle")  # v4.26.1: 用于 QDialog 级 QSS 唯一定位
+        self._api_key_toggle_btn = QPushButton("👁")
+        self._api_key_toggle_btn.setObjectName("apiKeyToggle")
         self._api_key_toggle_btn.setFixedWidth(36)
         self._api_key_toggle_btn.setToolTip("显示/隐藏 API Key")
         self._api_key_toggle_btn.setCheckable(True)
-        # v4.26.2: setFlat(True) + WA_NoSystemBackground 彻底去除按钮默认背景
-        # (QSS 在某些 Qt 版本/主题下被忽略,setFlat 是 Qt 官方"图标按钮"做法)
-        self._api_key_toggle_btn.setFlat(True)
-        self._api_key_toggle_btn.setAttribute(Qt.WA_NoSystemBackground, True)
-        self._api_key_toggle_btn.setAutoFillBackground(False)
-        # v4.26.2: 显式 QPalette 强制 Button 角色 = 父窗口背景
-        _pal = self._api_key_toggle_btn.palette()
-        _pal.setColor(QPalette.Button, _pal.color(QPalette.Window))
-        _pal.setColor(QPalette.ButtonText, QColor(90, 86, 80))  # #5A5650
-        self._api_key_toggle_btn.setPalette(_pal)
+        # v4.26.3: 改用 per-instance QSS 强制白底（Windows 暗色主题下系统 Button 角色强制为黑，
+        # 之前 v4.26.1+2 的 setFlat+WA_NoSystemBackground+Palette+transparent 都败给了系统主题）
+        # 改用普通 QPushButton + 显式 #FFFFFF 背景，QSS 选择器用 #apiKeyToggle 提高 specificity，
+        # per-instance setStyleSheet 替换继承自 QDialog 的 QPushButton 规则，确保不再被系统主题覆盖
+        self._api_key_toggle_btn.setStyleSheet("""
+            QPushButton#apiKeyToggle {
+                background-color: #FFFFFF;
+                color: #5A5650;
+                border: 1px solid #D0D0D0;
+                border-left: 0px;
+                border-top-left-radius: 0px;
+                border-bottom-left-radius: 0px;
+                border-top-right-radius: 4px;
+                border-bottom-right-radius: 4px;
+                font-size: 14px;
+                padding: 4px 8px;
+                margin: 0px;
+            }
+            QPushButton#apiKeyToggle:hover {
+                background-color: #F0EBF8;
+                color: #5B4A8C;
+            }
+            QPushButton#apiKeyToggle:pressed {
+                background-color: #E0E0E0;
+            }
+            QPushButton#apiKeyToggle:checked {
+                background-color: #F0EBF8;
+                color: #5B4A8C;
+            }
+        """)
         self._api_key_toggle_btn.clicked.connect(self._toggle_api_key_visibility)
         api_key_row = QWidget()
         api_key_layout = QHBoxLayout(api_key_row)

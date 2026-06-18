@@ -452,40 +452,38 @@ class TestV426DropdownWhiteBg:
             assert "ask_pomo_int" in content
             assert "QInputDialog.getInt(" not in content
 
-    def test_v426_1_api_key_toggle_has_object_name_and_transparent(self):
-        """v4.26.1+2: API key 切换按钮 transparent（QSS + Qt 属性 + Palette 三重防御）
+    def test_v426_3_api_key_toggle_white_bg(self):
+        """v4.26.3: API key 切换按钮 per-instance QSS 显式白底
 
         修复历史：
           v4.26.1: per-widget setStyleSheet 被 QDialog 级 QPushButton 覆盖
-                    → 改放 QDialog 级 QSS 用 #apiKeyToggle 选择器
-          v4.26.2: QSS 在某些 Qt 版本/主题下被忽略
-                    → 加 setFlat(True) + WA_NoSystemBackground
-                       + setAutoFillBackground(False) + QPalette 显式透明
+                    → 改放 QDialog 级 QSS 用 #apiKeyToggle 选择器（仍不生效）
+          v4.26.2: 加 setFlat(True) + WA_NoSystemBackground + autoFillBackground(False)
+                    + QPalette.Button=Window（Windows 暗色主题下系统 Button 角色
+                    强制黑，4 道防线全部败给系统主题）
+          v4.26.3: 不再用 setFlat/透明 hack。改用普通 QPushButton + per-instance
+                    QSS 显式 #FFFFFF 背景 + #apiKeyToggle 选择器，per-instance
+                    替换继承自 QDialog 的 QPushButton 规则，强制白底成功
 
-        验证四道防线：
+        验证项：
           1. setObjectName('apiKeyToggle') → QSS 可唯一定位
-          2. setFlat(True) + autoFillBackground(False) → 禁用默认按钮背景
-          3. WA_NoSystemBackground → 禁用系统主题背景
-          4. QPalette.Button = QPalette.Window → 调色板继承父背景
+          2. isFlat() == False（普通按钮，不走系统主题渲染）
+          3. per-instance QSS 含 #FFFFFF 背景（非 transparent）
+          4. QSS 用 #apiKeyToggle id 选择器（specificity 0,1,1 > QPushButton 0,0,1）
         """
-        from PyQt5.QtCore import Qt
-        from PyQt5.QtGui import QPalette
         from gui.settings_dialog import SettingsDialog
         dlg = SettingsDialog()
         btn = dlg._api_key_toggle_btn
-        # 防线 1: objectName
+        # 1. objectName 仍保留（虽然不再需要 QDialog 级规则，但 ID 仍用于 QSS specificity）
         assert btn.objectName() == "apiKeyToggle"
-        # 防线 2: setFlat + autoFillBackground
-        assert btn.isFlat() is True
-        assert btn.autoFillBackground() is False
-        # 防线 3: WA_NoSystemBackground
-        assert btn.testAttribute(Qt.WA_NoSystemBackground) is True
-        # 防线 4: QPalette Button = Window（继承父背景）
-        pal = btn.palette()
-        assert pal.color(QPalette.Button) == pal.color(QPalette.Window)
-        # QDialog 级 QSS 含 #apiKeyToggle 规则
-        dlg_qss = dlg.styleSheet()
-        assert "QPushButton#apiKeyToggle" in dlg_qss
+        # 2. 不再用 setFlat（setFlat 触发系统主题渲染，是 Windows 暗色下黑底的元凶）
+        assert btn.isFlat() is False
+        # 3. per-instance QSS 含 #FFFFFF 背景
+        btn_qss = btn.styleSheet()
+        assert "background-color: #FFFFFF" in btn_qss
+        assert "background-color: transparent" not in btn_qss  # 明确没有透明
+        # 4. QSS 用 #apiKeyToggle id 选择器
+        assert "QPushButton#apiKeyToggle" in btn_qss
 
     def test_v426_1_pomo_dialog_no_help_button(self):
         """v4.26.1: ask_pomo_int 去掉标题栏 ? 帮助按钮"""
