@@ -453,23 +453,39 @@ class TestV426DropdownWhiteBg:
             assert "QInputDialog.getInt(" not in content
 
     def test_v426_1_api_key_toggle_has_object_name_and_transparent(self):
-        """v4.26.1: API key 切换按钮有 objectName + QDialog 级 QSS 含 transparent 规则
+        """v4.26.1+2: API key 切换按钮 transparent（QSS + Qt 属性 + Palette 三重防御）
 
-        修复前：QDialog 级 QPushButton { background: #F0F0F0 } 覆盖按钮 → 黑/灰底
-        修复后：setObjectName('apiKeyToggle') + QDialog 级 QSS 含
-                QPushButton#apiKeyToggle { background: transparent }
-                （element+id 选择器比 element 选择器优先级高）→ 透明底
+        修复历史：
+          v4.26.1: per-widget setStyleSheet 被 QDialog 级 QPushButton 覆盖
+                    → 改放 QDialog 级 QSS 用 #apiKeyToggle 选择器
+          v4.26.2: QSS 在某些 Qt 版本/主题下被忽略
+                    → 加 setFlat(True) + WA_NoSystemBackground
+                       + setAutoFillBackground(False) + QPalette 显式透明
+
+        验证四道防线：
+          1. setObjectName('apiKeyToggle') → QSS 可唯一定位
+          2. setFlat(True) + autoFillBackground(False) → 禁用默认按钮背景
+          3. WA_NoSystemBackground → 禁用系统主题背景
+          4. QPalette.Button = QPalette.Window → 调色板继承父背景
         """
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtGui import QPalette
         from gui.settings_dialog import SettingsDialog
         dlg = SettingsDialog()
         btn = dlg._api_key_toggle_btn
+        # 防线 1: objectName
         assert btn.objectName() == "apiKeyToggle"
-        # v4.26.1 修复：QSS 规则在 QDialog 级（per-widget 在某些 Qt 版本下被覆盖）
+        # 防线 2: setFlat + autoFillBackground
+        assert btn.isFlat() is True
+        assert btn.autoFillBackground() is False
+        # 防线 3: WA_NoSystemBackground
+        assert btn.testAttribute(Qt.WA_NoSystemBackground) is True
+        # 防线 4: QPalette Button = Window（继承父背景）
+        pal = btn.palette()
+        assert pal.color(QPalette.Button) == pal.color(QPalette.Window)
+        # QDialog 级 QSS 含 #apiKeyToggle 规则
         dlg_qss = dlg.styleSheet()
-        assert "QPushButton#apiKeyToggle" in dlg_qss, \
-            "QDialog 级 QSS 应含 #apiKeyToggle 规则"
-        assert "background: transparent" in dlg_qss, \
-            "QSS 应含 background: transparent"
+        assert "QPushButton#apiKeyToggle" in dlg_qss
 
     def test_v426_1_pomo_dialog_no_help_button(self):
         """v4.26.1: ask_pomo_int 去掉标题栏 ? 帮助按钮"""

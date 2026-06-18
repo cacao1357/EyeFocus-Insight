@@ -16,7 +16,7 @@ import sys
 from typing import Optional
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QPalette, QColor
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -206,14 +206,14 @@ class SettingsDialog(QDialog):
             QPushButton:hover { background-color: #E5E5E5; }
             QPushButton:pressed { background-color: #D8D8D8; }
             QPushButton:disabled { background-color: #F8F6F2; color: #8B8680; }
-            /* v4.26.1: API key 切换按钮透明底（#apiKeyToggle 比 QPushButton 选择器更具体） */
+            /* v4.26.2: API key 切换按钮透明底（背景色 + 系统背景都禁用） */
             QPushButton#apiKeyToggle {
-                background: transparent; color: #5A5650;
+                background-color: transparent; color: #5A5650;
                 border: none; font-size: 15px;
                 padding: 4px 8px;
             }
-            QPushButton#apiKeyToggle:hover { background: transparent; color: #5B4A8C; }
-            QPushButton#apiKeyToggle:checked { background: transparent; color: #5B4A8C; }
+            QPushButton#apiKeyToggle:hover { background-color: transparent; color: #5B4A8C; }
+            QPushButton#apiKeyToggle:checked { background-color: transparent; color: #5B4A8C; }
         """)
 
     def _load_config(self) -> None:
@@ -313,8 +313,16 @@ class SettingsDialog(QDialog):
         self._api_key_toggle_btn.setFixedWidth(36)
         self._api_key_toggle_btn.setToolTip("显示/隐藏 API Key")
         self._api_key_toggle_btn.setCheckable(True)
-        # v4.26.1: 不在按钮上 setStyleSheet（per-widget 在某些 Qt 版本下被 QDialog 级 QPushButton 规则覆盖）
-        # 改为在 QDialog 级 QSS 里用 #apiKeyToggle 选择器（更高优先级：element+id）
+        # v4.26.2: setFlat(True) + WA_NoSystemBackground 彻底去除按钮默认背景
+        # (QSS 在某些 Qt 版本/主题下被忽略,setFlat 是 Qt 官方"图标按钮"做法)
+        self._api_key_toggle_btn.setFlat(True)
+        self._api_key_toggle_btn.setAttribute(Qt.WA_NoSystemBackground, True)
+        self._api_key_toggle_btn.setAutoFillBackground(False)
+        # v4.26.2: 显式 QPalette 强制 Button 角色 = 父窗口背景
+        _pal = self._api_key_toggle_btn.palette()
+        _pal.setColor(QPalette.Button, _pal.color(QPalette.Window))
+        _pal.setColor(QPalette.ButtonText, QColor(90, 86, 80))  # #5A5650
+        self._api_key_toggle_btn.setPalette(_pal)
         self._api_key_toggle_btn.clicked.connect(self._toggle_api_key_visibility)
         api_key_row = QWidget()
         api_key_layout = QHBoxLayout(api_key_row)
