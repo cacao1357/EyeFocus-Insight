@@ -104,9 +104,7 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         generate_action = menu.addAction("打开报告")
         generate_action.triggered.connect(self._generate_report)
 
-        # v4.18: 生成周报
-        weekly_action = menu.addAction("生成周报")
-        weekly_action.triggered.connect(self._generate_weekly_report)
+        # v4.26: 移除"生成周报"（与"打开报告"重复）
 
         # v4.18: 导出数据
         export_action = menu.addAction("导出数据")
@@ -145,26 +143,11 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         self._dnd_action.setChecked(False)
         self._dnd_action.triggered.connect(self._toggle_dnd)
 
-        # v4.24: AI 分析子菜单
-        self._ai_menu = menu.addMenu("🤖 AI 分析")
-        self._ai_menu.addAction("生成分析摘要").triggered.connect(self._generate_ai_analysis)
-        self._ai_menu.addAction("测试 API 连接").triggered.connect(self._test_ai_connection)
-        self._ai_menu.addSeparator()
-        # 后端切换子菜单
-        self._ai_backends = QMenu("切换后端", self._ai_menu)
-        for backend, label in [("template", "内置分析（模板）"),
-                               ("openai", "OpenAI 兼容"),
-                               ("claude", "Claude API"),
-                               ("gemini", "Google Gemini"),
-                               ("ollama", "Ollama 本地"),
-                               ("local", "本地模型 (Qwen2.5)")]:
-            a = self._ai_backends.addAction(label)
-            a.setCheckable(True)
-            a.setData(backend)
-            a.triggered.connect(lambda checked, b=backend: self._switch_ai_backend(b))
-        self._ai_menu.addMenu(self._ai_backends)
-        self._ai_menu.addSeparator()
-        self._ai_menu.addAction("API 设置...").triggered.connect(self._show_settings)
+        # v4.26: AI 模式开关（替代 AI 分析子菜单）
+        self._ai_mode_action = menu.addAction("🤖 AI 模式")
+        self._ai_mode_action.setCheckable(True)
+        self._ai_mode_action.setChecked(self._load_ai_mode())
+        self._ai_mode_action.triggered.connect(self._toggle_ai_mode)
 
         # v4.22: 设置面板
         settings_action = menu.addAction("设置...")
@@ -242,14 +225,19 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         return self._do_not_disturb
 
     def show_fatigue_notification(self, message: str = "检测到疲劳，建议休息"):
-        """v4.22: 疲劳提醒已移除（正常操作不弹窗）"""
-        pass
+        """v4.26: 恢复疲劳提醒"""
+        self.showMessage("EyeFocus Insight - 疲劳提醒", message,
+                         QSystemTrayIcon.Warning, 5000)
 
     # ── 内部方法 ──
 
     def _show_startup_notification(self):
-        """v4.22: 启动通知已移除（正常操作不弹窗）"""
-        pass
+        """v4.26: 启动通知（3s 自动消失）"""
+        try:
+            self.showMessage("EyeFocus Insight", "专注度监测已启动",
+                             QSystemTrayIcon.Information, 3000)
+        except Exception:
+            pass
 
     def _on_activated(self, reason):
         """处理托盘图标激活事件"""
@@ -393,14 +381,6 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
 
     # ── v4.18: 导出数据 ──
 
-    def _generate_weekly_report(self) -> None:
-        """生成周报"""
-        try:
-            if hasattr(self._app, '_generate_weekly_report'):
-                self._app._generate_weekly_report()
-        except Exception as e:
-            logger.warning("生成周报失败: %s", e)
-
     def _export_data(self) -> None:
         """导出当前会话数据为 CSV"""
         try:
@@ -452,17 +432,17 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             logger.warning("番茄暂停失败: %s", e)
 
     def _set_pomodoro(self) -> None:
-        """设置番茄工作/休息时间"""
+        """设置番茄工作/休息时间（v4.26: 白底 wrapper 替代 QInputDialog.getInt 黑底）"""
         try:
-            from PyQt5.QtWidgets import QInputDialog
+            from gui.settings_dialog import ask_pomo_int
             parent_widget = self._window if self._window is not None else None
-            work, ok = QInputDialog.getInt(parent_widget, "设置番茄",
-                "工作分钟数 (1-120):", value=25, min=1, max=120)
-            if not ok:
+            work = ask_pomo_int(parent_widget, "设置番茄",
+                                 "工作分钟数 (1-120):", value=25, min_val=1, max_val=120)
+            if work is None:
                 return
-            rest, ok = QInputDialog.getInt(parent_widget, "设置番茄",
-                "休息分钟数 (1-60):", value=5, min=1, max=60)
-            if not ok:
+            rest = ask_pomo_int(parent_widget, "设置番茄",
+                                 "休息分钟数 (1-60):", value=5, min_val=1, max_val=60)
+            if rest is None:
                 return
             pomo = getattr(self._app, '_pomodoro', None)
             if pomo:
@@ -521,89 +501,60 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
     # ── v4.24: AI 分析 ──
 
     def _generate_ai_analysis(self):
-        """立即生成 AI 分析摘要"""
-        try:
-            from analyzer.llm_client import create_llm_client
-            from config import get_yaml_value
-
-            backend = get_yaml_value("ai", "backend", default="template")
-            api_key = get_yaml_value("ai", "api_key", default="")
-            base_url = get_yaml_value("ai", "base_url", default="")
-            provider = get_yaml_value("ai", "provider", default="openai")
-
-            kwargs = {"api_key": api_key}
-            if backend == "openai":
-                kwargs["provider"] = provider
-                kwargs["base_url"] = base_url
-            elif backend == "ollama":
-                kwargs["base_url"] = get_yaml_value("ai", "ollama_url", default="http://127.0.0.1:11434")
-
-            client = create_llm_client(backend, **kwargs)
-            if not client.available:
-                self.showMessage("AI 分析", f"{client.name} 不可用，请检查配置", QSystemTrayIcon.Critical, 3000)
-                return
-
-            # 收集当前会话数据
-            app = getattr(self, '_app', None)
-            if not app or not hasattr(app, '_frame_processor'):
-                return
-            fp = app._frame_processor
-            score = fp.latest_focus_result.focus_score if fp.latest_focus_result else 50
-            data = {
-                "duration": 0, "avg_focus": score, "baseline": 60,
-                "seg_start": score, "seg_mid": score, "seg_end": score,
-                "distractions": 0, "head_pct": 0, "gaze_pct": 0,
-                "fatigue": "LOW", "pomo_count": 0, "streak": 0,
-            }
-            result = client.analyze(data)
-            self.showMessage("AI 分析结果", result[:120], QSystemTrayIcon.Information, 5000)
-        except Exception as e:
-            logger.warning("AI 分析失败: %s", e)
-            self.showMessage("AI 分析", f"生成失败: {e}", QSystemTrayIcon.Critical, 3000)
+        """v4.26: AI 分析功能已合并到 AI 模式开关，此方法保留为空"""
+        pass
 
     def _test_ai_connection(self):
-        """测试当前 AI 后端的连通性"""
-        try:
-            from analyzer.llm_client import create_llm_client
-            from config import get_yaml_value
-
-            backend = get_yaml_value("ai", "backend", default="template")
-            api_key = get_yaml_value("ai", "api_key", default="")
-            base_url = get_yaml_value("ai", "base_url", default="")
-            provider = get_yaml_value("ai", "provider", default="openai")
-
-            kwargs = {"api_key": api_key}
-            if backend == "openai":
-                kwargs["provider"] = provider
-                kwargs["base_url"] = base_url
-            elif backend == "ollama":
-                kwargs["base_url"] = get_yaml_value("ai", "ollama_url", default="http://127.0.0.1:11434")
-
-            client = create_llm_client(backend, **kwargs)
-            if client.available:
-                self.showMessage("API 测试", f"✅ {client.name} 连接正常", QSystemTrayIcon.Information, 3000)
-            else:
-                self.showMessage("API 测试", f"❌ {client.name} 不可用，请检查配置", QSystemTrayIcon.Critical, 3000)
-        except Exception as e:
-            self.showMessage("API 测试", f"❌ 测试失败: {e}", QSystemTrayIcon.Critical, 3000)
+        """v4.26: 已移除弹窗，仅日志"""
+        from analyzer.llm_client import create_llm_client
+        from config import get_yaml_value
+        backend = get_yaml_value("ai", "backend", default="template")
+        kwargs = {}
+        if backend == "ollama":
+            kwargs["base_url"] = get_yaml_value("ai", "ollama_url", default="http://127.0.0.1:11434")
+        client = create_llm_client(backend, **kwargs)
+        if client.available:
+            logger.info("AI 后端 %s 可用", client.name)
+        else:
+            logger.info("AI 后端 %s 不可用", client.name)
 
     def _switch_ai_backend(self, backend: str):
-        """切换 AI 分析后端（blockSignals 防止 setChecked 信号重入）"""
+        """切换 AI 分析后端"""
         try:
             from config import set_yaml_value, save_yaml_config
             set_yaml_value("ai", "backend", value=backend)
             save_yaml_config()
-            # blockSignals 防止 setChecked 触发 toggled 信号导致重入
             for a in self._ai_backends.actions():
                 a.blockSignals(True)
                 a.setChecked(a.data() == backend)
                 a.blockSignals(False)
             logger.info("AI 后端已切换: %s", backend)
-            self.showMessage("AI 分析", f"已切换至 {backend}", QSystemTrayIcon.Information, 2000)
         except Exception as e:
             logger.error("AI 后端切换异常: %s", e)
-            import traceback
-            traceback.print_exc()
+
+    # ── v4.26: AI 模式开关 ──
+
+    def _load_ai_mode(self) -> bool:
+        """从 config 读取 AI 模式"""
+        try:
+            from config import get_yaml_value
+            return get_yaml_value("ai", "mode", default=True)
+        except Exception:
+            return True
+
+    def _save_ai_mode(self, enabled: bool) -> None:
+        """保存 AI 模式到 config"""
+        try:
+            from config import set_yaml_value, save_yaml_config
+            set_yaml_value("ai", "mode", value=enabled)
+            save_yaml_config()
+        except Exception:
+            pass
+
+    def _toggle_ai_mode(self, checked: bool) -> None:
+        """切换 AI 模式"""
+        self._save_ai_mode(checked)
+        logger.info("AI 模式: %s", "开启" if checked else "关闭")
 
     def _exit_app(self):
         """完全退出程序"""

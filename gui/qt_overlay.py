@@ -6,10 +6,10 @@ gui/qt_overlay.py — Qt 监测界面组件 (v4.5 Apple Health 风格)
   - StatusCard: 正方形状态卡片（emoji + 值 + 标签）
   - GradientDivider: 垂直渐变过渡带（#000 → #FFF）
 
-Color theme (Apple 系统色):
-  - Focus High(≥70) : #34C759 (green)
-  - Focus Mid(50-70): #FF9500 (orange)
-  - Focus Low(<50)  : #FF3B30 (red)
+Color theme (v4.26: 统一项目 Quiet Focus 调色板，移除 Apple 系统色):
+  - Focus High(≥70) : #5A8A6D (sage-600)
+  - Focus Mid(50-70): #C9843A (amber-600)
+  - Focus Low(<50)  : #B55C5C (rose-600)
   - Background       : #FFFFFF (white panel)
   - Text primary     : #1C1C1E
   - Text secondary   : #8E8E93
@@ -53,10 +53,10 @@ C_WHITE = QColor(255, 255, 255)
 C_BLACK = QColor(0, 0, 0)
 C_HINT_BG = QColor(242, 242, 247)      # #F2F2F7
 
-# 专注度颜色 (Apple 系统色)
-C_FOCUS_GREEN = QColor(52, 199, 89)    # #34C759
-C_FOCUS_YELLOW = QColor(255, 149, 0)   # #FF9500
-C_FOCUS_RED = QColor(255, 59, 48)      # #FF3B30
+# 专注度颜色 (v4.26: 项目 Quiet Focus token)
+C_FOCUS_GREEN = QColor(90, 138, 109)   # #5A8A6D sage-600
+C_FOCUS_YELLOW = QColor(201, 132, 58)  # #C9843A amber-600
+C_FOCUS_RED = QColor(181, 92, 92)      # #B55C5C rose-600
 
 # 疲劳颜色 (同专注度系统色)
 C_FATIGUE_COLORS = {
@@ -327,13 +327,13 @@ class StatusCard(QWidget):
         self._label_label.setText(label_text)
         self._label_label.setVisible(bool(label_text))
 
-        # 状态颜色
+        # 状态颜色 (v4.26: 项目 Quiet Focus token)
         if status == "error":
-            border_color = "#FF3B30"
-            main_color = "#FF3B30"
+            border_color = "#B55C5C"  # rose-600
+            main_color = "#B55C5C"
         elif status == "warn":
-            border_color = "#FF9500"
-            main_color = "#FF9500"
+            border_color = "#C9843A"  # amber-600
+            main_color = "#C9843A"
         else:
             border_color = "#E5E5EA"
             main_color = "#1C1C1E"
@@ -371,7 +371,7 @@ class FocusSparkline(QWidget):
 
     def add_point(self, score: float) -> None:
         """添加一个数据点（每秒调用一次）"""
-        color = "#34C759" if score >= 70 else "#FF9500" if score >= 40 else "#FF3B30"
+        color = "#5A8A6D" if score >= 70 else "#C9843A" if score >= 40 else "#B55C5C"
         self._scores.append((score, color))
         if len(self._scores) > self._max_points:
             self._scores.pop(0)
@@ -416,7 +416,7 @@ class FocusSparkline(QWidget):
         fill_path.closeSubpath()
 
         # 渐变填充
-        last_color = self._scores[-1][1] if self._scores else "#34C759"
+        last_color = self._scores[-1][1] if self._scores else "#5A8A6D"
         lc = QColor(last_color)
         lc.setAlpha(25)
         painter.fillPath(fill_path, QBrush(lc))

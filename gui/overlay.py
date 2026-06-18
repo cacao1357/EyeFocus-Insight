@@ -342,10 +342,10 @@ class FocusOverlay:
         h, w = frame.shape[:2]
         bar_height = self.config.status_bar_height  # 60
 
-        # 半透明背景
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (0, 0), (w, bar_height), self.config.background_color, -1)
-        frame = cv2.addWeighted(overlay, 0.75, frame, 0.25, 0)
+        # v4.26: ROI 局部 blend 替代全帧 copy+addWeighted
+        roi = frame[0:bar_height, :]
+        bg = np.full_like(roi, self.config.background_color)
+        frame[0:bar_height, :] = cv2.addWeighted(bg, 0.75, roi, 0.25, 0)
         # 底部细线分隔
         cv2.line(frame, (0, bar_height), (w, bar_height), (80, 80, 80), 1)
 
@@ -614,14 +614,18 @@ class FocusOverlay:
         center_y = h - 130
         radius = 70
 
-        # 绘制圆形背景
-        overlay = frame.copy()
-        cv2.circle(overlay, (center_x, center_y), radius, (40, 40, 40), -1)
-        frame = cv2.addWeighted(overlay, 0.6, frame, 0.4, 0)
+        # v4.26: ROI 局部 blend 替代全帧 copy+addWeighted
+        x1 = max(0, center_x - radius - 10)
+        y1 = max(0, center_y - radius - 10)
+        x2 = min(w, center_x + radius + 10)
+        y2 = min(h, center_y + radius + 10)
+        roi = frame[y1:y2, x1:x2].copy()
+        cv2.circle(roi, (center_x - x1, center_y - y1), radius, (40, 40, 40), -1)
+        frame[y1:y2, x1:x2] = cv2.addWeighted(roi, 0.6, frame[y1:y2, x1:x2], 0.4, 0)
 
         # v4.4: 8px 边框, 颜色按分数 (绿/黄/红)
         border_color = self._focus_color(focus_score)
-        cv2.circle(overlay, (center_x, center_y), radius, border_color, 8)
+        cv2.circle(frame, (center_x, center_y), radius, border_color, 8)
 
         # 绘制圆形进度条
         color = self._fatigue_color(fatigue_level) if fatigue_level else self.config.focus_color
@@ -657,12 +661,17 @@ class FocusOverlay:
         bar_x = (w - bar_width) // 2
         bar_y = h - 80
 
-        # 背景
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (bar_x - 5, bar_y - 5),
-                      (bar_x + bar_width + 5, bar_y + bar_height + 5),
+        # v4.26: ROI 局部 blend 替代全帧 copy+addWeighted
+        pad = 8
+        ry1 = max(0, bar_y - pad)
+        ry2 = min(h, bar_y + bar_height + pad)
+        rx1 = max(0, bar_x - pad)
+        rx2 = min(w, bar_x + bar_width + pad)
+        roi = frame[ry1:ry2, rx1:rx2].copy()
+        cv2.rectangle(roi, (bar_x - rx1, bar_y - ry1),
+                      (bar_x + bar_width - rx1, bar_y + bar_height - ry1),
                       (40, 40, 40), -1)
-        frame = cv2.addWeighted(overlay, 0.7, frame, 0.3, 0)
+        frame[ry1:ry2, rx1:rx2] = cv2.addWeighted(roi, 0.7, frame[ry1:ry2, rx1:rx2], 0.3, 0)
 
         # 进度条
         progress = min(1.0, calibration.current / max(1, calibration.total))

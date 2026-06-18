@@ -75,10 +75,16 @@ scripts/models/
 *.bin
 *.ggml
 
+# ── 样本数据（不入仓）──
+/samples/
+
 # ── 历史归档文档（不纳入工作树）──
 docs/archive/
 docs/old_schemes/
 docs/superpowers/
+
+# ── OpenSpec 工作流 ──
+/openspec/
 
 # ── 跨平台行尾符锁定 ──
 .gitattributes tracked in repo

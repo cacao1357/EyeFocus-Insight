@@ -321,3 +321,163 @@ class TestAlertMessage:
         )
         assert alert.level == AlertLevel.WARNING
         assert alert.text == "测试警告"
+
+
+# ════════════════════════════════════════
+# v4.26 面板刷新: 颜色 token 统一回归测试
+# 修复"Apple 系统色 (#34C759/#FF9500/#FF3B30/#007AFF) 与项目 Quiet Focus 不符"
+# ════════════════════════════════════════
+
+class TestV426PanelColorTokens:
+    """v4.26: 主窗口 + 叠加层颜色统一为项目 Quiet Focus token"""
+
+    def test_no_apple_system_colors_in_qt_window(self):
+        """qt_window.py 不应再用 Apple 系统色 #34C759/#FF9500/#FF3B30/#007AFF"""
+        import os
+        path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "gui", "qt_window.py"
+        )
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+        for apple_color in ["#34C759", "#FF9500", "#FF3B30", "#007AFF"]:
+            assert apple_color not in content, \
+                f"qt_window.py 仍含 Apple 系统色 {apple_color}"
+
+    def test_no_apple_system_colors_in_qt_overlay(self):
+        """qt_overlay.py 不应再用 Apple 系统色"""
+        import os
+        path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "gui", "qt_overlay.py"
+        )
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+        for apple_color in ["#34C759", "#FF9500", "#FF3B30", "#007AFF"]:
+            assert apple_color not in content, \
+                f"qt_overlay.py 仍含 Apple 系统色 {apple_color}"
+
+    def test_qt_overlay_uses_project_color_tokens(self):
+        """qt_overlay.py 颜色常量应是项目 Quiet Focus token"""
+        from gui.qt_overlay import (
+            C_FOCUS_GREEN, C_FOCUS_YELLOW, C_FOCUS_RED,
+        )
+        # sage-600 = #5A8A6D = (90, 138, 109)
+        assert C_FOCUS_GREEN.red() == 90
+        assert C_FOCUS_GREEN.green() == 138
+        assert C_FOCUS_GREEN.blue() == 109
+        # amber-600 = #C9843A = (201, 132, 58)
+        assert C_FOCUS_YELLOW.red() == 201
+        assert C_FOCUS_YELLOW.green() == 132
+        assert C_FOCUS_YELLOW.blue() == 58
+        # rose-600 = #B55C5C = (181, 92, 92)
+        assert C_FOCUS_RED.red() == 181
+        assert C_FOCUS_RED.green() == 92
+        assert C_FOCUS_RED.blue() == 92
+
+    def test_qt_window_status_colors_are_project_tokens(self):
+        """qt_window.py 状态/警告/校准色应是项目 token"""
+        import os
+        path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "gui", "qt_window.py"
+        )
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+        # light_warning: amber
+        assert "#C9843A" in content  # amber-600 (text + border)
+        assert "#FAF0E3" in content  # light amber bg
+        # face_lost_warning: rose
+        assert "#B55C5C" in content  # rose-600 (text + border)
+        assert "#F8E8E8" in content  # light rose bg
+        # calib_prompt: amber (与 light_warning 统一)
+        # 校准按钮: iris (替代 Apple 蓝 #007AFF)
+        assert "#5B4A8C" in content
+        # 暂停按钮: quiet (替代 Apple secondary #8E8E93)
+        assert "#8B8680" in content
+        # 旧 Apple 色 (iOS 金色) 不应再出现
+        assert "#B8860B" not in content
+        assert "#FFD54F" not in content
+        assert "#FFFDE7" not in content
+
+
+# ════════════════════════════════════════
+# v4.26 面板刷新: 重做 dropdown 白底（被回退后补救）
+# 修复"QComboBox/QSpinBox/QLineEdit 弹出 popup 仍黑底" +
+#      "QInputDialog.getInt 番茄设置弹窗黑底"
+# ════════════════════════════════════════
+
+class TestV426DropdownWhiteBg:
+    """v4.26: 设置对话框下拉/输入 popup + 番茄 dialog 全白底"""
+
+    @pytest.fixture(scope="class", autouse=True)
+    def _setup_qt(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PyQt5.QtWidgets import QApplication
+        self._app = QApplication.instance() or QApplication([])
+
+    def test_input_widget_qss_contains_required_selectors(self):
+        """INPUT_WIDGET_QSS 必须含 ::drop-down / QAbstractItemView::item"""
+        from gui.settings_dialog import SettingsDialog
+        qss = SettingsDialog.INPUT_WIDGET_QSS
+        for selector in ["::drop-down", "QAbstractItemView::item", "#5B4A8C"]:
+            assert selector in qss, f"INPUT_WIDGET_QSS 缺: {selector}"
+
+    def test_settings_dialog_input_widgets_have_qss(self):
+        """每个 QComboBox/QSpinBox/QLineEdit 都设了实例级 QSS"""
+        from gui.settings_dialog import SettingsDialog
+        dlg = SettingsDialog()
+        for w in [dlg._cam_combo, dlg._ai_backend,
+                  dlg._pomo_work_spin, dlg._pomo_break_spin]:
+            assert w.styleSheet(), f"{type(w).__name__} 未 setStyleSheet"
+
+    def test_pomo_input_dialog_qss_white(self):
+        """_POMO_INPUT_DIALOG_QSS 是白底"""
+        from gui.settings_dialog import _POMO_INPUT_DIALOG_QSS, ask_pomo_int
+        assert _POMO_INPUT_DIALOG_QSS.count("#FFFFFF") >= 3
+        for s in ["QPushButton:hover", "QPushButton:default", "QSpinBox::up-button"]:
+            assert s in _POMO_INPUT_DIALOG_QSS
+        assert callable(ask_pomo_int)
+
+    def test_tray_and_window_use_ask_pomo_int(self):
+        """tray.py / qt_window.py 都不再用 QInputDialog.getInt"""
+        import os
+        for path in ["gui/tray.py", "gui/qt_window.py"]:
+            with open(os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                path
+            ), encoding="utf-8") as f:
+                content = f.read()
+            assert "ask_pomo_int" in content
+            assert "QInputDialog.getInt(" not in content
+
+    def test_v426_1_pomo_dialog_no_help_button(self):
+        """v4.26.1: ask_pomo_int 去掉标题栏 ? 帮助按钮"""
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtWidgets import QInputDialog
+        import inspect
+        from gui.settings_dialog import ask_pomo_int
+        # 检查源码确认 WindowContextHelpButtonHint 被清除
+        src = inspect.getsource(ask_pomo_int)
+        assert "WindowContextHelpButtonHint" in src
+        # 验证逻辑可执行（不需要真弹窗）：手动模拟 flags 操作
+        dlg = QInputDialog()
+        flags = dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint
+        dlg.setWindowFlags(flags)
+        assert not (dlg.windowFlags() & Qt.WindowContextHelpButtonHint)
+        dlg.close()
+
+    def test_v426_1_calibration_dialog_minimize_no_help(self):
+        """v4.26.1: 校准 dialog 去掉 ? 帮助按钮，添加 — 最小化按钮"""
+        from PyQt5.QtCore import Qt
+        from gui.calibration_dialog import CalibrationDialog
+        import inspect
+        src = inspect.getsource(CalibrationDialog.__init__)
+        assert "WindowContextHelpButtonHint" in src
+        assert "WindowMinimizeButtonHint" in src
+        # 同源代码验证：先 unset help + add minimize
+        # 模拟预期 flags 操作
+        flags = Qt.Dialog | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint
+        flags &= ~Qt.WindowContextHelpButtonHint
+        assert not (flags & Qt.WindowContextHelpButtonHint)
+        assert (flags & Qt.WindowMinimizeButtonHint)

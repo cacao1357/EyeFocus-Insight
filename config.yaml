@@ -1,5 +1,6 @@
 ai:
   backend: local
+  mode: true
 baseline:
   collection_duration: 7.0
   cqs_threshold: 0.6

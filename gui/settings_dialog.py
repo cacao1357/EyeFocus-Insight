@@ -21,7 +21,8 @@ from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QLineEdit,
+    QDoubleSpinBox,
+    QInputDialog,
     QDialogButtonBox,
     QFormLayout,
     QGroupBox,
@@ -36,6 +37,80 @@ from PyQt5.QtWidgets import (
 logger = logging.getLogger("eyefocus.gui.settings")
 
 
+# ════════════════════════════════════════
+# v4.26 颜色 token 统一
+# 跟项目 Quiet Focus 调色板（与 report/ qt_window/ qt_overlay 一致）
+# ════════════════════════════════════════
+COLOR_PAPER = "#FFFFFF"
+COLOR_LINE = "#E0E0E0"
+COLOR_QUIET = "#8B8680"  # v4.26 替换 #8E8E93
+COLOR_INK = "#1C1C1E"   # v4.26 统一为 #1C1C1E（去掉 #23201E / #1C1C1E 两套）
+
+
+# v4.26 番茄设置 dialog 专用白底 QSS（替代 QInputDialog.getInt 黑底）
+_POMO_INPUT_DIALOG_QSS = """
+    QDialog { background-color: #FFFFFF; }
+    QLabel {
+        color: #1C1C1E; background: transparent; font-size: 14px;
+    }
+    QSpinBox, QLineEdit {
+        background-color: #FFFFFF; color: #1C1C1E;
+        border: 1px solid #D0D0D0; border-radius: 4px;
+        padding: 4px 8px;
+        selection-background-color: #5B4A8C; selection-color: #FFFFFF;
+        font-size: 14px; min-height: 22px;
+    }
+    QSpinBox:focus, QLineEdit:focus {
+        border: 1px solid #5B4A8C; outline: 0;
+    }
+    QSpinBox::up-button, QSpinBox::down-button {
+        background: #F8F6F2; border: 1px solid #D0D0D0; width: 20px;
+    }
+    QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+        background: #F0EBF8;
+    }
+    QSpinBox::up-button:pressed, QSpinBox::down-button:pressed {
+        background: #E0E0E0;
+    }
+    QPushButton {
+        background-color: #F0F0F0; color: #1C1C1E;
+        border: 1px solid #D0D0D0; border-radius: 4px;
+        padding: 6px 18px; font-size: 13px; min-width: 70px;
+    }
+    QPushButton:hover { background-color: #E5E5E5; }
+    QPushButton:pressed { background-color: #D8D8D8; }
+    QPushButton:default {
+        background-color: #5B4A8C; color: #FFFFFF;
+        border: 1px solid #4A3A7A; font-weight: 600;
+    }
+    QPushButton:default:hover { background-color: #4A3A7A; }
+    QPushButton:default:pressed { background-color: #3A2A6A; }
+"""
+
+
+def ask_pomo_int(parent, title: str, label: str,
+                 value: int, min_val: int, max_val: int) -> Optional[int]:
+    """v4.26 白底番茄分钟数输入框（替代 QInputDialog.getInt 黑底）
+
+    Qt 自带 QInputDialog 在系统暗色主题下黑底、字看不清。
+    重写为可 setStyleSheet 的非静态版本，套白底 QSS。
+    v4.26.1: 去掉标题栏左侧 "?" 帮助按钮（Qt.WindowContextHelpButtonHint）
+    """
+    dlg = QInputDialog(parent)
+    # v4.26.1: 去掉标题栏 ? 按钮，与项目"白底简洁"风格一致
+    flags = dlg.windowFlags()
+    flags &= ~Qt.WindowContextHelpButtonHint
+    dlg.setWindowFlags(flags)
+    dlg.setStyleSheet(_POMO_INPUT_DIALOG_QSS)
+    dlg.setWindowTitle(title)
+    dlg.setLabelText(label)
+    dlg.setIntRange(min_val, max_val)
+    dlg.setIntValue(value)
+    if dlg.exec_() == QInputDialog.Accepted:
+        return dlg.intValue()
+    return None
+
+
 class SettingsDialog(QDialog):
     """应用设置对话框"""
 
@@ -43,6 +118,50 @@ class SettingsDialog(QDialog):
     COLOR_IRIS = "#5B4A8C"
     COLOR_SAGE = "#5A8A6D"
     COLOR_AMBER = "#C9843A"
+
+    # v4.26 统一下拉/输入白底 QSS
+    # 关键：setStyleSheet 在 QDialog 级别无法覆盖 popup 窗口
+    # （Qt 的 popup 是独立 top-level，QSS 选择器不传递），
+    # 必须把 QSS 直接绑到每个 QComboBox/QSpinBox/QLineEdit 实例上。
+    INPUT_WIDGET_QSS = """
+        QComboBox, QSpinBox, QLineEdit {
+            background-color: #FFFFFF; color: #1C1C1E;
+            border: 1px solid #D0D0D0; border-radius: 4px;
+            padding: 4px 8px;
+            selection-background-color: #5B4A8C; selection-color: #FFFFFF;
+        }
+        QComboBox:hover, QSpinBox:hover, QLineEdit:hover {
+            border: 1px solid #5B4A8C;
+        }
+        QComboBox:focus, QSpinBox:focus, QLineEdit:focus {
+            border: 1px solid #5B4A8C; outline: 0;
+        }
+        QComboBox::drop-down {
+            subcontrol-origin: padding; subcontrol-position: top right;
+            width: 20px; border-left: 1px solid #D0D0D0;
+            background: #F8F6F2;
+        }
+        QComboBox::drop-down:hover { background: #F0EBF8; }
+        QComboBox QAbstractItemView {
+            background-color: #FFFFFF; color: #1C1C1E;
+            selection-background-color: #5B4A8C; selection-color: #FFFFFF;
+            border: 1px solid #D0D0D0; outline: 0; padding: 2px;
+        }
+        QComboBox QAbstractItemView::item {
+            padding: 6px 10px; border: none;
+            background-color: transparent; color: #1C1C1E;
+            min-height: 20px;
+        }
+        QComboBox QAbstractItemView::item:hover {
+            background-color: #F0EBF8; color: #1C1C1E;
+        }
+        QSpinBox::up-button, QSpinBox::down-button {
+            background: #F8F6F2; border: 1px solid #D0D0D0; width: 18px;
+        }
+        QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+            background: #F0EBF8;
+        }
+    """
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -52,6 +171,7 @@ class SettingsDialog(QDialog):
         self.setMinimumWidth(420)
         self.setModal(True)
         # v4.22: 强制白底（防止系统暗色模式导致全黑不可读）
+        # v4.26: QComboBox/QSpinBox/QLineEdit 规则不在这里（绑在实例上才能覆盖 popup）
         self.setStyleSheet("""
             QDialog { background-color: #FFFFFF; }
             QGroupBox {
@@ -62,33 +182,32 @@ class SettingsDialog(QDialog):
                 font-weight: 600;
             }
             QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 12px;
-                padding: 0 6px;
+                subcontrol-origin: margin; left: 12px; padding: 0 6px;
+                color: #1C1C1E; background-color: transparent;
             }
-            QLabel { background: transparent; color: #23201E; }
-            QCheckBox { background: transparent; color: #23201E; }
-            QComboBox {
-                background: #FFFFFF; color: #23201E;
-                border: 1px solid #D0D0D0; border-radius: 4px;
-                padding: 4px 8px;
+            QLabel { background: transparent; color: #1C1C1E; }
+            QCheckBox {
+                background: transparent; color: #1C1C1E; spacing: 6px;
             }
-            QComboBox QAbstractItemView {
-                background: #FFFFFF; color: #23201E;
-                selection-background-color: #5B4A8C;
-                selection-color: #FFFFFF;
-                border: 1px solid #D0D0D0;
+            QCheckBox::indicator {
+                width: 14px; height: 14px;
+                background-color: #FFFFFF; border: 1px solid #D0D0D0;
+                border-radius: 2px;
             }
-            QSpinBox {
-                background: #FFFFFF; color: #23201E;
-                border: 1px solid #D0D0D0; border-radius: 4px;
-                padding: 4px 8px;
+            QCheckBox::indicator:hover { border: 1px solid #5B4A8C; }
+            QCheckBox::indicator:checked {
+                background-color: #5B4A8C; border: 1px solid #5B4A8C;
             }
-            QLineEdit {
-                background: #FFFFFF; color: #23201E;
-                border: 1px solid #D0D0D0; border-radius: 4px;
-                padding: 4px 8px;
+            QPushButton {
+                background-color: #F0F0F0; color: #1C1C1E;
+                border: 1px solid #D0D0D0; border-radius: 6px;
+                padding: 8px 24px; font-size: 14px; min-width: 80px;
             }
+            QPushButton:hover { background-color: #E5E5E5; }
+            QPushButton:pressed { background-color: #D8D8D8; }
+            QPushButton:disabled { background-color: #F8F6F2; color: #8B8680; }
+            /* v4.26.3: API key 切换按钮 QSS 改在按钮实例上设置（QDialog 级 #apiKeyToggle 规则被系统主题覆盖，仍渲染为黑）
+               此处不再设置，由 _build_ui 里 per-instance QSS 强制白底 */
         """)
 
     def _load_config(self) -> None:
@@ -97,12 +216,33 @@ class SettingsDialog(QDialog):
 
         self._camera_index = get_yaml_value("camera", "index", default=0)
         self._voice_enabled = get_yaml_value("voice", "enabled", default=True)
+        self._voice_rate = get_yaml_value("voice", "rate", default=160)
         self._pomo_work = 25  # 默认值，与 pomodoro.py 一致
         self._pomo_break = 5
         self._data_dir = get_yaml_value("data", "db_path", default="data/eyefocus.db")
+        self._web_port = get_yaml_value("web", "port", default=8080)
+        self._gamification_enabled = get_yaml_value("gamification", "enabled", default=True)
+        self._auto_start = get_yaml_value("ui", "auto_start", default=False)
+        self._minimize_on_start = get_yaml_value("ui", "minimize_on_start", default=False)
+
+        self._ai_backend_loaded = get_yaml_value("ai", "backend", default="template")
+        self._ai_model_key = get_yaml_value("ai", "model_key", default="qwen2.5:1.5b")
 
         # 尝试从主程序读取番茄当前设置
         self._try_load_pomodoro_settings()
+
+    def _restore_ai_backend(self) -> None:
+        """恢复已保存的 AI 后端选择"""
+        bk = self._ai_backend_loaded
+        mk = self._ai_model_key
+        model_map = {"qwen2.5:1.5b": "local_qwen2.5",
+                     "qwen3:1.7b": "local_qwen3",
+                     "qwen3.5:1.5b": "local_qwen3.5"}
+        target = model_map.get(mk, bk) if bk == "local" else bk
+        for i in range(self._ai_backend.count()):
+            if self._ai_backend.itemData(i) == target:
+                self._ai_backend.setCurrentIndex(i)
+                break
 
     def _try_load_pomodoro_settings(self) -> None:
         """尝试从运行中的 EyeFocusApp 读取番茄设置"""
@@ -130,6 +270,7 @@ class SettingsDialog(QDialog):
         cam_group = QGroupBox("📷 摄像头")
         cam_layout = QFormLayout(cam_group)
         self._cam_combo = QComboBox()
+        self._cam_combo.setStyleSheet(self.INPUT_WIDGET_QSS)  # v4.26: 实例级 popup 白底
         for i in range(4):
             self._cam_combo.addItem(f"摄像头 {i}", i)
         self._cam_combo.setCurrentIndex(min(self._camera_index, 3))
@@ -148,83 +289,83 @@ class SettingsDialog(QDialog):
             QLabel("TTS 基于 pyttsx3 (仅 Windows SAPI5)"))
         layout.addWidget(voice_group)
 
-        # ── AI 分析 ──
+        # ── AI 分析（仅本地） ──
         ai_group = QGroupBox("🤖 AI 分析摘要")
         ai_layout = QFormLayout(ai_group)
         self._ai_backend = QComboBox()
+        self._ai_backend.setStyleSheet(self.INPUT_WIDGET_QSS)  # v4.26
         self._ai_backend.addItem("内置分析（模板）", "template")
-        self._ai_backend.addItem("OpenAI 兼容 (GPT/DeepSeek/Kimi...)", "openai")
-        self._ai_backend.addItem("Claude API", "claude")
-        self._ai_backend.addItem("Google Gemini", "gemini")
         self._ai_backend.addItem("Ollama 本地", "ollama")
-        self._ai_backend.addItem("本地模型 (Qwen2.5)", "local")
-        self._ai_backend.currentIndexChanged.connect(self._on_ai_backend_changed)
+        self._ai_backend.addItem("Qwen2.5-1.5B (当前)", "local_qwen2.5")
+        self._ai_backend.addItem("Qwen3-1.7B", "local_qwen3")
+        self._ai_backend.addItem("Qwen3.5-1.5B", "local_qwen3.5")
         ai_layout.addRow("分析引擎：", self._ai_backend)
-
-        # 存储标签引用以便显示/隐藏
-        self._ai_provider = QComboBox()
-        self._ai_provider.addItem("OpenAI GPT-4o", "openai")
-        self._ai_provider.addItem("DeepSeek V4", "deepseek")
-        self._ai_provider.addItem("Moonshot Kimi", "moonshot")
-        self._ai_provider.addItem("智谱 GLM", "zhipu")
-        self._ai_provider.addItem("通义千问 Qwen", "qwen")
-        self._ai_provider.addItem("OpenRouter", "openrouter")
-        self._ai_provider.addItem("Together AI", "together")
-        self._ai_provider.addItem("Groq", "groq")
-        self._ai_provider.addItem("自定义", "__custom__")
-        self._ai_provider_row = ai_layout.addRow("提供商：", self._ai_provider)
-
-        self._ai_api_key = QLineEdit()
-        self._ai_api_key.setPlaceholderText("API Key...")
-        self._ai_api_key.setEchoMode(QLineEdit.Password)
-        # 密码可见性切换
-        from PyQt5.QtWidgets import QPushButton as _QPB
-        self._api_key_toggle_btn = _QPB("👁")
-        self._api_key_toggle_btn.setFixedWidth(32)
-        self._api_key_toggle_btn.setToolTip("显示/隐藏 API Key")
-        self._api_key_toggle_btn.setCheckable(True)
-        self._api_key_toggle_btn.setStyleSheet("""
-            QPushButton {
-                background: #F0F0F0; color: #666;
-                border: 1px solid #D0D0D0; border-radius: 4px;
-                padding: 4px 2px; font-size: 14px;
-            }
-            QPushButton:checked {
-                background: #E0E0E0; color: #333;
-            }
-            QPushButton:hover {
-                background: #E5E5E5;
-            }
-        """)
-        self._api_key_toggle_btn.clicked.connect(self._toggle_api_key_visibility)
-        api_key_row = QWidget()
-        api_key_row_layout = QHBoxLayout(api_key_row)
-        api_key_row_layout.setContentsMargins(0, 0, 0, 0)
-        api_key_row_layout.setSpacing(4)
-        api_key_row_layout.addWidget(self._ai_api_key)
-        api_key_row_layout.addWidget(self._api_key_toggle_btn)
-        ai_layout.addRow("API Key：", api_key_row)
-
-        self._ai_base_url = QLineEdit("https://api.openai.com/v1")
-        self._ai_base_url.setPlaceholderText("自定义 API 地址")
-        self._ai_url_row = ai_layout.addRow("API 地址：", self._ai_base_url)
+        ai_layout.addRow("", QLabel("需先通过 scripts/download_model.py 下载模型文件"))
+        # 恢复已保存的后端选择
+        self._restore_ai_backend()
         layout.addWidget(ai_group)
 
         # ── 番茄工作法 ──
         pomo_group = QGroupBox("🍅 番茄工作法")
         pomo_layout = QFormLayout(pomo_group)
         self._pomo_work_spin = QSpinBox()
+        self._pomo_work_spin.setStyleSheet(self.INPUT_WIDGET_QSS)  # v4.26
         self._pomo_work_spin.setRange(1, 120)
         self._pomo_work_spin.setSuffix(" 分钟")
         self._pomo_work_spin.setValue(self._pomo_work)
         pomo_layout.addRow("工作时长：", self._pomo_work_spin)
 
         self._pomo_break_spin = QSpinBox()
+        self._pomo_break_spin.setStyleSheet(self.INPUT_WIDGET_QSS)  # v4.26
         self._pomo_break_spin.setRange(1, 60)
         self._pomo_break_spin.setSuffix(" 分钟")
         self._pomo_break_spin.setValue(self._pomo_break)
         pomo_layout.addRow("休息时长：", self._pomo_break_spin)
         layout.addWidget(pomo_group)
+
+        # ── TTS 语音 ──
+        tts_group = QGroupBox("🗣 语音")
+        tts_layout = QFormLayout(tts_group)
+        self._voice_rate_spin = QSpinBox()
+        self._voice_rate_spin.setStyleSheet(self.INPUT_WIDGET_QSS)
+        self._voice_rate_spin.setRange(80, 400)
+        self._voice_rate_spin.setValue(self._voice_rate)
+        self._voice_rate_spin.setSuffix(" wpm")
+        tts_layout.addRow("语速：", self._voice_rate_spin)
+        tts_layout.addRow("",
+            QLabel("默认 160，范围 80~400"))
+        layout.addWidget(tts_group)
+
+        # ── Web 仪表盘 ──
+        web_group = QGroupBox("🌐 Web 仪表盘")
+        web_layout = QFormLayout(web_group)
+        self._web_port_spin = QSpinBox()
+        self._web_port_spin.setStyleSheet(self.INPUT_WIDGET_QSS)
+        self._web_port_spin.setRange(1024, 65535)
+        self._web_port_spin.setValue(self._web_port)
+        web_layout.addRow("端口：", self._web_port_spin)
+        web_layout.addRow("",
+            QLabel("修改后需重启生效"))
+        layout.addWidget(web_group)
+
+        # ── 启动行为 ──
+        startup_group = QGroupBox("🚀 启动行为")
+        startup_layout = QVBoxLayout(startup_group)
+        self._auto_start_check = QCheckBox("启动时自动开始监测")
+        self._auto_start_check.setChecked(self._auto_start)
+        startup_layout.addWidget(self._auto_start_check)
+        self._minimize_check = QCheckBox("启动时最小化到托盘")
+        self._minimize_check.setChecked(self._minimize_on_start)
+        startup_layout.addWidget(self._minimize_check)
+        layout.addWidget(startup_group)
+
+        # ── 游戏化 ──
+        game_group = QGroupBox("🏆 游戏化")
+        game_layout = QVBoxLayout(game_group)
+        self._gamify_check = QCheckBox("启用游戏化 (连续天数、趋势)")
+        self._gamify_check.setChecked(self._gamification_enabled)
+        game_layout.addWidget(self._gamify_check)
+        layout.addWidget(game_group)
 
         # ── 数据 ──
         data_group = QGroupBox("💾 数据")
@@ -277,32 +418,6 @@ class SettingsDialog(QDialog):
 
         layout.addLayout(btn_layout)
 
-    def _on_ai_backend_changed(self, idx: int) -> None:
-        """切换 AI 后端时显示/隐藏相关字段"""
-        backend = self._ai_backend.itemData(idx)
-        is_openai = (backend == "openai")
-        self._ai_provider.setVisible(is_openai)
-        self._ai_base_url.setVisible(is_openai)
-        if hasattr(self, '_ai_provider_row'):
-            for i in range(self._ai_provider_row.count()):
-                w = self._ai_provider_row.itemAt(i)
-                if w and w.widget():
-                    w.widget().setVisible(is_openai)
-        if hasattr(self, '_ai_url_row'):
-            for i in range(self._ai_url_row.count()):
-                w = self._ai_url_row.itemAt(i)
-                if w and w.widget():
-                    w.widget().setVisible(is_openai)
-
-    def _toggle_api_key_visibility(self) -> None:
-        """切换 API Key 可见性"""
-        if self._ai_api_key.echoMode() == QLineEdit.Password:
-            self._ai_api_key.setEchoMode(QLineEdit.Normal)
-            self._api_key_toggle_btn.setText("🙈")
-        else:
-            self._ai_api_key.setEchoMode(QLineEdit.Password)
-            self._api_key_toggle_btn.setText("👁")
-
     def _on_save(self) -> None:
         """保存设置并关闭"""
         from config import set_yaml_value, save_yaml_config
@@ -310,16 +425,34 @@ class SettingsDialog(QDialog):
         # 收集值
         camera_idx = self._cam_combo.currentData()
         voice_on = self._voice_check.isChecked()
+        voice_rate = self._voice_rate_spin.value()
         pomo_work = self._pomo_work_spin.value()
         pomo_break = self._pomo_break_spin.value()
+        web_port = self._web_port_spin.value()
+        gamify_on = self._gamify_check.isChecked()
+        auto_start = self._auto_start_check.isChecked()
+        minimize = self._minimize_check.isChecked()
 
         # 写入运行时配置
         set_yaml_value("camera", "index", value=camera_idx)
         set_yaml_value("voice", "enabled", value=voice_on)
-        set_yaml_value("ai", "backend", value=self._ai_backend.currentData())
-        set_yaml_value("ai", "provider", value=self._ai_provider.currentData())
-        set_yaml_value("ai", "api_key", value=self._ai_api_key.text())
-        set_yaml_value("ai", "base_url", value=self._ai_base_url.text())
+        set_yaml_value("voice", "rate", value=voice_rate)
+        raw_backend = self._ai_backend.currentData()
+        # 映射 local_* 到 local + model_key
+        LOCAL_MODEL_MAP = {
+            "local_qwen2.5": ("local", "qwen2.5:1.5b"),
+            "local_qwen3": ("local", "qwen3:1.7b"),
+            "local_qwen3.5": ("local", "qwen3.5:1.5b"),
+        }
+        if raw_backend in LOCAL_MODEL_MAP:
+            set_yaml_value("ai", "backend", value="local")
+            set_yaml_value("ai", "model_key", value=LOCAL_MODEL_MAP[raw_backend][1])
+        else:
+            set_yaml_value("ai", "backend", value=raw_backend)
+        set_yaml_value("web", "port", value=web_port)
+        set_yaml_value("gamification", "enabled", value=gamify_on)
+        set_yaml_value("ui", "auto_start", value=auto_start)
+        set_yaml_value("ui", "minimize_on_start", value=minimize)
 
         # 番茄时间不持久化到 config.yaml（但应用到运行中引擎）
         self._apply_pomodoro_settings(pomo_work, pomo_break)
@@ -327,8 +460,8 @@ class SettingsDialog(QDialog):
         # 持久化
         ok = save_yaml_config()
         if ok:
-            logger.info("设置已保存: camera=%d, voice=%s, pomo=%d/%d",
-                        camera_idx, voice_on, pomo_work, pomo_break)
+            logger.info("设置已保存: camera=%d, voice=%s(%d), pomo=%d/%d, ear=%.2f, web=%d",
+                        camera_idx, voice_on, voice_rate, pomo_work, pomo_break, ear_min, web_port)
         else:
             logger.warning("设置保存失败 (config.yaml 不可写)")
 
