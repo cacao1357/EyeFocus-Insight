@@ -383,14 +383,17 @@ class EyeFocusWindow(QMainWindow):
             elif action == "stop":
                 pomo.stop()
             elif action == "settings":
-                from PyQt5.QtWidgets import QInputDialog
-                work, ok = QInputDialog.getInt(
-                    self, "设置番茄", "工作分钟数 (1-120):", value=pomo._work_minutes, min=1, max=120)
-                if not ok:
+                # v4.26: 白底 wrapper 替代 QInputDialog.getInt（系统暗色下黑底）
+                from gui.settings_dialog import ask_pomo_int
+                work = ask_pomo_int(
+                    self, "设置番茄", "工作分钟数 (1-120):",
+                    value=pomo._work_minutes, min_val=1, max_val=120)
+                if work is None:
                     return
-                rest, ok = QInputDialog.getInt(
-                    self, "设置番茄", "休息分钟数 (1-60):", value=pomo._break_minutes, min=1, max=60)
-                if not ok:
+                rest = ask_pomo_int(
+                    self, "设置番茄", "休息分钟数 (1-60):",
+                    value=pomo._break_minutes, min_val=1, max_val=60)
+                if rest is None:
                     return
                 pomo.set_duration(work, rest)
             # 同步托盘状态

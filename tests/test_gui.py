@@ -399,3 +399,55 @@ class TestV426PanelColorTokens:
         assert "#B8860B" not in content
         assert "#FFD54F" not in content
         assert "#FFFDE7" not in content
+
+
+# ════════════════════════════════════════
+# v4.26 面板刷新: 重做 dropdown 白底（被回退后补救）
+# 修复"QComboBox/QSpinBox/QLineEdit 弹出 popup 仍黑底" +
+#      "QInputDialog.getInt 番茄设置弹窗黑底"
+# ════════════════════════════════════════
+
+class TestV426DropdownWhiteBg:
+    """v4.26: 设置对话框下拉/输入 popup + 番茄 dialog 全白底"""
+
+    @pytest.fixture(scope="class", autouse=True)
+    def _setup_qt(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PyQt5.QtWidgets import QApplication
+        self._app = QApplication.instance() or QApplication([])
+
+    def test_input_widget_qss_contains_required_selectors(self):
+        """INPUT_WIDGET_QSS 必须含 ::drop-down / QAbstractItemView::item"""
+        from gui.settings_dialog import SettingsDialog
+        qss = SettingsDialog.INPUT_WIDGET_QSS
+        for selector in ["::drop-down", "QAbstractItemView::item", "#5B4A8C"]:
+            assert selector in qss, f"INPUT_WIDGET_QSS 缺: {selector}"
+
+    def test_settings_dialog_input_widgets_have_qss(self):
+        """每个 QComboBox/QSpinBox/QLineEdit 都设了实例级 QSS"""
+        from gui.settings_dialog import SettingsDialog
+        dlg = SettingsDialog()
+        for w in [dlg._cam_combo, dlg._ai_backend, dlg._ai_provider,
+                  dlg._pomo_work_spin, dlg._pomo_break_spin,
+                  dlg._ai_api_key, dlg._ai_base_url]:
+            assert w.styleSheet(), f"{type(w).__name__} 未 setStyleSheet"
+
+    def test_pomo_input_dialog_qss_white(self):
+        """_POMO_INPUT_DIALOG_QSS 是白底"""
+        from gui.settings_dialog import _POMO_INPUT_DIALOG_QSS, ask_pomo_int
+        assert _POMO_INPUT_DIALOG_QSS.count("#FFFFFF") >= 3
+        for s in ["QPushButton:hover", "QPushButton:default", "QSpinBox::up-button"]:
+            assert s in _POMO_INPUT_DIALOG_QSS
+        assert callable(ask_pomo_int)
+
+    def test_tray_and_window_use_ask_pomo_int(self):
+        """tray.py / qt_window.py 都不再用 QInputDialog.getInt"""
+        import os
+        for path in ["gui/tray.py", "gui/qt_window.py"]:
+            with open(os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                path
+            ), encoding="utf-8") as f:
+                content = f.read()
+            assert "ask_pomo_int" in content
+            assert "QInputDialog.getInt(" not in content

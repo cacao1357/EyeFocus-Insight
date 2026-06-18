@@ -21,6 +21,7 @@ from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QInputDialog,
     QLineEdit,
     QDialogButtonBox,
     QFormLayout,
@@ -36,6 +37,75 @@ from PyQt5.QtWidgets import (
 logger = logging.getLogger("eyefocus.gui.settings")
 
 
+# ════════════════════════════════════════
+# v4.26 颜色 token 统一
+# 跟项目 Quiet Focus 调色板（与 report/ qt_window/ qt_overlay 一致）
+# ════════════════════════════════════════
+COLOR_PAPER = "#FFFFFF"
+COLOR_LINE = "#E0E0E0"
+COLOR_QUIET = "#8B8680"  # v4.26 替换 #8E8E93
+COLOR_INK = "#1C1C1E"   # v4.26 统一为 #1C1C1E（去掉 #23201E / #1C1C1E 两套）
+
+
+# v4.26 番茄设置 dialog 专用白底 QSS（替代 QInputDialog.getInt 黑底）
+_POMO_INPUT_DIALOG_QSS = """
+    QDialog { background-color: #FFFFFF; }
+    QLabel {
+        color: #1C1C1E; background: transparent; font-size: 14px;
+    }
+    QSpinBox, QLineEdit {
+        background-color: #FFFFFF; color: #1C1C1E;
+        border: 1px solid #D0D0D0; border-radius: 4px;
+        padding: 4px 8px;
+        selection-background-color: #5B4A8C; selection-color: #FFFFFF;
+        font-size: 14px; min-height: 22px;
+    }
+    QSpinBox:focus, QLineEdit:focus {
+        border: 1px solid #5B4A8C; outline: 0;
+    }
+    QSpinBox::up-button, QSpinBox::down-button {
+        background: #F8F6F2; border: 1px solid #D0D0D0; width: 20px;
+    }
+    QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+        background: #F0EBF8;
+    }
+    QSpinBox::up-button:pressed, QSpinBox::down-button:pressed {
+        background: #E0E0E0;
+    }
+    QPushButton {
+        background-color: #F0F0F0; color: #1C1C1E;
+        border: 1px solid #D0D0D0; border-radius: 4px;
+        padding: 6px 18px; font-size: 13px; min-width: 70px;
+    }
+    QPushButton:hover { background-color: #E5E5E5; }
+    QPushButton:pressed { background-color: #D8D8D8; }
+    QPushButton:default {
+        background-color: #5B4A8C; color: #FFFFFF;
+        border: 1px solid #4A3A7A; font-weight: 600;
+    }
+    QPushButton:default:hover { background-color: #4A3A7A; }
+    QPushButton:default:pressed { background-color: #3A2A6A; }
+"""
+
+
+def ask_pomo_int(parent, title: str, label: str,
+                 value: int, min_val: int, max_val: int) -> Optional[int]:
+    """v4.26 白底番茄分钟数输入框（替代 QInputDialog.getInt 黑底）
+
+    Qt 自带 QInputDialog 在系统暗色主题下黑底、字看不清。
+    重写为可 setStyleSheet 的非静态版本，套白底 QSS。
+    """
+    dlg = QInputDialog(parent)
+    dlg.setStyleSheet(_POMO_INPUT_DIALOG_QSS)
+    dlg.setWindowTitle(title)
+    dlg.setLabelText(label)
+    dlg.setIntRange(min_val, max_val)
+    dlg.setIntValue(value)
+    if dlg.exec_() == QInputDialog.Accepted:
+        return dlg.intValue()
+    return None
+
+
 class SettingsDialog(QDialog):
     """应用设置对话框"""
 
@@ -43,6 +113,50 @@ class SettingsDialog(QDialog):
     COLOR_IRIS = "#5B4A8C"
     COLOR_SAGE = "#5A8A6D"
     COLOR_AMBER = "#C9843A"
+
+    # v4.26 统一下拉/输入白底 QSS
+    # 关键：setStyleSheet 在 QDialog 级别无法覆盖 popup 窗口
+    # （Qt 的 popup 是独立 top-level，QSS 选择器不传递），
+    # 必须把 QSS 直接绑到每个 QComboBox/QSpinBox/QLineEdit 实例上。
+    INPUT_WIDGET_QSS = """
+        QComboBox, QSpinBox, QLineEdit {
+            background-color: #FFFFFF; color: #1C1C1E;
+            border: 1px solid #D0D0D0; border-radius: 4px;
+            padding: 4px 8px;
+            selection-background-color: #5B4A8C; selection-color: #FFFFFF;
+        }
+        QComboBox:hover, QSpinBox:hover, QLineEdit:hover {
+            border: 1px solid #5B4A8C;
+        }
+        QComboBox:focus, QSpinBox:focus, QLineEdit:focus {
+            border: 1px solid #5B4A8C; outline: 0;
+        }
+        QComboBox::drop-down {
+            subcontrol-origin: padding; subcontrol-position: top right;
+            width: 20px; border-left: 1px solid #D0D0D0;
+            background: #F8F6F2;
+        }
+        QComboBox::drop-down:hover { background: #F0EBF8; }
+        QComboBox QAbstractItemView {
+            background-color: #FFFFFF; color: #1C1C1E;
+            selection-background-color: #5B4A8C; selection-color: #FFFFFF;
+            border: 1px solid #D0D0D0; outline: 0; padding: 2px;
+        }
+        QComboBox QAbstractItemView::item {
+            padding: 6px 10px; border: none;
+            background-color: transparent; color: #1C1C1E;
+            min-height: 20px;
+        }
+        QComboBox QAbstractItemView::item:hover {
+            background-color: #F0EBF8; color: #1C1C1E;
+        }
+        QSpinBox::up-button, QSpinBox::down-button {
+            background: #F8F6F2; border: 1px solid #D0D0D0; width: 18px;
+        }
+        QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+            background: #F0EBF8;
+        }
+    """
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -52,6 +166,7 @@ class SettingsDialog(QDialog):
         self.setMinimumWidth(420)
         self.setModal(True)
         # v4.22: 强制白底（防止系统暗色模式导致全黑不可读）
+        # v4.26: QComboBox/QSpinBox/QLineEdit 规则不在这里（绑在实例上才能覆盖 popup）
         self.setStyleSheet("""
             QDialog { background-color: #FFFFFF; }
             QGroupBox {
@@ -62,33 +177,30 @@ class SettingsDialog(QDialog):
                 font-weight: 600;
             }
             QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 12px;
-                padding: 0 6px;
+                subcontrol-origin: margin; left: 12px; padding: 0 6px;
+                color: #1C1C1E; background-color: transparent;
             }
-            QLabel { background: transparent; color: #23201E; }
-            QCheckBox { background: transparent; color: #23201E; }
-            QComboBox {
-                background: #FFFFFF; color: #23201E;
-                border: 1px solid #D0D0D0; border-radius: 4px;
-                padding: 4px 8px;
+            QLabel { background: transparent; color: #1C1C1E; }
+            QCheckBox {
+                background: transparent; color: #1C1C1E; spacing: 6px;
             }
-            QComboBox QAbstractItemView {
-                background: #FFFFFF; color: #23201E;
-                selection-background-color: #5B4A8C;
-                selection-color: #FFFFFF;
-                border: 1px solid #D0D0D0;
+            QCheckBox::indicator {
+                width: 14px; height: 14px;
+                background-color: #FFFFFF; border: 1px solid #D0D0D0;
+                border-radius: 2px;
             }
-            QSpinBox {
-                background: #FFFFFF; color: #23201E;
-                border: 1px solid #D0D0D0; border-radius: 4px;
-                padding: 4px 8px;
+            QCheckBox::indicator:hover { border: 1px solid #5B4A8C; }
+            QCheckBox::indicator:checked {
+                background-color: #5B4A8C; border: 1px solid #5B4A8C;
             }
-            QLineEdit {
-                background: #FFFFFF; color: #23201E;
-                border: 1px solid #D0D0D0; border-radius: 4px;
-                padding: 4px 8px;
+            QPushButton {
+                background-color: #F0F0F0; color: #1C1C1E;
+                border: 1px solid #D0D0D0; border-radius: 6px;
+                padding: 8px 24px; font-size: 14px; min-width: 80px;
             }
+            QPushButton:hover { background-color: #E5E5E5; }
+            QPushButton:pressed { background-color: #D8D8D8; }
+            QPushButton:disabled { background-color: #F8F6F2; color: #8B8680; }
         """)
 
     def _load_config(self) -> None:
@@ -130,6 +242,7 @@ class SettingsDialog(QDialog):
         cam_group = QGroupBox("📷 摄像头")
         cam_layout = QFormLayout(cam_group)
         self._cam_combo = QComboBox()
+        self._cam_combo.setStyleSheet(self.INPUT_WIDGET_QSS)  # v4.26: 实例级 popup 白底
         for i in range(4):
             self._cam_combo.addItem(f"摄像头 {i}", i)
         self._cam_combo.setCurrentIndex(min(self._camera_index, 3))
@@ -152,6 +265,7 @@ class SettingsDialog(QDialog):
         ai_group = QGroupBox("🤖 AI 分析摘要")
         ai_layout = QFormLayout(ai_group)
         self._ai_backend = QComboBox()
+        self._ai_backend.setStyleSheet(self.INPUT_WIDGET_QSS)  # v4.26
         self._ai_backend.addItem("内置分析（模板）", "template")
         self._ai_backend.addItem("OpenAI 兼容 (GPT/DeepSeek/Kimi...)", "openai")
         self._ai_backend.addItem("Claude API", "claude")
@@ -163,6 +277,7 @@ class SettingsDialog(QDialog):
 
         # 存储标签引用以便显示/隐藏
         self._ai_provider = QComboBox()
+        self._ai_provider.setStyleSheet(self.INPUT_WIDGET_QSS)  # v4.26
         self._ai_provider.addItem("OpenAI GPT-4o", "openai")
         self._ai_provider.addItem("DeepSeek V4", "deepseek")
         self._ai_provider.addItem("Moonshot Kimi", "moonshot")
@@ -177,36 +292,34 @@ class SettingsDialog(QDialog):
         self._ai_api_key = QLineEdit()
         self._ai_api_key.setPlaceholderText("API Key...")
         self._ai_api_key.setEchoMode(QLineEdit.Password)
+        self._ai_api_key.setStyleSheet(self.INPUT_WIDGET_QSS)  # v4.26
         # 密码可见性切换
         from PyQt5.QtWidgets import QPushButton as _QPB
         self._api_key_toggle_btn = _QPB("👁")
-        self._api_key_toggle_btn.setFixedWidth(32)
+        self._api_key_toggle_btn.setFixedWidth(36)
         self._api_key_toggle_btn.setToolTip("显示/隐藏 API Key")
         self._api_key_toggle_btn.setCheckable(True)
         self._api_key_toggle_btn.setStyleSheet("""
             QPushButton {
-                background: #F0F0F0; color: #666;
-                border: 1px solid #D0D0D0; border-radius: 4px;
-                padding: 4px 2px; font-size: 14px;
+                background: transparent; color: #5A5650;
+                border: none; font-size: 15px;
+                padding: 4px 8px;
             }
-            QPushButton:checked {
-                background: #E0E0E0; color: #333;
-            }
-            QPushButton:hover {
-                background: #E5E5E5;
-            }
+            QPushButton:hover { color: #5B4A8C; }
+            QPushButton:checked { color: #5B4A8C; }
         """)
         self._api_key_toggle_btn.clicked.connect(self._toggle_api_key_visibility)
         api_key_row = QWidget()
-        api_key_row_layout = QHBoxLayout(api_key_row)
-        api_key_row_layout.setContentsMargins(0, 0, 0, 0)
-        api_key_row_layout.setSpacing(4)
-        api_key_row_layout.addWidget(self._ai_api_key)
-        api_key_row_layout.addWidget(self._api_key_toggle_btn)
+        api_key_layout = QHBoxLayout(api_key_row)
+        api_key_layout.setContentsMargins(0, 0, 0, 0)
+        api_key_layout.setSpacing(0)
+        api_key_layout.addWidget(self._ai_api_key)
+        api_key_layout.addWidget(self._api_key_toggle_btn)
         ai_layout.addRow("API Key：", api_key_row)
 
         self._ai_base_url = QLineEdit("https://api.openai.com/v1")
         self._ai_base_url.setPlaceholderText("自定义 API 地址")
+        self._ai_base_url.setStyleSheet(self.INPUT_WIDGET_QSS)  # v4.26
         self._ai_url_row = ai_layout.addRow("API 地址：", self._ai_base_url)
         layout.addWidget(ai_group)
 
@@ -214,12 +327,14 @@ class SettingsDialog(QDialog):
         pomo_group = QGroupBox("🍅 番茄工作法")
         pomo_layout = QFormLayout(pomo_group)
         self._pomo_work_spin = QSpinBox()
+        self._pomo_work_spin.setStyleSheet(self.INPUT_WIDGET_QSS)  # v4.26
         self._pomo_work_spin.setRange(1, 120)
         self._pomo_work_spin.setSuffix(" 分钟")
         self._pomo_work_spin.setValue(self._pomo_work)
         pomo_layout.addRow("工作时长：", self._pomo_work_spin)
 
         self._pomo_break_spin = QSpinBox()
+        self._pomo_break_spin.setStyleSheet(self.INPUT_WIDGET_QSS)  # v4.26
         self._pomo_break_spin.setRange(1, 60)
         self._pomo_break_spin.setSuffix(" 分钟")
         self._pomo_break_spin.setValue(self._pomo_break)
