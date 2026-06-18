@@ -484,18 +484,33 @@ class WebDashboard:
             answer = self._template_chat_answer(question, llm_data)
             return aiohttp.web.json_response({"answer": answer, "backend": "template"})
 
-        # 构造对话 prompt
+        # 构造分析数据上下文
+        s, m, e = llm_data['seg_start'], llm_data['seg_mid'], llm_data['seg_end']
+        trend_desc = "上升" if e > s else ("下降" if s > e else "平稳")
         context = (
-            f"会话时长：{llm_data['duration']} 分钟\n"
-            f"平均专注度：{llm_data['avg_focus']} 分（历史平均：{llm_data['hist_avg_focus']} 分）\n"
-            f"专注趋势：前段 {llm_data['seg_start']} 分 → 中段 {llm_data['seg_mid']} 分 → 后段 {llm_data['seg_end']} 分\n"
-            f"疲劳分布：高 {llm_data['fatigue_high_pct']}% / 中 {llm_data['fatigue_mid_pct']}% / 低 {llm_data['fatigue_low_pct']}%\n"
-            f"分心事件：{llm_data['distractions']} 次\n"
+            f"## 会话数据\n"
+            f"- 时长: {llm_data['duration']} 分钟\n"
+            f"- 平均专注度: {llm_data['avg_focus']}/100 分\n"
+            f"- 历史平均: {llm_data['hist_avg_focus']}/100 分\n"
+            f"- 趋势: 前段 {s} → 中段 {m} → 后段 {e} 分 ({trend_desc})\n"
+            f"- 疲劳: 高 {llm_data['fatigue_high_pct']}% / 中 {llm_data['fatigue_mid_pct']}% / 低 {llm_data['fatigue_low_pct']}%\n"
+            f"- 分心: {llm_data['distractions']} 次\n"
         )
 
-        system_prompt = "你是一个专注度分析助手。根据提供的会话数据回答用户问题。回答简洁、中文、口语化。"
+        system_prompt = (
+            "你是一名专注力数据分析师。根据提供的会话数据回答用户问题。\n\n"
+            "回答要求：\n"
+            "1. 始终基于数据说话，引用具体数字\n"
+            "2. 分析原因而非只描述现象（比如专注度下降可能是因为疲劳累积或频繁分心）\n"
+            "3. 给出可执行的建议\n"
+            "4. 用中文，口语化，像朋友聊天\n"
+            "5. 不知道就说不知道，不要编造\n\n"
+            "示例分析：\n"
+            "- '你这次专注度72分，比平时高了4分。不过后半段下降了13分，看疲劳数据，高疲劳占比15%，可能是疲劳累积影响了后半程。建议下次在疲劳上升前安排一次短暂休息。'\n"
+            "- '分心8次，头部偏移是主要原因。可以试着调整一下摄像头位置或者工位布局。'"
+        )
         messages = [{"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"会话数据：\n{context}"}]
+                    {"role": "user", "content": f"这是本次会话的数据：\n{context}\n\n请基于以上数据回答用户的问题。"}]
         for h in history[-6:]:
             messages.append({"role": h.get("role", "user"), "content": h.get("text", "")})
         messages.append({"role": "user", "content": question})

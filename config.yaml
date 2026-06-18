@@ -1,6 +1,7 @@
 ai:
   backend: local
   mode: true
+  model_key: qwen3:1.7b
 baseline:
   collection_duration: 7.0
   cqs_threshold: 0.6
@@ -37,6 +38,8 @@ face_mesh:
   min_tracking_confidence: 0.5
   model_filename: face_landmarker.task
   num_faces: 1
+gamification:
+  enabled: true
 head_pose:
   frontal_pitch_std_thresh: 3.0
   frontal_yaw_std_thresh: 3.0
@@ -45,5 +48,11 @@ head_pose:
 logging:
   format: '[%(levelname)s] %(name)s: %(message)s'
   level: INFO
+ui:
+  auto_start: false
+  minimize_on_start: false
 voice:
   enabled: true
+  rate: 160
+web:
+  port: 8080

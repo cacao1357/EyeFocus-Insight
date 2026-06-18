@@ -460,10 +460,13 @@ class SettingsDialog(QDialog):
         # 持久化
         ok = save_yaml_config()
         if ok:
-            logger.info("设置已保存: camera=%d, voice=%s(%d), pomo=%d/%d, ear=%.2f, web=%d",
-                        camera_idx, voice_on, voice_rate, pomo_work, pomo_break, ear_min, web_port)
+            logger.info("设置已保存: camera=%d, voice=%s(%d), pomo=%d/%d, web=%d",
+                        camera_idx, voice_on, voice_rate, pomo_work, pomo_break, web_port)
+        from PyQt5.QtWidgets import QMessageBox
+        if ok:
+            QMessageBox.information(self, "设置", "✅ 设置已保存并生效。\n部分设置（摄像头/端口）需重启程序。")
         else:
-            logger.warning("设置保存失败 (config.yaml 不可写)")
+            QMessageBox.warning(self, "设置", "❌ 保存失败 (config.yaml 不可写)。\n请以管理员身份运行或检查文件权限。")
 
         self.accept()
 
