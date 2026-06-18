@@ -93,7 +93,7 @@ class DataPanel(QWidget):
 class ControlButton(QPushButton):
     """简约文字按钮：圆角背景，hover 微亮，pressed 加深"""
 
-    def __init__(self, text: str, color: str = "#8E8E93",
+    def __init__(self, text: str, color: str = "#8B8680",
                  parent: Optional[QWidget] = None):
         super().__init__(text, parent)
         self._color = color
@@ -247,7 +247,7 @@ class EyeFocusWindow(QMainWindow):
         self._light_warning = QLabel("⚠ 光照不足 · 检测精度可能下降")
         self._light_warning.setAlignment(Qt.AlignCenter)
         self._light_warning.setStyleSheet(
-            "color: #FF9500; background: #FFF3E0; border: 1px solid #FF9500;"
+            "color: #C9843A; background: #FAF0E3; border: 1px solid #C9843A;"
             "border-radius: 6px; padding: 4px 0; font-size: 12px;"
             "font-weight: 600; margin: 0;"
         )
@@ -262,7 +262,7 @@ class EyeFocusWindow(QMainWindow):
         self._face_lost_warning = QLabel("⚠ 人脸丢失 · 监测已暂停")
         self._face_lost_warning.setAlignment(Qt.AlignCenter)
         self._face_lost_warning.setStyleSheet(
-            "color: #FF3B30; background: #FFEBEE; border: 1px solid #FF3B30;"
+            "color: #B55C5C; background: #F8E8E8; border: 1px solid #B55C5C;"
             "border-radius: 6px; padding: 4px 0; font-size: 12px;"
             "font-weight: 600; margin: 0;"
         )
@@ -283,7 +283,7 @@ class EyeFocusWindow(QMainWindow):
         self._calib_prompt = QLabel("🟡 尚未校准 · 评分仅供参考")
         self._calib_prompt.setAlignment(Qt.AlignCenter)
         self._calib_prompt.setStyleSheet(
-            "color: #B8860B; background: #FFFDE7; border: 1px solid #FFD54F;"
+            "color: #C9843A; background: #FAF0E3; border: 1px solid #C9843A;"
             "border-radius: 6px; padding: 4px 0; font-size: 12px;"
             "font-weight: 500; margin: 0;"
         )
@@ -296,12 +296,12 @@ class EyeFocusWindow(QMainWindow):
         btn_bar.setSpacing(12)
         btn_bar.setAlignment(Qt.AlignCenter)
 
-        self._pause_btn = ControlButton("⏸ 暂停", "#8E8E93")
+        self._pause_btn = ControlButton("⏸ 暂停", "#8B8680")
         self._pause_btn.clicked.connect(self._on_pause_clicked)
         btn_bar.addWidget(self._pause_btn)
 
         if self._show_calibrate:
-            self._calib_btn = ControlButton("⚙ 校准", "#007AFF")
+            self._calib_btn = ControlButton("⚙ 校准", "#5B4A8C")
             self._calib_btn.clicked.connect(lambda: self.calibrate_requested.emit())
             btn_bar.addWidget(self._calib_btn)
         else:
@@ -556,7 +556,7 @@ class EyeFocusWindow(QMainWindow):
             if paused:
                 self._position_pause_overlay()
         # 按钮颜色随暂停状态切换
-        self._pause_btn.set_color("#34C759" if paused else "#8E8E93")
+        self._pause_btn.set_color("#5A8A6D" if paused else "#8B8680")
 
     def is_paused(self) -> bool:
         return self._paused

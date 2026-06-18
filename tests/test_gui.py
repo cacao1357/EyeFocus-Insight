@@ -321,3 +321,81 @@ class TestAlertMessage:
         )
         assert alert.level == AlertLevel.WARNING
         assert alert.text == "测试警告"
+
+
+# ════════════════════════════════════════
+# v4.26 面板刷新: 颜色 token 统一回归测试
+# 修复"Apple 系统色 (#34C759/#FF9500/#FF3B30/#007AFF) 与项目 Quiet Focus 不符"
+# ════════════════════════════════════════
+
+class TestV426PanelColorTokens:
+    """v4.26: 主窗口 + 叠加层颜色统一为项目 Quiet Focus token"""
+
+    def test_no_apple_system_colors_in_qt_window(self):
+        """qt_window.py 不应再用 Apple 系统色 #34C759/#FF9500/#FF3B30/#007AFF"""
+        import os
+        path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "gui", "qt_window.py"
+        )
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+        for apple_color in ["#34C759", "#FF9500", "#FF3B30", "#007AFF"]:
+            assert apple_color not in content, \
+                f"qt_window.py 仍含 Apple 系统色 {apple_color}"
+
+    def test_no_apple_system_colors_in_qt_overlay(self):
+        """qt_overlay.py 不应再用 Apple 系统色"""
+        import os
+        path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "gui", "qt_overlay.py"
+        )
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+        for apple_color in ["#34C759", "#FF9500", "#FF3B30", "#007AFF"]:
+            assert apple_color not in content, \
+                f"qt_overlay.py 仍含 Apple 系统色 {apple_color}"
+
+    def test_qt_overlay_uses_project_color_tokens(self):
+        """qt_overlay.py 颜色常量应是项目 Quiet Focus token"""
+        from gui.qt_overlay import (
+            C_FOCUS_GREEN, C_FOCUS_YELLOW, C_FOCUS_RED,
+        )
+        # sage-600 = #5A8A6D = (90, 138, 109)
+        assert C_FOCUS_GREEN.red() == 90
+        assert C_FOCUS_GREEN.green() == 138
+        assert C_FOCUS_GREEN.blue() == 109
+        # amber-600 = #C9843A = (201, 132, 58)
+        assert C_FOCUS_YELLOW.red() == 201
+        assert C_FOCUS_YELLOW.green() == 132
+        assert C_FOCUS_YELLOW.blue() == 58
+        # rose-600 = #B55C5C = (181, 92, 92)
+        assert C_FOCUS_RED.red() == 181
+        assert C_FOCUS_RED.green() == 92
+        assert C_FOCUS_RED.blue() == 92
+
+    def test_qt_window_status_colors_are_project_tokens(self):
+        """qt_window.py 状态/警告/校准色应是项目 token"""
+        import os
+        path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "gui", "qt_window.py"
+        )
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+        # light_warning: amber
+        assert "#C9843A" in content  # amber-600 (text + border)
+        assert "#FAF0E3" in content  # light amber bg
+        # face_lost_warning: rose
+        assert "#B55C5C" in content  # rose-600 (text + border)
+        assert "#F8E8E8" in content  # light rose bg
+        # calib_prompt: amber (与 light_warning 统一)
+        # 校准按钮: iris (替代 Apple 蓝 #007AFF)
+        assert "#5B4A8C" in content
+        # 暂停按钮: quiet (替代 Apple secondary #8E8E93)
+        assert "#8B8680" in content
+        # 旧 Apple 色 (iOS 金色) 不应再出现
+        assert "#B8860B" not in content
+        assert "#FFD54F" not in content
+        assert "#FFFDE7" not in content

@@ -302,7 +302,7 @@ class CalibrationDialog(QDialog):
         for i in range(4):
             n = i + 1
             if n <= active:
-                parts.append('<span style="color:#34C759;">●</span>')
+                parts.append('<span style="color:#5A8A6D;">●</span>')
             else:
                 parts.append('<span style="color:#CCCCCC;">○</span>')
         self._dots.setText(" ".join(parts))
