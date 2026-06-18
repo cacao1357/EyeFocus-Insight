@@ -155,6 +155,10 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
 
         menu.addSeparator()
 
+        # v4.26: 重启
+        restart_action = menu.addAction("🔄 重启程序")
+        restart_action.triggered.connect(self._restart_app)
+
         # 退出
         exit_action = menu.addAction("退出 EyeFocus Insight")
         exit_action.triggered.connect(self._exit_app)
@@ -555,6 +559,19 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         """切换 AI 模式"""
         self._save_ai_mode(checked)
         logger.info("AI 模式: %s", "开启" if checked else "关闭")
+
+    def _restart_app(self):
+        """重启程序 — 启动新进程后退出当前进程"""
+        logger.info("托盘菜单: 重启程序")
+        import sys as _sys
+        import subprocess as _sp
+        self.hide()
+        # 启动新实例
+        _sp.Popen([_sys.executable] + _sys.argv)
+        # 退出当前实例
+        if hasattr(self._window, '_force_exit'):
+            self._window._force_exit = True
+        self._window.close()
 
     def _exit_app(self):
         """完全退出程序"""

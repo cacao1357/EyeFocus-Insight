@@ -311,6 +311,8 @@ class WebDashboard:
                 if backend == "ollama":
                     kwargs["base_url"] = get_yaml_value("ai", "ollama_url",
                                                          default="http://127.0.0.1:11434")
+                elif backend == "local":
+                    kwargs["model_key"] = get_yaml_value("ai", "model_key", default="qwen2.5:1.5b")
 
                 client = create_llm_client(backend, **kwargs)
                 if client.available:
@@ -478,6 +480,9 @@ class WebDashboard:
         if backend == "ollama":
             kwargs["base_url"] = get_yaml_value("ai", "ollama_url",
                                                  default="http://127.0.0.1:11434")
+        elif backend == "local":
+            kwargs["model_key"] = get_yaml_value("ai", "model_key", default="qwen2.5:1.5b")
+            kwargs["n_gpu_layers"] = -1
         client = create_llm_client(backend, **kwargs)
         if not client.available:
             # 模板降级

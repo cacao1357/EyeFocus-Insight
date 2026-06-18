@@ -892,6 +892,8 @@ class HTMLReportGenerator:
             if backend == "ollama":
                 kwargs["base_url"] = get_yaml_value("ai", "ollama_url",
                                                      default="http://127.0.0.1:11434")
+            elif backend == "local":
+                kwargs["model_key"] = get_yaml_value("ai", "model_key", default="qwen2.5:1.5b")
             client = create_llm_client(backend, **kwargs)
             if not client.available:
                 logger.info("AI 分析: %s 不可用，回退模板", client.name)
