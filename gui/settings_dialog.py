@@ -306,34 +306,41 @@ class SettingsDialog(QDialog):
         self._api_key_toggle_btn.setFixedWidth(36)
         self._api_key_toggle_btn.setToolTip("显示/隐藏 API Key")
         self._api_key_toggle_btn.setCheckable(True)
-        # v4.26.3: 改用 per-instance QSS 强制白底（Windows 暗色主题下系统 Button 角色强制为黑，
-        # 之前 v4.26.1+2 的 setFlat+WA_NoSystemBackground+Palette+transparent 都败给了系统主题）
-        # 改用普通 QPushButton + 显式 #FFFFFF 背景，QSS 选择器用 #apiKeyToggle 提高 specificity，
-        # per-instance setStyleSheet 替换继承自 QDialog 的 QPushButton 规则，确保不再被系统主题覆盖
+        # v4.26.4: 完全去掉按钮 border（含 focus 矩形），避免 Windows 主题下渲染为黑边
+        # QSS `outline: none` + `border: none` 双保险，确保所有状态下都没有黑边
+        # 视觉上 input 的 1px 灰边已经足够作为分隔，按钮完全融入背景
         self._api_key_toggle_btn.setStyleSheet("""
             QPushButton#apiKeyToggle {
                 background-color: #FFFFFF;
                 color: #5A5650;
-                border: 1px solid #D0D0D0;
-                border-left: 0px;
-                border-top-left-radius: 0px;
-                border-bottom-left-radius: 0px;
+                border: none;
                 border-top-right-radius: 4px;
                 border-bottom-right-radius: 4px;
                 font-size: 14px;
                 padding: 4px 8px;
                 margin: 0px;
+                outline: none;
             }
             QPushButton#apiKeyToggle:hover {
                 background-color: #F0EBF8;
                 color: #5B4A8C;
+                border: none;
+                outline: none;
             }
             QPushButton#apiKeyToggle:pressed {
                 background-color: #E0E0E0;
+                border: none;
+                outline: none;
             }
             QPushButton#apiKeyToggle:checked {
                 background-color: #F0EBF8;
                 color: #5B4A8C;
+                border: none;
+                outline: none;
+            }
+            QPushButton#apiKeyToggle:focus {
+                border: none;
+                outline: none;
             }
         """)
         self._api_key_toggle_btn.clicked.connect(self._toggle_api_key_visibility)
