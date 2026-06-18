@@ -36,6 +36,7 @@ from PyQt5.QtWidgets import (
     QLabel,
     QMainWindow,
     QMenu,
+    QProgressBar,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -43,10 +44,7 @@ from PyQt5.QtWidgets import (
 )
 
 from gui.qt_overlay import (
-    FocusRing,
-    GradientDivider,
     DistractionLabel,
-    FocusSparkline,
     _get_segoe_font,
 )
 from gui.video_label import FrameBuffer, VideoLabel
@@ -193,33 +191,78 @@ class EyeFocusWindow(QMainWindow):
         self._pause_overlay.setVisible(False)
         main_layout.addWidget(self._video_container, 5)
 
-        # ── 下半：白色数据面板 (stretch 5) ──
+        # ── 下半：白色数据面板 (stretch 4) ──
         self._data_panel = DataPanel()
         panel_layout = QVBoxLayout(self._data_panel)
-        panel_layout.setContentsMargins(12, 10, 12, 6)
+        panel_layout.setContentsMargins(16, 14, 16, 8)
         panel_layout.setSpacing(4)
 
-        # ── 第1行：专注度圆环(左) + 信息区(右) ──
-        info_row = QHBoxLayout()
-        info_row.setSpacing(16)
+        # ── Row 1: Hero 监测时长 ──
+        hero_row = QVBoxLayout()
+        hero_row.setSpacing(0)
+        hero_row.setAlignment(Qt.AlignCenter)
 
-        self._focus_ring = FocusRing()
-        self._focus_ring.setMinimumSize(130, 130)
-        info_row.addWidget(self._focus_ring)
+        self._hero_value = QLabel("--")
+        self._hero_value.setAlignment(Qt.AlignCenter)
+        self._hero_value.setFont(_get_segoe_font(36, QFont.Light))
+        self._hero_value.setStyleSheet("color: #1C1C1E; background: transparent; border: none;")
+        hero_row.addWidget(self._hero_value)
 
-        # 右侧信息列
-        info_col = QVBoxLayout()
-        info_col.setSpacing(6)
+        self._hero_unit = QLabel("min")
+        self._hero_unit.setAlignment(Qt.AlignCenter)
+        self._hero_unit.setFont(_get_segoe_font(13))
+        self._hero_unit.setStyleSheet("color: #8E8E93; background: transparent; border: none;")
+        hero_row.addWidget(self._hero_unit)
 
-        # 1a. 专注时长
-        self._duration_label = QLabel("--")
-        self._duration_label.setFont(_get_segoe_font(22, QFont.Bold))
-        self._duration_label.setStyleSheet("color: #23201E; background: transparent; border: none;")
-        info_col.addWidget(self._duration_label)
+        panel_layout.addLayout(hero_row)
 
-        # 1b. 番茄倒计时（可点击弹出菜单）
+        # ── Row 2: 专注度进度条 ──
+        focus_row = QVBoxLayout()
+        focus_row.setSpacing(2)
+
+        focus_header = QHBoxLayout()
+        focus_header.setContentsMargins(0, 0, 0, 0)
+
+        fl = QLabel("专注度")
+        fl.setFont(_get_segoe_font(13))
+        fl.setStyleSheet("color: #1C1C1E; background: transparent; border: none;")
+        focus_header.addWidget(fl)
+
+        focus_header.addStretch()
+
+        self._focus_bar_value = QLabel("-- / 100")
+        self._focus_bar_value.setFont(_get_segoe_font(13))
+        self._focus_bar_value.setStyleSheet("color: #8E8E93; background: transparent; border: none;")
+        focus_header.addWidget(self._focus_bar_value)
+
+        focus_row.addLayout(focus_header)
+
+        self._focus_bar = QProgressBar()
+        self._focus_bar.setRange(0, 100)
+        self._focus_bar.setValue(0)
+        self._focus_bar.setTextVisible(False)
+        self._focus_bar.setFixedHeight(6)
+        self._focus_bar.setStyleSheet(
+            "QProgressBar {"
+            "  background-color: #F2F2F7;"
+            "  border: none; border-radius: 3px;"
+            "}"
+            "QProgressBar::chunk {"
+            "  border-radius: 3px;"
+            "  background-color: #5A8A6D;"
+            "}"
+        )
+        focus_row.addWidget(self._focus_bar)
+
+        panel_layout.addLayout(focus_row)
+
+        # ── Row 3: 番茄 + 状态（单行） ──
+        metrics_row = QHBoxLayout()
+        metrics_row.setSpacing(12)
+        metrics_row.setContentsMargins(0, 6, 0, 2)
+
         self._pomodoro_btn = QPushButton("🍅 --")
-        self._pomodoro_btn.setFont(_get_segoe_font(18))
+        self._pomodoro_btn.setFont(_get_segoe_font(16))
         self._pomodoro_btn.setCursor(Qt.PointingHandCursor)
         self._pomodoro_btn.setFlat(True)
         self._pomodoro_btn.setStyleSheet(
@@ -227,72 +270,70 @@ class EyeFocusWindow(QMainWindow):
             "QPushButton:hover{color:#4A7A5D;}"
         )
         self._pomodoro_btn.clicked.connect(self._show_pomodoro_menu)
-        info_col.addWidget(self._pomodoro_btn)
+        metrics_row.addWidget(self._pomodoro_btn)
 
-        # 1c. 识别状态
+        metrics_row.addStretch()
+
         self._status_label = QLabel("🟢 正常")
-        self._status_label.setFont(_get_segoe_font(16))
+        self._status_label.setFont(_get_segoe_font(14))
         self._status_label.setStyleSheet("color: #5A8A6D; background: transparent; border: none;")
-        info_col.addWidget(self._status_label)
+        metrics_row.addWidget(self._status_label)
 
-        info_row.addLayout(info_col)
-        panel_layout.addLayout(info_row)
+        panel_layout.addLayout(metrics_row)
 
-        # ── 专注度波线 ──
-        self._sparkline = FocusSparkline()
-        panel_layout.addWidget(self._sparkline)
-
-        # ── 游戏化 + 警告标签区 ──
-        # 光照警告
-        self._light_warning = QLabel("⚠ 光照不足 · 检测精度可能下降")
-        self._light_warning.setAlignment(Qt.AlignCenter)
-        self._light_warning.setStyleSheet(
-            "color: #C9843A; background: #FAF0E3; border: 1px solid #C9843A;"
-            "border-radius: 6px; padding: 4px 0; font-size: 12px;"
-            "font-weight: 600; margin: 0;"
+        # ── Row 4: Toast 警告（优先级显示1个） ──
+        self._toast_label = QLabel("")
+        self._toast_label.setAlignment(Qt.AlignCenter)
+        style_toast_ok = (
+            "color: #5A8A6D; background: #EEF5EF;"
+            "border: 1px solid #5A8A6D; border-radius: 6px;"
+            "padding: 4px 8px; font-size: 12px; font-weight: 600;"
         )
-        self._light_warning.setVisible(False)
-        panel_layout.addWidget(self._light_warning)
+        style_toast_warn = (
+            "color: #C9843A; background: #FAF0E3;"
+            "border: 1px solid #C9843A; border-radius: 6px;"
+            "padding: 4px 8px; font-size: 12px; font-weight: 600;"
+        )
+        style_toast_err = (
+            "color: #B55C5C; background: #F8E8E8;"
+            "border: 1px solid #B55C5C; border-radius: 6px;"
+            "padding: 4px 8px; font-size: 12px; font-weight: 600;"
+        )
+        self._style_toast = {"ok": style_toast_ok, "warn": style_toast_warn, "err": style_toast_err}
+        self._toast_label.setVisible(False)
+        panel_layout.addWidget(self._toast_label)
 
-        # 分心原因
+        # ── 分心原因 ──
         self._distraction_label = DistractionLabel()
         panel_layout.addWidget(self._distraction_label)
 
-        # 人脸丢失
-        self._face_lost_warning = QLabel("⚠ 人脸丢失 · 监测已暂停")
-        self._face_lost_warning.setAlignment(Qt.AlignCenter)
-        self._face_lost_warning.setStyleSheet(
-            "color: #B55C5C; background: #F8E8E8; border: 1px solid #B55C5C;"
-            "border-radius: 6px; padding: 4px 0; font-size: 12px;"
-            "font-weight: 600; margin: 0;"
-        )
-        self._face_lost_warning.setVisible(False)
-        panel_layout.addWidget(self._face_lost_warning)
-
-        # 游戏化
+        # ── 游戏化状态 ──
         self._gamification_bar = QLabel("")
         self._gamification_bar.setAlignment(Qt.AlignCenter)
         self._gamification_bar.setStyleSheet(
             "color: #5B4A8C; background: transparent;"
-            "border: none; font-size: 14px; padding: 1px 0; font-weight: 500;"
+            "border: none; font-size: 12px; padding: 1px 0; font-weight: 500;"
         )
         self._gamification_bar.setVisible(False)
         panel_layout.addWidget(self._gamification_bar)
 
-        # 校准提示
-        self._calib_prompt = QLabel("🟡 尚未校准 · 评分仅供参考")
+        # ── Footer ──
+        footer_layout = QVBoxLayout()
+        footer_layout.setSpacing(6)
+        footer_layout.setContentsMargins(0, 4, 0, 0)
+
+        # 校准提示（降级为 footer 小字）
+        self._calib_prompt = QLabel("未校准 · 评分仅供参考")
         self._calib_prompt.setAlignment(Qt.AlignCenter)
         self._calib_prompt.setStyleSheet(
-            "color: #C9843A; background: #FAF0E3; border: 1px solid #C9843A;"
-            "border-radius: 6px; padding: 4px 0; font-size: 12px;"
-            "font-weight: 500; margin: 0;"
+            "color: #8E8E93; background: transparent;"
+            "border: none; font-size: 11px;"
         )
         self._calib_prompt.setVisible(True)
-        panel_layout.addWidget(self._calib_prompt)
+        footer_layout.addWidget(self._calib_prompt)
 
-        # ── 按钮栏 ──
+        # 按钮栏
         btn_bar = QHBoxLayout()
-        btn_bar.setContentsMargins(0, 4, 0, 0)
         btn_bar.setSpacing(12)
         btn_bar.setAlignment(Qt.AlignCenter)
 
@@ -307,7 +348,8 @@ class EyeFocusWindow(QMainWindow):
         else:
             self._calib_btn = None
 
-        panel_layout.addLayout(btn_bar)
+        footer_layout.addLayout(btn_bar)
+        panel_layout.addLayout(footer_layout)
 
         main_layout.addWidget(self._data_panel, 4)
 
@@ -433,12 +475,11 @@ class EyeFocusWindow(QMainWindow):
                     f"QPushButton{{color:{color};background:transparent;border:none;text-align:left;}}"
                     f"QPushButton:hover{{color:{color}cc;}}")
 
-    # ── v4.17: 专注度波线 ──
+    # ── v4.17: 专注度波线（v4.26: 替换为 Hero + 进度条，保留方法兼容） ──
 
     def update_sparkline(self, focus_score: float) -> None:
-        """每秒添加一个专注度点到波线"""
-        if hasattr(self, '_sparkline') and self._sparkline is not None:
-            self._sparkline.add_point(focus_score)
+        """v4.26: sparkline 已隐藏，只记录不显示"""
+        pass
 
     # ── v4.17: 游戏化 ──
 
@@ -564,18 +605,35 @@ class EyeFocusWindow(QMainWindow):
     def is_paused(self) -> bool:
         return self._paused
 
-    def show_frame(self, frame: np.ndarray) -> None:
-        """直接显示一帧（从 _qt_process_frame 推送，解决 timer 时序依赖）"""
+    def show_frame(self, frame: np.ndarray, is_rgb: bool = False) -> None:
+        """显示一帧视频画面
+
+        Args:
+            frame: 视频帧
+            is_rgb: True 时 frame 已是 RGB，跳过颜色转换
+        """
         if frame is not None:
-            self._video_label.display_frame(frame)
+            self._video_label.display_frame(frame, is_rgb=is_rgb)
+
+    def _show_toast(self, text: str = "", style: str = "err") -> None:
+        """显示 Toast 警告（单行，按优先级只显1个）"""
+        if not text:
+            self._toast_label.setVisible(False)
+            return
+        self._toast_label.setText(text)
+        self._toast_label.setStyleSheet(self._style_toast.get(style, self._style_toast["err"]))
+        self._toast_label.setVisible(True)
 
     def set_face_lost_warning(self, visible: bool) -> None:
-        """设置人脸丢失警告可见性"""
-        if hasattr(self, '_face_lost_warning'):
-            self._face_lost_warning.setVisible(visible)
+        """人脸丢失 → 通过 Toast 显示"""
+        if visible:
+            self._show_toast("⚠ 人脸丢失 · 监测已暂停", "err")
+        else:
+            # 不直接隐藏，让 update_data 或调用者决定下一个 toast
+            self._show_toast()
 
     def set_calibration_prompt(self, visible: bool) -> None:
-        """v4.13: 设置校准提示可见性"""
+        """v4.13: 设置校准提示可见性（footer 小字）"""
         if hasattr(self, '_calib_prompt'):
             self._calib_prompt.setVisible(visible)
 
@@ -590,44 +648,51 @@ class EyeFocusWindow(QMainWindow):
                     fps: float = 0.0,
                     light_condition: Optional[str] = None,
                     distraction_causes: Optional[dict] = None) -> None:  # v4.17
-        """更新所有显示数据 (v4.6: 支持新 FocusLevel/FatigueIndicator)"""
-        # v4.6: 提取字符串值
-        fl_str = focus_level.value if hasattr(focus_level, 'value') else focus_level
-        fi_str = fatigue_indicator.value if hasattr(fatigue_indicator, 'value') else fatigue_indicator
-
+        """更新所有显示数据 (v4.26: 适配新 4 行布局)"""
         self._focus_duration_minutes = focus_duration_minutes
         self._face_detected = face_detected
         self._eye_detected = eye_detected
         self._fps = fps
         self._light_condition = light_condition
 
-        # 光照警告
-        if light_condition == "DARK":
-            self._light_warning.setVisible(True)
-        else:
-            self._light_warning.setVisible(False)
-
-        # FocusRing — 优先使用 v4.6 参数
-        self._focus_ring.update_data(
-            focus_level=fl_str,
-            fatigue_indicator=fi_str,
-            focus_score=focus_score,       # 向后兼容
-            fatigue_level=fatigue_level,   # 向后兼容
-        )
-
-        # v4.21: 专注时长 (QLabel)
+        # ── Hero 监测时长 ──
         if focus_duration_minutes is not None:
+            self._hero_value.setText(str(int(focus_duration_minutes)))
             if focus_duration_minutes >= 60:
-                h = int(focus_duration_minutes / 60)
-                m = int(focus_duration_minutes % 60)
-                dur_text = f"⏱ {h}h{m}m"
+                self._hero_unit.setText("min")
             else:
-                dur_text = f"⏱ {int(focus_duration_minutes)}m"
+                self._hero_unit.setText("min")
         else:
-            dur_text = "⏱ --"
-        self._duration_label.setText(dur_text)
+            self._hero_value.setText("--")
+            self._hero_unit.setText("min")
 
-        # v4.21: 识别状态 (QLabel)
+        # ── 专注度进度条 ──
+        if focus_score is not None:
+            score = max(0, min(100, int(focus_score)))
+            self._focus_bar.setValue(score)
+            self._focus_bar_value.setText(f"{score} / 100")
+            # 颜色
+            if score >= 70:
+                bar_color = "#5A8A6D"
+            elif score >= 50:
+                bar_color = "#C9843A"
+            else:
+                bar_color = "#B55C5C"
+            self._focus_bar.setStyleSheet(
+                "QProgressBar {"
+                "  background-color: #F2F2F7;"
+                "  border: none; border-radius: 3px;"
+                "}"
+                f"QProgressBar::chunk {{"
+                "  border-radius: 3px;"
+                f"  background-color: {bar_color};"
+                "}"
+            )
+        else:
+            self._focus_bar.setValue(0)
+            self._focus_bar_value.setText("-- / 100")
+
+        # ── 识别状态 ──
         if not face_detected:
             self._status_label.setText("🔴 人脸丢失")
             self._status_label.setStyleSheet("color: #B55C5C; background: transparent; border: none;")
@@ -638,11 +703,19 @@ class EyeFocusWindow(QMainWindow):
             self._status_label.setText("🟢 正常")
             self._status_label.setStyleSheet("color: #5A8A6D; background: transparent; border: none;")
 
-        # v4.17: 分心原因分解
+        # ── Toast 警告（优先级：人脸丢失 > 光照不足） ──
+        if not face_detected:
+            self._show_toast("⚠ 人脸丢失 · 监测已暂停", "err")
+        elif light_condition == "DARK":
+            self._show_toast("⚠ 光照不足 · 检测精度可能下降", "warn")
+        else:
+            self._show_toast()
+
+        # ── 分心原因 ──
         if hasattr(self, '_distraction_label'):
             self._distraction_label.update_causes(distraction_causes or {})
 
-        # v4.10: 同步更新托盘状态
+        # ── 托盘状态 ──
         if self._tray_icon:
             self._tray_icon.update_status(focus_score=focus_score, fatigue_level=fatigue_level)
 

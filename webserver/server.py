@@ -19,12 +19,13 @@ logger = logging.getLogger("eyefocus.webserver")
 
 
 class WebDashboard:
-    """Web 仪表盘 — 实时专注度数据可视化
+    """Web 仪表盘 — 实时专注度数据可视化 (v4.26: +控制)
 
     用法：
         dashboard = WebDashboard(port=8080)
         dashboard.start()
         dashboard.broadcast({"focus_score": 85, ...})
+        dashboard.on("pause", lambda: ...)
         dashboard.stop()
     """
 
@@ -40,10 +41,37 @@ class WebDashboard:
         self._history: list = []  # 最近 120 个数据点
         self._running: bool = False
         self._db: Any = None  # 数据库引用，供历史查询用
+        # v4.26: 控制回调
+        self._callbacks: Dict[str, callable] = {}
 
     def set_db(self, db: Any) -> None:
         """设置数据库引用（用于历史会话查询）"""
         self._db = db
+
+    # ── v4.26: 控制回调 ──
+
+    def on(self, action: str, callback: callable) -> None:
+        """注册控制回调
+
+        Args:
+            action: "pause" | "resume" | "calibrate" | "toggle_pause"
+            callback: 无参函数
+        """
+        self._callbacks[action] = callback
+        logger.debug("Web 控制: 注册回调 '%s'", action)
+
+    def _exec_callback(self, action: str) -> bool:
+        """执行控制回调，返回是否找到并执行"""
+        cb = self._callbacks.get(action)
+        if cb:
+            try:
+                cb()
+                return True
+            except Exception as e:
+                logger.warning("Web 控制回调 '%s' 执行失败: %s", action, e)
+                return False
+        logger.warning("Web 控制: 未注册回调 '%s'", action)
+        return False
 
     # ── 公共 API ──
 
@@ -117,6 +145,8 @@ class WebDashboard:
         self._app.router.add_get("/api/sessions", self._handle_api_sessions)
         self._app.router.add_get("/api/session/{sid}", self._handle_api_session_detail)
         self._app.router.add_get("/api/analyze/{sid}", self._handle_api_analyze)
+        self._app.router.add_get("/api/control", self._handle_api_control)  # v4.26
+        self._app.router.add_post("/api/chat", self._handle_api_chat)  # v4.26
         self._app.router.add_static(
             "/static",
             os.path.join(os.path.dirname(__file__), "static"),
@@ -342,6 +372,14 @@ class WebDashboard:
                 "backend": "error",
             })
 
+    async def _handle_api_control(self, request):
+        """REST: 控制命令（WebSocket 不可用时的降级）"""
+        action = request.query.get("action", "")
+        if not action:
+            return aiohttp.web.json_response({"success": False, "error": "missing action"}, status=400)
+        ok = self._exec_callback(action)
+        return aiohttp.web.json_response({"success": ok, "action": action})
+
     async def _handle_websocket(self, request):
         """WebSocket 端点 — 实时推送"""
         ws = aiohttp.web.WebSocketResponse(max_msg_size=65536)
@@ -358,9 +396,22 @@ class WebDashboard:
                 "history": self._history[-60:],
             })
 
-            # 保持连接，等待客户端关闭
+            # v4.26: 接收客户端控制命令
             async for msg in ws:
-                if msg.type == aiohttp.WSMsgType.ERROR:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    try:
+                        cmd = json.loads(msg.data)
+                        if isinstance(cmd, dict) and cmd.get("type") == "command":
+                            action = cmd.get("action", "")
+                            ok = self._exec_callback(action)
+                            await ws.send_json({
+                                "type": "command_result",
+                                "action": action,
+                                "success": ok,
+                            })
+                    except (json.JSONDecodeError, Exception):
+                        pass
+                elif msg.type == aiohttp.WSMsgType.ERROR:
                     logger.warning("WebSocket 错误: %s", ws.exception())
 
         except asyncio.CancelledError:
@@ -383,3 +434,161 @@ class WebDashboard:
                 dead.append(ws)
         for ws in dead:
             self._ws_clients.discard(ws)
+
+    # ── v4.26: AI 对话 ──
+
+    async def _handle_api_chat(self, request):
+        """REST: AI 对话
+
+        POST JSON: {session_id, question, history?}
+        Returns: {answer: str}
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            return aiohttp.web.json_response({"error": "无效的 JSON"}, status=400)
+
+        sid = body.get("session_id", "")
+        question = body.get("question", "").strip()
+        history = body.get("history", [])
+        if not sid or not question:
+            return aiohttp.web.json_response({"error": "缺少参数"}, status=400)
+
+        # 获取会话数据
+        from reporter.report_html import create_html_generator
+        if not self._db:
+            return aiohttp.web.json_response({"error": "数据库未就绪"}, status=503)
+
+        generator = create_html_generator(self._db)
+        html = generator.generate_report(sid)
+        ai_data = getattr(generator, '_data', None)
+        if not ai_data:
+            return aiohttp.web.json_response({"error": "会话数据不足"}, status=400)
+
+        # 构造 LLM 上下文数据
+        llm_data = generator._compute_llm_data(ai_data)
+
+        # 调用 LLM
+        from config import get_yaml_value
+        from analyzer.llm_client import create_llm_client
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError
+
+        backend = get_yaml_value("ai", "backend", default="template")
+        kwargs = {}
+        if backend == "ollama":
+            kwargs["base_url"] = get_yaml_value("ai", "ollama_url",
+                                                 default="http://127.0.0.1:11434")
+        client = create_llm_client(backend, **kwargs)
+        if not client.available:
+            # 模板降级
+            answer = self._template_chat_answer(question, llm_data)
+            return aiohttp.web.json_response({"answer": answer, "backend": "template"})
+
+        # 构造对话 prompt
+        context = (
+            f"会话时长：{llm_data['duration']} 分钟\n"
+            f"平均专注度：{llm_data['avg_focus']} 分（历史平均：{llm_data['hist_avg_focus']} 分）\n"
+            f"专注趋势：前段 {llm_data['seg_start']} 分 → 中段 {llm_data['seg_mid']} 分 → 后段 {llm_data['seg_end']} 分\n"
+            f"疲劳分布：高 {llm_data['fatigue_high_pct']}% / 中 {llm_data['fatigue_mid_pct']}% / 低 {llm_data['fatigue_low_pct']}%\n"
+            f"分心事件：{llm_data['distractions']} 次\n"
+        )
+
+        system_prompt = "你是一个专注度分析助手。根据提供的会话数据回答用户问题。回答简洁、中文、口语化。"
+        messages = [{"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"会话数据：\n{context}"}]
+        for h in history[-6:]:
+            messages.append({"role": h.get("role", "user"), "content": h.get("text", "")})
+        messages.append({"role": "user", "content": question})
+
+        try:
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                fut = pool.submit(
+                    self._llm_chat, client, messages, backend)
+                answer = fut.result(timeout=20)
+            return aiohttp.web.json_response({"answer": answer, "backend": backend})
+        except TimeoutError:
+            return aiohttp.web.json_response({"error": "回答超时，请重试"}, status=504)
+        except Exception as e:
+            logger.warning("AI 对话失败: %s", e)
+            fallback = self._template_chat_answer(question, llm_data)
+            return aiohttp.web.json_response({"answer": fallback, "backend": "template"})
+
+    def _llm_chat(self, client, messages: list, backend: str) -> str:
+        """调用 LLM 聊天（在线程池中运行）"""
+        if backend == "ollama":
+            import urllib.request, json as _json
+            payload = _json.dumps({
+                "model": getattr(client, '_model', 'qwen2.5:1.5b'),
+                "messages": messages,
+                "stream": False,
+                "options": {"temperature": 0.7, "max_tokens": 500},
+            }).encode()
+            req = urllib.request.Request(
+                f"{client._base_url}/api/chat",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                result = _json.loads(resp.read())
+                return result.get("message", {}).get("content", "")
+        elif backend == "local":
+            llm = getattr(client, '_llm', None)
+            if llm is None:
+                client._load_model()
+                llm = client._llm
+            if llm:
+                prompt = ""
+                for m in messages:
+                    role = m["role"]
+                    if role == "system":
+                        prompt += f"<|im_start|>system\n{m['content']}<|im_end|>\n"
+                    elif role == "user":
+                        prompt += f"<|im_start|>user\n{m['content']}<|im_end|>\n"
+                    elif role == "assistant":
+                        prompt += f"<|im_start|>assistant\n{m['content']}<|im_end|>\n"
+                prompt += "<|im_start|>assistant\n"
+                resp = llm(prompt, max_tokens=500, temperature=0.7,
+                           stop=["<|im_end|>", "<|im_start|>"])
+                return resp["choices"][0]["text"].strip()
+            return ""
+        return ""
+
+    def _template_chat_answer(self, question: str, d: dict) -> str:
+        """模板降级回答"""
+        q = question.lower()
+        avg = d.get("avg_focus", 0)
+        hp = d.get("fatigue_high_pct", 0)
+        dc = d.get("distractions", 0)
+        dur = d.get("duration", 0)
+        s, e = d.get("seg_start", avg), d.get("seg_end", avg)
+
+        if any(w in q for w in ["怎么样", "how", "focus", "评价", "表现", "专注度"]):
+            r = f"本次专注度 {avg:.0f} 分。"
+            if avg >= 80: r += "表现优秀。"
+            elif avg >= 65: r += "整体良好。"
+            elif avg >= 50: r += "处于中等水平。"
+            else: r += "偏低。"
+            return r
+        if any(w in q for w in ["为什么", "下降", "drop", "偏低"]):
+            reasons = []
+            if avg < 65: reasons.append(f"专注度偏低 ({avg:.0f} 分)")
+            if s - e > 8: reasons.append(f"后半段下降 {s-e:.0f} 分")
+            if hp > 20: reasons.append(f"疲劳偏多 ({hp:.0f}%)")
+            if dc > 8: reasons.append(f"分心 {dc} 次")
+            return "可能原因：" + "；".join(reasons) if reasons else "整体稳定。"
+        if any(w in q for w in ["疲劳", "累", "tired", "fatigue"]):
+            if hp > 30: return f"高疲劳占比 {hp:.0f}%，程度较高，建议休息。"
+            if hp > 10: return f"有间歇性疲劳 ({hp:.0f}%)，注意起身活动。"
+            return "疲劳水平正常。"
+        if any(w in q for w in ["分心", "distract", "走神"]):
+            if dc == 0: return "没有检测到明显分心事件。"
+            return f"共 {dc} 次分心。" + (" 建议使用番茄钟。" if dc > 8 else "")
+        if any(w in q for w in ["建议", "suggest", "改进"]):
+            tips = []
+            if avg < 55: tips.append("缩短单次工作时长")
+            if hp > 20: tips.append("每小时起身活动")
+            if dc > 10: tips.append("关闭通知使用番茄钟")
+            return "建议：" + "；".join(tips) if tips else "表现良好，继续保持！"
+        if any(w in q for w in ["时长", "多久", "long"]):
+            return f"会话时长 {dur} 分钟。" + ("注意休息。" if dur >= 90 else "")
+        return "可以问我：专注度、疲劳、分心、建议等问题。"

@@ -1,5 +1,5 @@
 """
-analyzer/reminder_engine.py — 智能主动提醒引擎 (v4.17)
+analyzer/reminder_engine.py — 智能主动提醒引擎 (v4.26)
 
 在工作过程中主动检测各种条件，通过托盘气泡和/或语音给出提醒。
 
@@ -7,8 +7,12 @@ analyzer/reminder_engine.py — 智能主动提醒引擎 (v4.17)
   1. 专注里程碑 — 30/60/90 分钟节点提醒
   2. 建议休息 — 长时间工作后注意力下降
   3. 频繁分心 — 短时间多次状态切换
+  4. 疲劳自适应 — 高疲劳缩短冷却，低疲劳延长冷却
 
-所有提醒有冷却时间避免刷屏。
+v4.26 新增：
+  - snooze: 5 分钟静音
+  - 深度工作时段 (silent_hours)
+  - 疲劳等级自适应冷却间隔
 """
 
 import logging
@@ -47,6 +51,51 @@ class ReminderEngine:
         self._distract_window: float = 300.0  # 5 分钟窗口
         self._first_distract_time: float = 0.0
 
+        # v4.26: snooze
+        self._snoozed_until: float = 0.0
+
+        # v4.26: 深度工作时段 (silent_hours)
+        self._silent_start: Optional[Tuple[int, int]] = None  # (hour, min)
+        self._silent_end: Optional[Tuple[int, int]] = None
+
+    # ── v4.26: Snooze ──
+
+    def snooze(self, minutes: int = 5) -> None:
+        """静音提醒 minutes 分钟"""
+        self._snoozed_until = time.time() + minutes * 60
+        logger.info("提醒已 snooze %d 分钟", minutes)
+
+    def cancel_snooze(self) -> None:
+        """取消 snooze"""
+        self._snoozed_until = 0.0
+
+    # ── v4.26: 深度工作时段 ──
+
+    def set_silent_hours(self, start: Optional[Tuple[int, int]],
+                         end: Optional[Tuple[int, int]]) -> None:
+        """设置静音时段，此期间不弹提醒
+
+        Args:
+            start: (hour, min) 如 (9, 0) 表示 9:00
+            end:   (hour, min) 如 (11, 0) 表示 11:00
+        """
+        self._silent_start = start
+        self._silent_end = end
+
+    def _in_silent_hours(self) -> bool:
+        """当前是否在深度工作时段内"""
+        if self._silent_start is None or self._silent_end is None:
+            return False
+        now = time.localtime()
+        now_m = now.tm_hour * 60 + now.tm_min
+        start_m = self._silent_start[0] * 60 + self._silent_start[1]
+        end_m = self._silent_end[0] * 60 + self._silent_end[1]
+        if start_m < end_m:
+            return start_m <= now_m < end_m
+        else:
+            # 跨天
+            return now_m >= start_m or now_m < end_m
+
     def check(self, focus_score: float, focus_level: Optional[str] = None,
               fatigue_level: Optional[str] = None,
               session_minutes: float = 0.0, face_detected: bool = True) -> None:
@@ -64,9 +113,24 @@ class ReminderEngine:
 
         now = time.time()
 
-        # 全局冷却：两次提醒之间至少间隔 2 分钟
-        if now - self._last_notify_time < self._notify_cooldown:
-            # 但仍继续追踪分心（用于统计，不触发提醒）
+        # ── v4.26: snooze 期间不弹提醒 ──
+        if now < self._snoozed_until:
+            return
+
+        # ── v4.26: 深度工作时段不弹提醒 ──
+        if self._in_silent_hours():
+            return
+
+        # v4.26: 疲劳等级自适应冷却
+        if fatigue_level == "HIGH":
+            effective_cooldown = 60.0   # 高疲劳 → 缩短到 1 分钟
+        elif fatigue_level == "MEDIUM":
+            effective_cooldown = 90.0   # 中疲劳 → 1.5 分钟
+        else:
+            effective_cooldown = self._notify_cooldown
+
+        # 全局冷却
+        if now - self._last_notify_time < effective_cooldown:
             self._track_distraction(focus_level, now)
             return
 
@@ -98,12 +162,7 @@ class ReminderEngine:
                 self._distract_count = 0
                 return
 
-        # 4. 会话开始提示（首次检测到人脸并稳定监测约 2 分钟后）
-        if 1.5 <= session_minutes <= 3.0 and 0 not in self._milestones_shown:
-            self._milestones_shown.add(0)
-            self._notify("start", "✅ 监测已稳定",
-                         "专注度监测已稳定运行，祝工作顺利！")
-            return
+        # v4.26: 移除"监测已稳定"弹窗
 
     def _track_distraction(self, focus_level: Optional[str], now: float) -> None:
         """跟踪专注度切换为 distracted 的次数"""
@@ -152,6 +211,7 @@ class ReminderEngine:
         self._last_notify_time = 0.0
         self._last_break_suggest = 0.0
         self._prev_level = None
+        self._snoozed_until = 0.0
 
 
 def create_reminder_engine(tray_callback=None, voice_callback=None) -> ReminderEngine:

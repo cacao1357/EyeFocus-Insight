@@ -105,6 +105,8 @@ class FaceMeshDetector:
         )
 
         self._detector = vision.FaceLandmarker.create_from_options(options)
+        # v4.26: 缓存最近一次转换的 RGB 帧，供 Qt 显示复用
+        self._last_rgb_frame: Optional[np.ndarray] = None
         logger.info("FaceMeshDetector 初始化完成 (mode=%s)", running_mode)
 
     def detect_from_frame(
@@ -130,6 +132,7 @@ class FaceMeshDetector:
             )
 
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        self._last_rgb_frame = frame_rgb  # v4.26: 缓存供 Qt 显示
         from mediapipe import Image, ImageFormat
 
         mp_image = Image(image_format=ImageFormat.SRGB, data=frame_rgb)

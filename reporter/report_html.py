@@ -14,6 +14,7 @@ reporter/report_html.py — HTML 报告生成模块
 
 import base64
 import logging
+import os as _os
 from dataclasses import dataclass
 from datetime import datetime
 from html import escape as html_escape
@@ -24,6 +25,16 @@ from storage.db import DatabaseManager
 from storage.models import FocusRecord, FatigueRecord, FatigueLevel, BlinkRecord, Session
 
 from reporter.charts import ChartGenerator, create_chart_generator
+
+# v4.26: 从外部 CSS 文件加载样式
+_CSS_PATH = _os.path.join(_os.path.dirname(__file__), "style.css")
+try:
+    with open(_CSS_PATH, encoding="utf-8") as _f:
+        _CSS_CONTENT = _f.read()
+    _CSS_TAG = f"<style>\n{_CSS_CONTENT}\n</style>"
+except Exception:
+    _CSS_CONTENT = ""
+    _CSS_TAG = "<style></style>"
 from reporter.insights import InsightsEngine, Insight, create_insights_engine
 
 # v4.1: 可选 insights 集成
@@ -59,247 +70,86 @@ class HTMLReportGenerator:
         html_content = generator.generate_report(session_id)
     """
 
-    # CSS 样式 (v4.8: 多 Tab 布局)
-    CSS_STYLE = """
-        <style>
-            /* ═══════════════════════════════════════
-               Quiet Focus · 精密仪器美学
-               Palette: Warm Ink · Stone · Iris · Sage
-               ═══════════════════════════════════════ */
-            :root {
-                --ink: #23201E;
-                --stone: #F4F2EE;
-                --card: #FEFDFB;
-                --iris: #5B4A8C;
-                --sage: #5A8A6D;
-                --amber: #C9843A;
-                --rose: #B55C5C;
-                --quiet: #8B8680;
-                --line: #E6E2DC;
-                --line-light: #F0EDE8;
-            }
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-
-            body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
-                line-height: 1.55; color: var(--ink); background: var(--stone);
-                padding: 32px 20px; -webkit-font-smoothing: antialiased;
-            }
-            .container { max-width: 780px; margin: 0 auto; }
-
-            /* ── Header · 顶部 Iris accent 条 ── */
-            .header {
-                padding: 0 0 28px 0; margin-bottom: 0;
-                border-bottom: 1px solid var(--line);
-                position: relative;
-            }
-            .header::before {
-                content: ''; display: block; width: 100%; height: 3px;
-                background: var(--iris); margin-bottom: 24px;
-            }
-            .header h1 {
-                font-family: Georgia, 'Times New Roman', 'SimSun', serif;
-                font-size: 22px; font-weight: 400; color: var(--ink);
-                letter-spacing: -0.3px; margin-bottom: 4px;
-            }
-            .header .subtitle {
-                font-size: 12px; color: var(--quiet); font-weight: 400;
-            }
-
-            /* ── Tab 导航 · 文字+下划线 ── */
-            .tab-bar {
-                display: flex; gap: 28px; padding: 14px 0; margin-bottom: 24px;
-                border-bottom: 1px solid var(--line); overflow-x: auto;
-                -webkit-overflow-scrolling: touch;
-            }
-            .tab-btn {
-                padding: 4px 0; border: none; background: none; cursor: pointer;
-                font-size: 13px; color: var(--quiet); font-weight: 500;
-                font-family: inherit; position: relative; transition: color 0.15s;
-                white-space: nowrap; letter-spacing: 0.1px;
-            }
-            .tab-btn:hover { color: var(--ink); }
-            .tab-btn.active { color: var(--iris); }
-            .tab-btn.active::after {
-                content: ''; position: absolute; bottom: -15px; left: 0; right: 0;
-                height: 2px; background: var(--iris); border-radius: 1px;
-            }
-            .tab-content { display: none; }
-            .tab-content.active { display: block; }
-
-            /* ── Hero 数字 · Iris 环形装饰 ── */
-            .focus-hero {
-                text-align: center; padding: 40px 0 32px; position: relative;
-            }
-            .focus-hero .hero-ring {
-                width: 140px; height: 140px; border-radius: 50%;
-                border: 1px solid var(--line);
-                position: absolute; top: 50%; left: 50%;
-                transform: translate(-50%, -50%);
-                pointer-events: none;
-            }
-            .focus-hero .hero-ring::after {
-                content: ''; width: 152px; height: 152px; border-radius: 50%;
-                border: 1px solid var(--line-light);
-                position: absolute; top: -7px; left: -7px;
-            }
-            .focus-hero .hero-value {
-                font-family: Georgia, 'Times New Roman', 'SimSun', serif;
-                font-size: 88px; line-height: 1; font-weight: 400;
-                letter-spacing: -3px; margin-bottom: 4px; position: relative; z-index: 1;
-            }
-            .focus-hero .hero-label {
-                font-size: 12px; color: var(--quiet); letter-spacing: 3px;
-                text-transform: uppercase; font-weight: 500; position: relative; z-index: 1;
-            }
-            .focus-hero .hero-compare {
-                margin-top: 10px; font-size: 13px; font-weight: 500; position: relative; z-index: 1;
-            }
-
-            /* ── 统计卡片 ── */
-            .stats-grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-                gap: 1px; background: var(--line); border: 1px solid var(--line);
-                margin-bottom: 24px;
-            }
-            .stat-card {
-                background: var(--card); padding: 20px 16px; text-align: center;
-            }
-            .stat-card .stat-value {
-                font-family: Georgia, 'Times New Roman', 'SimSun', serif;
-                font-size: 28px; line-height: 1.15; font-weight: 400;
-            }
-            .stat-card .stat-label { font-size: 11px; color: var(--quiet); margin-top: 6px; }
-            .stat-card .stat-sub {
-                font-size: 11px; color: var(--quiet); margin-top: 3px; font-weight: 500;
-            }
-
-            /* ── 通用卡片 · 左 accent + hover ── */
-            .card {
-                background: var(--card); padding: 24px 24px 24px 22px;
-                margin-bottom: 1px;
-                border: 1px solid var(--line);
-                border-left: 2px solid var(--line);
-                transition: border-left-color 0.3s, box-shadow 0.3s;
-            }
-            .card:hover {
-                border-left-color: var(--iris);
-                box-shadow: 0 1px 6px rgba(0,0,0,0.03);
-            }
-            .card h2 {
-                font-family: Georgia, 'Times New Roman', 'SimSun', serif;
-                font-size: 15px; font-weight: 400; color: var(--ink);
-                margin-bottom: 16px; padding-bottom: 10px;
-                border-bottom: 1px solid var(--line-light);
-                letter-spacing: -0.1px;
-            }
-            .card .card-desc {
-                font-size: 12px; color: var(--quiet); margin-bottom: 14px; line-height: 1.6;
-            }
-
-            /* ── 图表 (v4.16: Plotly 交互式) ── */
-            .chart-container { margin: 0; overflow: hidden; }
-            .chart-container .plotly-graph-div { width: 100% !important; }
-            .chart-container .js-plotly-plot { max-width: 100%; }
-            .no-data { text-align: center; color: #ccc; padding: 36px; font-size: 13px; }
-            .chart-error {
-                text-align: center; color: var(--rose); background: #FDF8F6;
-                border: 1px solid #F0D0CC; padding: 16px; margin: 8px 0;
-                font-size: 12px;
-            }
-
-            /* ── 历史对比 ── */
-            .compare-box {
-                display: flex; gap: 24px; flex-wrap: wrap; padding: 16px 0;
-                margin-bottom: 20px; border-bottom: 1px solid var(--line-light);
-            }
-            .compare-item { text-align: center; flex: 1; min-width: 80px; }
-            .compare-item .label { font-size: 11px; color: var(--quiet); }
-            .compare-item .value {
-                font-family: Georgia, 'Times New Roman', 'SimSun', serif;
-                font-size: 24px; font-weight: 400; line-height: 1.2;
-            }
-            .compare-item .delta { font-size: 12px; font-weight: 500; }
-
-            /* ── 建议列表 ── */
-            .insights-list { list-style: none; }
-            .insight-item {
-                padding: 16px 20px; margin-bottom: 1px;
-                border-left: 2px solid transparent;
-                background: var(--card); border-bottom: 1px solid var(--line-light);
-            }
-            .insight-item.alert { border-left-color: var(--rose); }
-            .insight-item.warning { border-left-color: var(--amber); }
-            .insight-item.info { border-left-color: var(--iris); }
-            .insight-item .title { font-weight: 600; margin-bottom: 3px; font-size: 13px; }
-            .insight-item .description { font-size: 12px; color: var(--quiet); margin-bottom: 4px; }
-            .insight-item .suggestion {
-                font-size: 12px; color: var(--ink); margin-top: 6px;
-                padding: 6px 12px; background: #F9F8F6;
-            }
-            .severity-badge {
-                display: inline-block; padding: 1px 6px; font-size: 9px;
-                font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
-                margin-right: 8px; vertical-align: middle;
-            }
-            .severity-badge.alert { background: var(--rose); color: #fff; }
-            .severity-badge.warning { background: var(--amber); color: #fff; }
-            .severity-badge.info { background: var(--iris); color: #fff; }
-
-            /* ── 关于 Tab ── */
-            .about-grid {
-                display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-                gap: 1px; background: var(--line); border: 1px solid var(--line);
-            }
-            .about-card {
-                background: var(--card); padding: 16px 18px;
-            }
-            .about-card .ac-title { font-size: 12px; font-weight: 600; color: var(--ink); }
-            .about-card .ac-desc { font-size: 11px; color: var(--quiet); margin-top: 4px; line-height: 1.5; }
-            .tech-badge {
-                display: inline-block; padding: 3px 10px; font-size: 11px;
-                background: #F5F3F0; color: var(--quiet); margin: 2px 4px 2px 0;
-            }
-
-            /* ── v4.17: 成就徽章 ── */
-            .achieve-row { display: flex; gap: 12px; flex-wrap: wrap; }
-            .achieve-badge {
-                display: flex; flex-direction: column; align-items: center;
-                padding: 14px 16px; min-width: 90px;
-                background: #FAF9F7; border: 1px solid var(--line);
-                border-radius: 8px; text-align: center;
-            }
-            .achieve-badge .achieve-icon { font-size: 26px; margin-bottom: 4px; }
-            .achieve-badge .achieve-name {
-                font-size: 12px; font-weight: 600; color: var(--ink);
-            }
-            .achieve-badge .achieve-desc { font-size: 10px; color: var(--quiet); margin-top: 2px; }
-
-            /* ── 页脚 ── */
-            .footer {
-                text-align: center; color: #ccc; font-size: 11px;
-                margin-top: 36px; padding: 20px; letter-spacing: 0.2px;
-            }
-
-            /* ── 会话详情表 ── */
-            .detail-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-            .detail-table td { padding: 8px 0; }
-            .detail-table td:first-child { color: var(--quiet); width: 100px; }
-
-            /* ── 数据不足页 ── */
-            .collecting {
-                text-align: center; padding: 64px 20px; background: var(--card);
-                border: 1px solid var(--line);
-            }
-            .collecting .icon { font-size: 48px; margin-bottom: 16px; }
-            .collecting h2 { font-size: 18px; color: var(--ink); margin-bottom: 8px; }
-            .collecting p { font-size: 13px; color: var(--quiet); line-height: 1.7; }
-        </style>
-    """
+    # CSS 样式 (v4.26: 从 style.css 文件加载)
+    CSS_STYLE = _CSS_TAG
 
     # Tab 切换 JS
     PLOTLY_JS = '<script src="plotly.min.js"></script>'
+
+    # v4.26: 报告内对话 JS
+    CHAT_JS_SCRIPT = """
+    <script>
+    // ── 对话引擎 ──
+    var __chatData = typeof __focusData !== 'undefined' ? __focusData : {};
+    var __chatLog = [];
+
+    function __addChat(msg, isUser) {
+        var box = document.getElementById('chat-box');
+        if (!box) return;
+        var div = document.createElement('div');
+        div.className = 'chat-msg ' + (isUser ? 'chat-user' : 'chat-ai');
+        div.textContent = msg;
+        box.appendChild(div);
+        box.scrollTop = box.scrollHeight;
+        __chatLog.push({role: isUser ? 'user' : 'ai', text: msg});
+    }
+
+    function __ask() {
+        var input = document.getElementById('chat-input');
+        var q = input.value.trim();
+        if (!q) return;
+        input.value = '';
+        __addChat(q, true);
+        var answer = __answer(q, __chatData);
+        setTimeout(function() { __addChat(answer, false); }, 200);
+    }
+
+    function __answer(q, d) {
+        q = q.toLowerCase();
+        var a = d.answers || {};
+        var ai = d.aiAnalysis || '';
+
+        // Greeting
+        if (/你好|hello|hi|^hey/.test(q)) return '你好！我是你的专注度分析助手。';
+
+        // Show full AI analysis
+        if (/分析|summary|总结|overview|report/.test(q) && ai.length > 5) return ai;
+
+        // Focus overall
+        if (/怎么样|how.*focus|整体|评价|表现|专注度/.test(q)) return a.focus || '暂无分析。';
+
+        // Why low / decline
+        if (/为什么|下降|偏低|drop|why.*low|decline/.test(q)) return a.trend + ' ' + (a.fatigue || '') + (a.suggestion || '');
+
+        // Trend
+        if (/趋势|trend|后半|前半|start|end|变化/.test(q)) return a.trend || '暂无趋势数据。';
+
+        // Fatigue
+        if (/疲劳|累|tired|fatigue/.test(q)) return a.fatigue || '暂无疲劳数据。';
+
+        // Distraction
+        if (/分心|distract|打扰|干扰|走神/.test(q)) return a.distraction || '暂无分心数据。';
+
+        // Duration
+        if (/时长|时间|多久|long|how long/.test(q)) {
+            var dur = d.duration || 0;
+            var h = Math.floor(dur / 60), m = dur % 60;
+            var t = h > 0 ? h + ' 小时 ' + m + ' 分钟' : dur + ' 分钟';
+            return '会话时长 ' + t + (dur >= 90 ? '。连续工作时间较长，注意休息。' : '。');
+        }
+
+        // Suggestion
+        if (/建议|suggest|improve|提升|改进|如何/.test(q)) return a.suggestion || '暂无建议。';
+
+        // Fallback — show AI analysis if available
+        if (ai.length > 5) return ai;
+        return '你可以问我：专注度怎么样、为什么下降、疲劳程度、分心情况、建议等。';
+    }
+
+    function __initChat() { document.getElementById('chat-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') __ask(); }); }
+    if (document.readyState === 'complete') __initChat(); else window.addEventListener('load', __initChat);
+    </script>
+    """
 
     @staticmethod
     def _ensure_plotly_asset(report_dir: str) -> None:
@@ -569,12 +419,12 @@ class HTMLReportGenerator:
         charts: dict,
         insights: List[Insight],
     ) -> str:
-        """v4.13: 4标签页布局（概览 + 数据分析 + 改善建议 + 关于）"""
+        """v4.26: 3 标签页（🎯 此刻 + 🔬 模式 + ⏭ 下一步）"""
         session = data.session
 
         safe_session_id = html_escape(session.session_id)
 
-        # 将原始 chart data 渲染为 HTML（insights_charts 是原生HTML字符串，跳过渲染）
+        # 将原始 chart data 渲染为 HTML
         charts_for_render = {k: v for k, v in charts.items() if k != "insights_charts"}
         charts_html = self._render_charts(charts_for_render)
         if "insights_charts" in charts:
@@ -584,7 +434,33 @@ class HTMLReportGenerator:
         overview_html = self._render_overview_tab(data, charts_html)
         analysis_html = self._render_analysis_tab(charts_html)
         suggestions_html = self._render_insights_tab(charts_html, insights)
-        about_html = self._render_about_tab(session_id=safe_session_id)
+        next_steps_html = self._render_next_steps()
+
+        # v4.26: 对话功能 — 嵌入分析数据 + 预计算回答
+        # v4.26: AI 模式开启时嵌入对话数据
+        chat_embedding = ""
+        chat_script = ""
+        if self._ai_mode_enabled():
+            avg = data.avg_focus or 50
+            fr = data.focus_records or []
+            fatigue_recs = data.fatigue_records or []
+            third = max(1, len(fr) // 3)
+            seg_s = self._calc_avg_focus(fr[:third]) if len(fr) >= third else avg
+            seg_e = self._calc_avg_focus(fr[-third:]) if len(fr) >= third else avg
+            tf = max(len(fatigue_recs), 1)
+            hp = round(sum(1 for r in fatigue_recs if r.fatigue_level.name == "HIGH") / tf * 100, 0)
+            dist_count = len(getattr(data, 'distraction_records', None) or [])
+            dur_min = data.total_duration / 60 if data.total_duration else 0
+            ai_text = self._generate_ai_summary() or "暂无分析数据。"
+            ai_text_escaped = ai_text.replace('"', '\\"').replace('\n', ' ')
+            focus_json = (
+                '{"avgFocus":%.0f,"duration":%.0f,'
+                '"segments":{"start":%.0f,"end":%.0f},'
+                '"fatigue":{"highPct":%.0f},"distractions":%d,'
+                '"aiAnalysis":"%s"}'
+            ) % (avg, dur_min, seg_s, seg_e, hp, dist_count, ai_text_escaped)
+            chat_embedding = f'<script>window.__focusData = {focus_json};</script>'
+            chat_script = self.CHAT_JS_SCRIPT
 
         html = f"""
 <!DOCTYPE html>
@@ -607,19 +483,21 @@ class HTMLReportGenerator:
 
         <div class="tab-bar">
             <button class="tab-btn active" data-tab="overview" onclick="switchTab('overview')">📊 概览</button>
-            <button class="tab-btn" data-tab="analysis" onclick="switchTab('analysis')">📈 数据分析</button>
-            <button class="tab-btn" data-tab="suggestions" onclick="switchTab('suggestions')">🔍 改善建议</button>
-            <button class="tab-btn" data-tab="about" onclick="switchTab('about')">ℹ️ 关于</button>
+            <button class="tab-btn" data-tab="analysis" onclick="switchTab('analysis')">📋 数据</button>
+            <button class="tab-btn" data-tab="suggestions" onclick="switchTab('suggestions')">💡 洞察</button>
         </div>
 
         <div id="tab-overview" class="tab-content active">{overview_html}</div>
         <div id="tab-analysis" class="tab-content">{analysis_html}</div>
-        <div id="tab-suggestions" class="tab-content">{suggestions_html}</div>
-        <div id="tab-about" class="tab-content">{about_html}</div>
+        <div id="tab-suggestions" class="tab-content">{suggestions_html}{next_steps_html}</div>
 
-        <div class="footer">EyeFocus Insight | 自动生成的专注度分析报告</div>
+        <div class="footer">
+            EyeFocus Insight v4.26 | 自动生成专注度分析报告 | 会话 {safe_session_id[:12]}
+        </div>
     </div>
+    {chat_embedding}
     {self.JS_SCRIPT}
+    {chat_script}
 </body>
 </html>"""
         return html
@@ -665,11 +543,11 @@ class HTMLReportGenerator:
         # ── Hero 数字 ──
         avg_focus = stats["avg_focus"]
         if avg_focus >= 70:
-            hero_color = "#5A8A6D"
+            hero_color = "var(--sage-600)"
         elif avg_focus >= 50:
-            hero_color = "#C9843A"
+            hero_color = "var(--amber-600)"
         else:
-            hero_color = "#B55C5C"
+            hero_color = "var(--rose-600)"
 
         parts.append(f'''
             <div class="focus-hero">
@@ -680,7 +558,7 @@ class HTMLReportGenerator:
 
         if stats["focus_change"] is not None:
             arrow = "↑" if stats["focus_change"] >= 0 else "↓"
-            dc = "#5A8A6D" if stats["focus_change"] >= 0 else "#B55C5C"
+            dc = "var(--sage-600)" if stats["focus_change"] >= 0 else "var(--rose-600)"
             parts.append(
                 f'<div class="hero-compare" style="color:{dc}">'
                 f'{arrow} {abs(stats["focus_change"]):.0f} vs 历史平均 {stats["hist_avg_focus"]:.0f}'
@@ -721,102 +599,29 @@ class HTMLReportGenerator:
         if colorbar:
             parts.append('<div class="card"><h2>会话专注分布</h2>' + colorbar + "</div>")
 
-        # ── v4.17: 专注日历热力图 ──
-        cal_html = charts.get("calendar_heatmap", "")
-        if cal_html:
-            parts.append(
-                '<div class="card"><h2>📅 专注日历</h2>'
-                '<p class="card-desc">历史每日专注时长分布（GitHub 贡献图风格）</p>'
-                + cal_html + "</div>"
-            )
-
         # ── v4.25: 本周聚合（周报嵌入概览）──
         weekly_html = self._render_weekly_summary()
         if weekly_html:
             parts.append(weekly_html)
 
-        # ── v4.17: 成就徽章 ──
-        achievements_html = self._render_achievements()
-        if achievements_html:
-            parts.append(
-                '<div class="card"><h2>🏅 成就</h2>'
-                + achievements_html + "</div>"
-            )
+        # ── v4.26: AI 摘要 snippet ──
+        try:
+            summary = self._generate_ai_summary()
+            if summary and len(summary) > 5:
+                snippet = summary[:120] + "…" if len(summary) > 120 else summary
+                parts.append(f'''
+                    <div class="card" style="border-left:2px solid var(--iris-600);">
+                        <h2>🤖 AI 分析速览</h2>
+                        <div class="card-desc" style="font-size:13px;line-height:1.7;">
+                            {snippet}
+                            <br><a href="#" onclick="switchTab('suggestions');return false;"
+                               style="color:var(--iris-600);font-size:12px;">查看完整分析 →</a>
+                        </div>
+                    </div>''')
+        except Exception:
+            pass
 
         return "\n".join(parts)
-
-    # ── v4.17: 成就渲染 ──
-
-    def _render_achievements(self) -> str:
-        """渲染成就徽章行（从 daily_stats 读取数据）"""
-        try:
-            all_stats = self.db.get_all_daily_stats() if self.db else []
-            if not all_stats:
-                return ""
-
-            total_minutes = sum(s.total_focus_minutes for s in all_stats)
-            total_sessions = sum(s.session_count for s in all_stats)
-            dates = sorted(set(s.date for s in all_stats), reverse=True)
-
-            # 计算连续天数
-            streak = 0
-            from datetime import datetime, timedelta
-            check = datetime.now().date()
-            for d in dates:
-                sd = datetime.strptime(d, "%Y-%m-%d").date()
-                if sd == check:
-                    streak += 1
-                    check -= timedelta(days=1)
-                elif sd == check:
-                    break
-                else:
-                    break
-
-            # 构建成就列表
-            achievements = []
-
-            # 总时长成就
-            if total_minutes >= 3000:  # 50h
-                achievements.append(("🚀", "专注强者", f"累计 {total_minutes/60:.0f} 小时"))
-            elif total_minutes >= 600:  # 10h
-                achievements.append(("📈", "累积进步", f"累计 {total_minutes/60:.0f} 小时"))
-            else:
-                achievements.append(("🌟", "初次专注", f"{total_sessions} 次会话"))
-
-            # 连续成就
-            if streak >= 30:
-                achievements.append(("👑", "专注满贯", f"连续 {streak} 天"))
-            elif streak >= 7:
-                achievements.append(("💎", "坚持不懈", f"连续 {streak} 天"))
-            elif streak >= 3:
-                achievements.append(("🔥", "初露锋芒", f"连续 {streak} 天"))
-
-            # 最长单次
-            best = max((s.longest_session_minutes for s in all_stats), default=0)
-            if best >= 180:
-                achievements.append(("🏆", "专注大师", f"单次 {best:.0f} 分钟"))
-            elif best >= 60:
-                achievements.append(("💪", "专注达人", f"单次 {best:.0f} 分钟"))
-            elif best >= 30:
-                achievements.append(("⏱", "专注入门", f"单次 {best:.0f} 分钟"))
-
-            if not achievements:
-                return ""
-
-            cards_html = ""
-            for icon, name, desc in achievements:
-                cards_html += (
-                    f'<div class="achieve-badge">'
-                    f'<span class="achieve-icon">{icon}</span>'
-                    f'<span class="achieve-name">{name}</span>'
-                    f'<span class="achieve-desc">{desc}</span>'
-                    f'</div>'
-                )
-
-            return f'<div class="achieve-row">{cards_html}</div>'
-        except Exception as e:
-            logger.debug("成就渲染跳过: %s", e)
-            return ""
 
     # ════════════════════════════════════════════
     # v4.25: 周聚合（嵌入主报告概览 Tab）
@@ -916,24 +721,17 @@ class HTMLReportGenerator:
         </div>"""
 
     def _render_analysis_tab(self, charts: dict) -> str:
-        """v4.15: 数据分析 Tab（v4.24: 增加 AI 分析摘要）"""
+        """v4.26: 数据 Tab — 图表 + 原始数据"""
         parts = []
 
-        # ── AI 分析摘要（始终显示卡片，无数据时显示提示）──
-        try:
-            summary = self._generate_ai_summary()
-            if not summary:
-                summary = '<span style="color:#9E9A96;">数据不足，暂无法生成分析报告。</span>'
-        except Exception as e:
-            logger.warning("AI 分析摘要异常: %s", e)
-            summary = '<span style="color:#B55C5C;">分析生成异常，请查看下方图表数据。</span>'
-        parts.append(f'''
-            <div class="card" style="background:linear-gradient(135deg,#F4F2EE,#FFFFFF);border-left:4px solid #5B4A8C;">
-                <h2>🤖 专注度分析报告</h2>
-                <div class="card-desc" style="font-size:15px;line-height:1.8;color:#23201E;padding:8px 0;">
-                    {summary}
-                </div>
-            </div>''')
+        # ── v4.17: 专注日历热力图 ──
+        cal_html = charts.get("calendar_heatmap", "")
+        if cal_html:
+            parts.append(
+                '<div class="card"><h2>📅 专注日历</h2>'
+                '<p class="card-desc">历史每日专注时长分布</p>'
+                + cal_html + "</div>"
+            )
 
         sections = [
             ("专注度趋势",
@@ -961,150 +759,295 @@ class HTMLReportGenerator:
 
         return "\n".join(parts)
 
+    def _compute_llm_data(self, data: ReportData) -> dict:
+        """v4.26: 构造丰富的分析数据字典（LLM + 模板共用）"""
+        fr = data.focus_records or []
+        dur = data.total_duration or 0.0
+        avg = data.avg_focus or 50.0
+        fatigue_recs = data.fatigue_records or []
+
+        # 三段专注
+        third = max(1, len(fr) // 3)
+        seg_start = self._calc_avg_focus(fr[:third]) if len(fr) >= third else avg
+        seg_mid = self._calc_avg_focus(fr[third:2*third]) if len(fr) >= 2*third else avg
+        seg_end = self._calc_avg_focus(fr[-third:]) if len(fr) >= third else avg
+
+        # 疲劳分布
+        total_f = max(len(fatigue_recs), 1)
+        high_cnt = sum(1 for r in fatigue_recs if r.fatigue_level.name == "HIGH")
+        mid_cnt = sum(1 for r in fatigue_recs if r.fatigue_level.name == "MEDIUM")
+        low_cnt = sum(1 for r in fatigue_recs if r.fatigue_level.name == "LOW")
+        fatigue_high_pct = round(high_cnt / total_f * 100, 0)
+        fatigue_mid_pct = round(mid_cnt / total_f * 100, 0)
+        fatigue_low_pct = round(low_cnt / total_f * 100, 0)
+
+        # 分心统计
+        dist_count = len(getattr(data, 'distraction_records', None) or [])
+        # 近似分心原因分解（从 FocusRecord 的 eye/head/gaze score 估算）
+        head_pct = gaze_pct = 0
+        if dist_count > 0 and fr:
+            low_focus = [r for r in fr if r.focus_score is not None and r.focus_score < 60]
+            if low_focus:
+                avg_head = sum(r.head_score or 0 for r in low_focus) / len(low_focus)
+                avg_gaze = sum(r.gaze_score or 0 for r in low_focus) / len(low_focus)
+                total_hg = avg_head + avg_gaze
+                if total_hg > 0:
+                    head_pct = round(avg_head / total_hg * 100)
+                    gaze_pct = 100 - head_pct
+
+        # 疲劳等级
+        fl = getattr(data, 'fatigue_level', None)
+        fatigue_str = fl.name.upper() if fl and hasattr(fl, 'name') else "LOW"
+
+        # 历史平均
+        hist_avg = None
+        if self.db and data.session:
+            try:
+                with self.db._get_cursor() as cur:
+                    cur.execute("""
+                        SELECT AVG(focus_score) FROM focus_records
+                        WHERE session_id != ? AND focus_score IS NOT NULL
+                    """, (data.session.session_id,))
+                    row = cur.fetchone()
+                    if row and row[0] is not None:
+                        hist_avg = round(row[0], 1)
+            except Exception:
+                pass
+
+        return {
+            "duration": int(dur / 60),
+            "avg_focus": round(avg, 0),
+            "baseline": 60,
+            "hist_avg_focus": hist_avg or 60,
+            "seg_start": round(seg_start, 0),
+            "seg_mid": round(seg_mid, 0),
+            "seg_end": round(seg_end, 0),
+            "fatigue": fatigue_str,
+            "fatigue_high_pct": fatigue_high_pct,
+            "fatigue_mid_pct": fatigue_mid_pct,
+            "fatigue_low_pct": fatigue_low_pct,
+            "distractions": dist_count,
+            "head_pct": head_pct,
+            "gaze_pct": gaze_pct,
+            "dist_peak_hour": "",
+            "pomo_count": 0,
+            "streak": 0,
+        }
+
+    def _ai_mode_enabled(self) -> bool:
+        """检查 AI 模式是否开启"""
+        try:
+            from config import get_yaml_value
+            return get_yaml_value("ai", "mode", default=True)
+        except Exception:
+            return True
+
     def _generate_ai_summary(self) -> str:
         """生成 AI 分析摘要
 
-        优先使用已配置的 LLM 后端（API/本地），不可用时回退到内置模板。
+        AI 模式关闭时只返回空字符串。
+        开启时优先使用已配置的 LLM 后端，不可用时回退到内置模板。
+        结果按 session_id 缓存，避免重复生成。
         """
+        if not self._ai_mode_enabled():
+            return ""
+
         data = self._data if hasattr(self, '_data') and self._data else None
         if not data or not data.session:
             return ""
+        sid = data.session.session_id
 
-        # ── 尝试 LLM 后端（仅本地） ──
+        # v4.26: 结果缓存（同一 session 只生成一次）
+        if not hasattr(self.__class__, '_ai_cache'):
+            self.__class__._ai_cache = {}
+        _cache = self.__class__._ai_cache
+        if sid in _cache:
+            return _cache[sid]
+
+        llm_data = self._compute_llm_data(data)
+
+        # ── 尝试 LLM 后端 ──
+        result = self._try_llm_backend(llm_data)
+        if result:
+            _cache[sid] = result
+            return result
+
+        # ── 内置模板 ──
+        result = self._generate_template_summary(data, llm_data)
+        _cache[sid] = result
+        return result
+
+    def _try_llm_backend(self, llm_data: dict) -> str:
+        """尝试 LLM 后端（Ollama/Local），超时或不可用时返回空"""
         try:
             from config import get_yaml_value
             from concurrent.futures import ThreadPoolExecutor as _TPE, TimeoutError as _TO
             from analyzer.llm_client import create_llm_client
 
             backend = get_yaml_value("ai", "backend", default="template")
-            if backend != "template":
-                kwargs = {}
-                if backend == "ollama":
-                    kwargs["base_url"] = get_yaml_value("ai", "ollama_url",
-                                                         default="http://127.0.0.1:11434")
+            if backend == "template":
+                return ""
 
-                client = create_llm_client(backend, **kwargs)
-                if client.available:
-                    # 构造分析数据
-                    fr = data.focus_records or []
-                    dur = data.total_duration or 0.0
-                    avg = data.avg_focus or 50.0
+            kwargs = {}
+            if backend == "ollama":
+                kwargs["base_url"] = get_yaml_value("ai", "ollama_url",
+                                                     default="http://127.0.0.1:11434")
+            client = create_llm_client(backend, **kwargs)
+            if not client.available:
+                logger.info("AI 分析: %s 不可用，回退模板", client.name)
+                return ""
 
-                    # 三段式专注趋势
-                    third = max(1, len(fr) // 3)
-                    seg_start = self._calc_avg_focus(fr[:third]) if len(fr) >= third else avg
-                    seg_mid = self._calc_avg_focus(fr[third:2*third]) if len(fr) >= 2*third else avg
-                    seg_end = self._calc_avg_focus(fr[-third:]) if len(fr) >= third else avg
-
-                    # 分心统计（近似）
-                    dist_count = len(getattr(data, 'distraction_records', None) or [])
-                    head_pct = 50 if dist_count > 0 else 0  # 近似值
-                    gaze_pct = 50 if dist_count > 0 else 0
-
-                    # 疲劳等级（带空值保护）
-                    fl = getattr(data, 'fatigue_level', None)
-                    if fl is None:
-                        fatigue_str = "LOW"
-                    else:
-                        fatigue_str = fl.name.upper() if hasattr(fl, 'name') else str(fl).upper()
-
-                    llm_data = {
-                        "duration": int(dur / 60),
-                        "avg_focus": avg,
-                        "baseline": 60,
-                        "seg_start": seg_start,
-                        "seg_mid": seg_mid,
-                        "seg_end": seg_end,
-                        "distractions": dist_count,
-                        "head_pct": head_pct,
-                        "gaze_pct": gaze_pct,
-                        "fatigue": fatigue_str,
-                        "pomo_count": 0,
-                        "streak": 0,
-                    }
-                    # 超时保护：LLM 调用最多等 15 秒
-                    with _TPE(max_workers=1) as _pool:
-                        _fut = _pool.submit(client.analyze, llm_data)
-                        result = _fut.result(timeout=15)
-                    if result and result.strip():
-                        logger.info("AI 分析: LLM 后端 (%s) 生成成功", client.name)
-                        return result.strip()
-                    logger.info("AI 分析: LLM 后端返回空结果，回退模板")
-
-        except ImportError:
-            pass  # 模块不存在 → 回退模板
+            with _TPE(max_workers=1) as _pool:
+                _fut = _pool.submit(client.analyze, llm_data)
+                result = _fut.result(timeout=15)
+            if result and result.strip():
+                logger.info("AI 分析: %s 生成成功", client.name)
+                return result.strip()
         except _TO:
-            logger.warning("AI 分析: LLM 调用超时 (15s)，回退模板")
+            logger.warning("AI 分析: LLM 超时 (15s)，回退模板")
         except Exception:
             logger.debug("AI 分析: LLM 异常，回退模板", exc_info=True)
+        return ""
 
-        # ── 内置模板（零依赖，始终可用）──
+    def _generate_template_summary(self, data: ReportData, d: dict) -> str:
+        """v4.26: 增强版内置模板分析"""
         import html as _html
-        session = data.session
-        fr = data.focus_records or []
-        fatigue = data.fatigue_records or []
-        dist = getattr(data, 'distraction_records', None) or []
 
-        avg = self._calc_avg_focus(fr)
-        if avg == 0 and not fr:
-            return ""
-
+        avg = d["avg_focus"]
         parts = []
-        # 整体评价
+
+        # ── 整体评价 ──
         if avg >= 80:
-            parts.append(f"本次会话专注度 {avg:.0f} 分，表现优秀，保持了良好的工作状态。")
+            parts.append(f"本次会话专注度 {avg:.0f} 分，表现优秀。")
         elif avg >= 65:
-            parts.append(f"本次会话专注度 {avg:.0f} 分，整体表现良好。")
+            parts.append(f"本次会话专注度 {avg:.0f} 分，整体良好。")
         elif avg >= 50:
-            parts.append(f"本次会话专注度 {avg:.0f} 分，适中水平，有一定提升空间。")
+            parts.append(f"本次会话专注度 {avg:.0f} 分，处于中等水平。")
         else:
-            parts.append(f"本次会话专注度 {avg:.0f} 分，偏低，建议调整工作节奏。")
+            parts.append(f"本次会话专注度 {avg:.0f} 分，偏低。")
 
-        # 时间分段
-        dur = session.duration_seconds() or 0
-        if dur > 180 and fr:
-            third = len(fr) // 3
-            start_avg = self._calc_avg_focus(fr[:third]) if third > 0 else avg
-            end_avg = self._calc_avg_focus(fr[-third:]) if third > 0 else avg
-            if start_avg - end_avg > 10:
-                parts.append(f"前段专注度 {start_avg:.0f} 分，后段降至 {end_avg:.0f} 分，"
-                             f"下降 {start_avg - end_avg:.0f} 分，中途可能需要休息。")
-            elif end_avg - start_avg > 10:
-                parts.append(f"后段专注度 {end_avg:.0f} 分高于前段 {start_avg:.0f} 分，渐入佳境。")
+        # ── 历史对比 ──
+        hist = d.get("hist_avg_focus", 0)
+        if hist and abs(avg - hist) > 3:
+            parts.append(
+                f"{'高于' if avg > hist else '低于'}近期平均 ({hist:.0f} 分)"
+                f"，差值 {abs(avg - hist):.0f} 分。")
 
-        # 疲劳
-        if fatigue:
-            high_count = sum(1 for r in fatigue if r.fatigue_level.name == "HIGH")
-            if high_count > len(fatigue) * 0.3:
-                parts.append("疲劳信号较多，建议今晚保证充足睡眠。")
-            elif high_count > 0:
-                parts.append("有轻微疲劳迹象，注意适时放松眼部。")
+        # ── 趋势 ──
+        s, e = d["seg_start"], d["seg_end"]
+        if abs(s - e) > 8:
+            if s > e:
+                parts.append(f"前半段高于后半段 {s-e:.0f} 分，中途可能需要安排一次休息。")
+            else:
+                parts.append("后半段专注度上升，状态渐入佳境。")
 
-        # 时长
-        minutes = dur / 60
-        if minutes > 90:
-            parts.append(f"连续工作 {minutes:.0f} 分钟，建议使用番茄钟规律休息。")
-        elif minutes > 0:
-            parts.append(f"会话时长 {minutes:.0f} 分钟。")
+        # ── 疲劳 ──
+        hp = d["fatigue_high_pct"]
+        if hp > 30:
+            parts.append(f"高疲劳占比 {hp:.0f}%，疲劳信号较多，建议保证睡眠。")
+        elif hp > 10:
+            parts.append("有间歇性疲劳信号，注意定时起身眨眼。")
 
-        # 分心
-        dist_count = len(dist)
-        if dist_count > 10:
-            parts.append(f"分心 {dist_count} 次偏多，可尝试排除环境干扰。")
+        # ── 分心 ──
+        dc = d["distractions"]
+        if dc > 8:
+            cause = "头部偏移是主要原因" if d["head_pct"] >= d["gaze_pct"] else "视线偏离是主要因素"
+            parts.append(f"分心 {dc} 次偏多（{cause}），可尝试关闭通知或使用番茄钟。")
+        elif dc > 3:
+            parts.append(f"分心 {dc} 次。")
 
-        return _html.escape("".join(parts))
+        # ── 时长 ──
+        dur = d["duration"]
+        if dur >= 90:
+            parts.append(f"连续工作 {dur} 分钟，注意规律休息。")
+
+        # ── 建议 ──
+        suggestions = []
+        if avg < 55:
+            suggestions.append("缩短单次工作时长，配合番茄钟提高专注。")
+        if hp > 20:
+            suggestions.append("每小时起身活动 2 分钟，缓解疲劳累积。")
+        if dc > 10:
+            suggestions.append("分心偏多，尝试关闭通知、使用降噪耳机。")
+        if dur > 120 and avg < 60:
+            suggestions.append("长时间低效不如短时高效，试试 45 分钟深度工作。")
+        if suggestions:
+            parts.append("建议：" + "".join(suggestions))
+
+        return "。" if not parts else _html.escape("".join(parts))
 
     def _render_insights_tab(self, charts: dict, insights: List[Insight]) -> str:
-        """v4.13: 改善建议 Tab（统一所有建议 + 高级图表）"""
+        """v4.26: 洞察 Tab — AI 分析摘要 + 个性化建议 + 下一步"""
+        parts = []
+
+        # ── AI 分析摘要（主位） ──
+        try:
+            summary = self._generate_ai_summary()
+            if summary:
+                parts.append(f'''
+                    <div class="card" style="background:linear-gradient(135deg,#F4F2EE,#FFFFFF);border-left:4px solid #4A3A7A;">
+                        <h2>🤖 AI 分析</h2>
+                        <div class="card-desc" style="font-size:15px;line-height:1.8;color:#23201E;padding:8px 0;">
+                            {summary}
+                        </div>
+                    </div>''')
+        except Exception as e:
+            logger.warning("AI 分析摘要异常: %s", e)
+
+        # ── 个性化建议 ──
         insights_html = self._render_insights(insights) if insights else ""
         insights_charts = charts.get('insights_charts', "")
+        if insights_html:
+            parts.append(f'''
+                <div class="card">
+                    <h2>个性化建议</h2>
+                    {insights_html}
+                </div>''')
+        else:
+            parts.append('''
+                <div class="card">
+                    <h2>个性化建议</h2>
+                    <div class="no-data">未检测到明显问题</div>
+                </div>''')
+        if insights_charts:
+            parts.append(insights_charts)
 
-        return f"""
-            <div class="card">
-                <h2>个性化建议</h2>
-                {insights_html if insights_html else '<div class="no-data">未检测到明显问题</div>'}
+        # ── v4.26: 对话（AI 模式开启时显示） ──
+        chat_html = ''
+        if self._ai_mode_enabled():
+            chat_html = '''
+        <div class="card" style="border-left:2px solid var(--iris-600);">
+            <h2>💬 问你的数据</h2>
+            <div class="card-desc">试试问：专注度怎么样？为什么下降？疲劳程度？有什么建议？</div>
+            <div id="chat-box" class="chat-box"></div>
+            <div class="chat-input-row">
+                <input id="chat-input" class="chat-input" type="text" placeholder="输入问题...">
+                <button class="chat-send" onclick="__ask()">发送</button>
+            </div>'''
+        parts.append(chat_html)
+
+        return "\n".join(parts)
+
+    # ── v4.26: 下一步行动面板 ──
+
+    def _render_next_steps(self) -> str:
+        """渲染下一步行动面板"""
+        return """
+        <div class="next-steps">
+            <h2>⏭ 下一步</h2>
+            <div class="next-step-item">
+                <span class="step-icon">📊</span>
+                <span>开始一次新的专注监测会话</span>
             </div>
-            {insights_charts}
+            <div class="next-step-item">
+                <span class="step-icon">📈</span>
+                <span>查看数据分析 Tab 了解详细趋势</span>
+            </div>
+            <div class="next-step-item">
+                <span class="step-icon">⚙</span>
+                <span>调整监测设置优化专注体验</span>
+            </div>
+        </div>
         """
 
     def _calc_session_avg_focus(self, session_id: str):
@@ -1465,8 +1408,9 @@ class HTMLReportGenerator:
             try:
                 insights_result = run_pipeline(self.db, session_id)
             except Exception as e:
-                logger.warning("Insights pipeline 自动运行失败: %s", e)
-                return self.generate_report(session_id)
+                logger.warning("Insights pipeline 运行失败: %s — 回退到基础报告", e)
+                return self._inject_insights_notice(
+                    self.generate_report(session_id), str(e))
 
         # 1. 获取会话数据
         session = self.db.get_session(session_id)
@@ -1543,6 +1487,23 @@ class HTMLReportGenerator:
 
         # 7. 用新 Tab 布局渲染
         return self._render_html(report_data, charts, rule_insights)
+
+    @staticmethod
+    def _inject_insights_notice(html: str, error: str = "") -> str:
+        """v4.26: 在基础报告中注入 insights 不可用提示"""
+        notice = (
+            '<div class="card" style="border-left:2px solid var(--amber-600);">'
+            '<h2>📊 高级分析暂不可用</h2>'
+            '<div class="card-desc">'
+            '离线数据分析管道未能完成。'
+            f'{f" 原因: {html_escape(error)}" if error else ""}'
+            '<br>查看常规指标和图表了解本次会话概况。'
+            '</div></div>'
+        )
+        return html.replace(
+            '<div class="tab-bar">',
+            f'{notice}<div class="tab-bar">'
+        )
 
     def _generate_insights_charts(self, insights: "_InsightsResult") -> dict:
         """生成 insights 章节所需的 4 个图表。"""

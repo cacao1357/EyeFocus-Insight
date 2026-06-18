@@ -411,7 +411,7 @@ class TestHTMLReportGenerator:
 
         assert 'test_session_001' in html
         assert '专注度' in html or '监测时长' in html
-        assert '已校准' in html or '校准' in html
+        assert '下一步' in html or 'v4.26' in html
 
     def test_calc_avg_focus(self, html_generator, sample_focus_records):
         """测试平均专注度计算"""

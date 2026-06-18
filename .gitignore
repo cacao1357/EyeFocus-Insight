@@ -83,5 +83,8 @@ docs/archive/
 docs/old_schemes/
 docs/superpowers/
 
+# ── OpenSpec 工作流 ──
+/openspec/
+
 # ── 跨平台行尾符锁定 ──
 .gitattributes tracked in repo

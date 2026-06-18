@@ -52,11 +52,12 @@ class VideoLabel(QLabel):
         self.setStyleSheet("background-color: #000000;")
         self._frame_size: tuple = (640, 480)
 
-    def display_frame(self, frame: np.ndarray) -> None:
-        """显示一帧 OpenCV 图像 (BGR → RGB → QPixmap)
+    def display_frame(self, frame: np.ndarray, is_rgb: bool = False) -> None:
+        """显示一帧视频图像
 
         Args:
-            frame: BGR 格式的 numpy 数组
+            frame: numpy 数组
+            is_rgb: True 时 frame 已是 RGB，跳过转换
         """
         if frame is None:
             return
@@ -64,8 +65,10 @@ class VideoLabel(QLabel):
         h, w = frame.shape[:2]
         self._frame_size = (w, h)
 
-        # BGR → RGB
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        if is_rgb:
+            rgb = frame
+        else:
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         bytes_per_line = rgb.strides[0]
         qimg = QImage(rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
 
@@ -74,7 +77,7 @@ class VideoLabel(QLabel):
         scaled = pixmap.scaled(
             self.size(),
             Qt.KeepAspectRatio,  # v4.19: 完整显示不裁剪
-            Qt.SmoothTransformation,
+            Qt.FastTransformation,  # v4.26: FastTransformation 替代 SmoothTransformation（30FPS 视频缩放无需 bilinear）
         )
         self.setPixmap(scaled)
 

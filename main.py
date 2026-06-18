@@ -40,11 +40,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, Callable
 
-# v4.24: 提前加载 llama_cpp DLL，避免后续与 PyQt5/mediapipe DLL 冲突
-try:
-    import llama_cpp  # noqa: F401
-except Exception:
-    pass
+# v4.26: 延迟到 initialize() 加载，避免模块级副作用
 
 import cv2
 import numpy as np
@@ -118,6 +114,35 @@ class AppConfig:
     use_qt: bool = True
     # v4.10: 系统托盘 (仅 Qt 模式)
     enable_tray: bool = True
+
+
+def _ensure_llama_dll():
+    """v4.26: 在 initialize() 中提前加载 llama_cpp DLL，避免与 PyQt5/mediapipe DLL 冲突"""
+    try:
+        import llama_cpp  # noqa: F401
+    except Exception:
+        pass
+
+
+def _warmup_llm_backend():
+    """v4.26: 后台预热 AI 后端"""
+    try:
+        from config import get_yaml_value
+        backend = get_yaml_value("ai", "backend", default="template")
+        if backend == "template":
+            return
+        kwargs = {}
+        if backend == "ollama":
+            kwargs["base_url"] = get_yaml_value("ai", "ollama_url",
+                                                 default="http://127.0.0.1:11434")
+        elif backend == "local":
+            kwargs["n_gpu_layers"] = -1
+        from analyzer.llm_client import create_llm_client, warmup_client
+        client = create_llm_client(backend, **kwargs)
+        warmup_client(client)
+    except Exception as e:
+        logger = logging.getLogger("eyefocus.main")
+        logger.debug("AI 预热跳过: %s", e)
 
 
 class EyeFocusApp:
@@ -202,6 +227,9 @@ class EyeFocusApp:
         """
         logger.info("EyeFocus Insight 初始化中...")
 
+        # v4.26: 从模块级移入，但仍早于 mediapipe/PyQt5
+        _ensure_llama_dll()
+
         try:
             # 初始化数据库
             self._db = create_database_manager(
@@ -266,6 +294,11 @@ class EyeFocusApp:
             self._web_dashboard = WebDashboard(port=8080)
             if self._db is not None:
                 self._web_dashboard.set_db(self._db)
+            # v4.26: 注册 Web 控制回调
+            self._web_dashboard.on("toggle_pause", lambda: self._qt_window.toggle_pause() if self._qt_window else None)
+            self._web_dashboard.on("calibrate", lambda: self._qt_window.calibrate_requested.emit() if self._qt_window else None)
+            self._web_dashboard.on("pause", lambda: self._qt_window.set_paused(True) if self._qt_window else None)
+            self._web_dashboard.on("resume", lambda: self._qt_window.set_paused(False) if self._qt_window else None)
             self._web_dashboard.start()
             logger.info("Web 仪表盘: http://127.0.0.1:8080")
 
@@ -302,6 +335,9 @@ class EyeFocusApp:
 
             logger.info("初始化完成 (session: %s)", self._session_id)
 
+            # v4.26: 后台预热 LLM 模型（非阻塞）
+            self._warmup_llm_model()
+
             # v4.0.2 修复 B3: 提前验证摄像头可用，避免 main_loop 才报错
             # 用户启动后看到黑屏无错误提示的问题
             if not self._camera_manager.start():
@@ -319,6 +355,12 @@ class EyeFocusApp:
         except Exception as e:
             logger.error("初始化失败: %s", e, exc_info=True)
             return False
+
+    def _warmup_llm_model(self) -> None:
+        """v4.26: 后台线程预热 LLM 模型，不阻塞主流程"""
+        import threading as _t
+        _t.Thread(target=_warmup_llm_backend, daemon=True,
+                   name="llm-warmup").start()
 
     def start(self) -> None:
         """启动主循环"""
@@ -664,7 +706,12 @@ class EyeFocusApp:
             # 直接推送帧到窗口显示（绕过 FrameBuffer timer 时序依赖）
             if hasattr(self, '_qt_window') and self._qt_window is not None:
                 try:
-                    self._qt_window.show_frame(frame)
+                    # v4.26: 复用 face_mesh 已转换的 RGB 帧，省一次 cv2.cvtColor
+                    rgb = getattr(self._face_detector, '_last_rgb_frame', None)
+                    if rgb is not None:
+                        self._qt_window.show_frame(rgb, is_rgb=True)
+                    else:
+                        self._qt_window.show_frame(frame)
                 except RuntimeError:
                     # 窗口已在 C++ 层销毁 → 跳过（竞态保护）
                     return
@@ -1221,8 +1268,19 @@ class EyeFocusApp:
     # ── v4.17: 提醒引擎托盘回调 ──
 
     def _reminder_tray_notify(self, title: str, message: str) -> None:
-        """v4.22: 提醒引擎通知已移除（正常操作不弹窗），仅保留日志"""
+        """v4.26: 恢复托盘提醒通知"""
         logger.debug("提醒引擎: [%s] %s", title, message)
+        if hasattr(self, '_qt_window') and self._qt_window is not None:
+            tray = getattr(self._qt_window, '_tray_icon', None)
+            if tray is not None:
+                try:
+                    tray.showMessage(
+                        f"EyeFocus Insight - {title}", message,
+                        tray.Warning if "疲劳" in title or "注意" in title else tray.Information,
+                        5000,
+                    )
+                except Exception:
+                    pass
 
     # ── v4.18: 周报 ──
 
