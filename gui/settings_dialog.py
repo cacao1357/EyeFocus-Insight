@@ -206,6 +206,14 @@ class SettingsDialog(QDialog):
             QPushButton:hover { background-color: #E5E5E5; }
             QPushButton:pressed { background-color: #D8D8D8; }
             QPushButton:disabled { background-color: #F8F6F2; color: #8B8680; }
+            /* v4.26.1: API key 切换按钮透明底（#apiKeyToggle 比 QPushButton 选择器更具体） */
+            QPushButton#apiKeyToggle {
+                background: transparent; color: #5A5650;
+                border: none; font-size: 15px;
+                padding: 4px 8px;
+            }
+            QPushButton#apiKeyToggle:hover { background: transparent; color: #5B4A8C; }
+            QPushButton#apiKeyToggle:checked { background: transparent; color: #5B4A8C; }
         """)
 
     def _load_config(self) -> None:
@@ -301,19 +309,12 @@ class SettingsDialog(QDialog):
         # 密码可见性切换
         from PyQt5.QtWidgets import QPushButton as _QPB
         self._api_key_toggle_btn = _QPB("👁")
-        self._api_key_toggle_btn.setObjectName("apiKeyToggle")  # v4.26: 唯一定位，避免被 QDialog 级 QPushButton 规则覆盖
+        self._api_key_toggle_btn.setObjectName("apiKeyToggle")  # v4.26.1: 用于 QDialog 级 QSS 唯一定位
         self._api_key_toggle_btn.setFixedWidth(36)
         self._api_key_toggle_btn.setToolTip("显示/隐藏 API Key")
         self._api_key_toggle_btn.setCheckable(True)
-        self._api_key_toggle_btn.setStyleSheet("""
-            QPushButton#apiKeyToggle {
-                background: transparent; color: #5A5650;
-                border: none; font-size: 15px;
-                padding: 4px 8px;
-            }
-            QPushButton#apiKeyToggle:hover { color: #5B4A8C; }
-            QPushButton#apiKeyToggle:checked { color: #5B4A8C; }
-        """)
+        # v4.26.1: 不在按钮上 setStyleSheet（per-widget 在某些 Qt 版本下被 QDialog 级 QPushButton 规则覆盖）
+        # 改为在 QDialog 级 QSS 里用 #apiKeyToggle 选择器（更高优先级：element+id）
         self._api_key_toggle_btn.clicked.connect(self._toggle_api_key_visibility)
         api_key_row = QWidget()
         api_key_layout = QHBoxLayout(api_key_row)

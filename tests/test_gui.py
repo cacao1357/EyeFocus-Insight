@@ -453,18 +453,23 @@ class TestV426DropdownWhiteBg:
             assert "QInputDialog.getInt(" not in content
 
     def test_v426_1_api_key_toggle_has_object_name_and_transparent(self):
-        """v4.26.1: API key 切换按钮有 objectName + per-widget QSS transparent
+        """v4.26.1: API key 切换按钮有 objectName + QDialog 级 QSS 含 transparent 规则
 
         修复前：QDialog 级 QPushButton { background: #F0F0F0 } 覆盖按钮 → 黑/灰底
-        修复后：setObjectName('apiKeyToggle') + QSS selector #apiKeyToggle 高优先级 → 透明
+        修复后：setObjectName('apiKeyToggle') + QDialog 级 QSS 含
+                QPushButton#apiKeyToggle { background: transparent }
+                （element+id 选择器比 element 选择器优先级高）→ 透明底
         """
         from gui.settings_dialog import SettingsDialog
         dlg = SettingsDialog()
         btn = dlg._api_key_toggle_btn
         assert btn.objectName() == "apiKeyToggle"
-        qss = btn.styleSheet()
-        assert "QPushButton#apiKeyToggle" in qss
-        assert "background: transparent" in qss
+        # v4.26.1 修复：QSS 规则在 QDialog 级（per-widget 在某些 Qt 版本下被覆盖）
+        dlg_qss = dlg.styleSheet()
+        assert "QPushButton#apiKeyToggle" in dlg_qss, \
+            "QDialog 级 QSS 应含 #apiKeyToggle 规则"
+        assert "background: transparent" in dlg_qss, \
+            "QSS 应含 background: transparent"
 
     def test_v426_1_pomo_dialog_no_help_button(self):
         """v4.26.1: ask_pomo_int 去掉标题栏 ? 帮助按钮"""
