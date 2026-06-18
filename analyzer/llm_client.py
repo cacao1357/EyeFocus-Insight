@@ -222,7 +222,7 @@ class LocalClient(LLMClient):
 
     MODEL_NAMES = {
         "qwen2.5:1.5b": ("Qwen2.5-1.5B (当前)", "qwen2.5-1.5b-instruct-q4_k_m.gguf"),
-        "qwen3:1.7b": ("Qwen3-1.7B", "qwen3-1.7b-instruct-q4_k_m.gguf"),
+        "qwen3:1.7b": ("Qwen3-1.7B Q8_0", "Qwen3-1.7B-Q8_0.gguf"),
         "qwen3.5:1.5b": ("Qwen3.5-1.5B", "qwen3.5-1.5b-instruct-q4_k_m.gguf"),
     }
 
