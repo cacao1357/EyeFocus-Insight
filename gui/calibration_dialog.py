@@ -101,6 +101,14 @@ class CalibrationDialog(QDialog):
         self.setWindowTitle("EyeFocus 用户校准")
         self.resize(960, 750)
         self.setMinimumSize(800, 650)
+        # v4.26.1: 标题栏去掉 ? 帮助按钮，添加 — 最小化按钮
+        # 原来默认 Qt.WindowContextHelpButtonHint（"?" 按钮），
+        # 用户场景：校准中可暂时最小化（看其他文档/操作），
+        # 用 ? 帮助按钮无用。改为最小化更实用。
+        flags = self.windowFlags()
+        flags &= ~Qt.WindowContextHelpButtonHint
+        flags |= Qt.WindowMinimizeButtonHint
+        self.setWindowFlags(flags)
         self.setStyleSheet("background-color: #000000;")
         self.result_data: dict = {}
         self._get_frame = get_frame  # 可选: 外部帧源，替代自有摄像头
@@ -671,6 +679,9 @@ class CalibrationDialog(QDialog):
         dlg = _QD(self)
         dlg.setWindowTitle(f"阈值校验 · 第{self._blink_round}轮")
         dlg.setMinimumWidth(480)
+        # v4.26.1: 去掉 ? 帮助按钮（与主校准 dialog 保持一致）
+        _flags = dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint
+        dlg.setWindowFlags(_flags)
         dlg.setStyleSheet(DLG_STYLE)
         dl = _VL(dlg)
         dl.setContentsMargins(32, 24, 32, 20)
@@ -707,6 +718,9 @@ class CalibrationDialog(QDialog):
         d2 = _QD(self)
         d2.setWindowTitle("输入实际次数")
         d2.setMinimumWidth(400)
+        # v4.26.1: 去掉 ? 帮助按钮
+        _flags2 = d2.windowFlags() & ~Qt.WindowContextHelpButtonHint
+        d2.setWindowFlags(_flags2)
         d2.setStyleSheet(DLG_STYLE)
         d2l = _VL(d2)
         d2l.setContentsMargins(32, 20, 32, 16)

@@ -94,8 +94,13 @@ def ask_pomo_int(parent, title: str, label: str,
 
     Qt 自带 QInputDialog 在系统暗色主题下黑底、字看不清。
     重写为可 setStyleSheet 的非静态版本，套白底 QSS。
+    v4.26.1: 去掉标题栏左侧 "?" 帮助按钮（Qt.WindowContextHelpButtonHint）
     """
     dlg = QInputDialog(parent)
+    # v4.26.1: 去掉标题栏 ? 按钮，与项目"白底简洁"风格一致
+    flags = dlg.windowFlags()
+    flags &= ~Qt.WindowContextHelpButtonHint
+    dlg.setWindowFlags(flags)
     dlg.setStyleSheet(_POMO_INPUT_DIALOG_QSS)
     dlg.setWindowTitle(title)
     dlg.setLabelText(label)
@@ -296,17 +301,18 @@ class SettingsDialog(QDialog):
         # 密码可见性切换
         from PyQt5.QtWidgets import QPushButton as _QPB
         self._api_key_toggle_btn = _QPB("👁")
+        self._api_key_toggle_btn.setObjectName("apiKeyToggle")  # v4.26: 唯一定位，避免被 QDialog 级 QPushButton 规则覆盖
         self._api_key_toggle_btn.setFixedWidth(36)
         self._api_key_toggle_btn.setToolTip("显示/隐藏 API Key")
         self._api_key_toggle_btn.setCheckable(True)
         self._api_key_toggle_btn.setStyleSheet("""
-            QPushButton {
+            QPushButton#apiKeyToggle {
                 background: transparent; color: #5A5650;
                 border: none; font-size: 15px;
                 padding: 4px 8px;
             }
-            QPushButton:hover { color: #5B4A8C; }
-            QPushButton:checked { color: #5B4A8C; }
+            QPushButton#apiKeyToggle:hover { color: #5B4A8C; }
+            QPushButton#apiKeyToggle:checked { color: #5B4A8C; }
         """)
         self._api_key_toggle_btn.clicked.connect(self._toggle_api_key_visibility)
         api_key_row = QWidget()

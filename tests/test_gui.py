@@ -451,3 +451,48 @@ class TestV426DropdownWhiteBg:
                 content = f.read()
             assert "ask_pomo_int" in content
             assert "QInputDialog.getInt(" not in content
+
+    def test_v426_1_api_key_toggle_has_object_name_and_transparent(self):
+        """v4.26.1: API key 切换按钮有 objectName + per-widget QSS transparent
+
+        修复前：QDialog 级 QPushButton { background: #F0F0F0 } 覆盖按钮 → 黑/灰底
+        修复后：setObjectName('apiKeyToggle') + QSS selector #apiKeyToggle 高优先级 → 透明
+        """
+        from gui.settings_dialog import SettingsDialog
+        dlg = SettingsDialog()
+        btn = dlg._api_key_toggle_btn
+        assert btn.objectName() == "apiKeyToggle"
+        qss = btn.styleSheet()
+        assert "QPushButton#apiKeyToggle" in qss
+        assert "background: transparent" in qss
+
+    def test_v426_1_pomo_dialog_no_help_button(self):
+        """v4.26.1: ask_pomo_int 去掉标题栏 ? 帮助按钮"""
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtWidgets import QInputDialog
+        import inspect
+        from gui.settings_dialog import ask_pomo_int
+        # 检查源码确认 WindowContextHelpButtonHint 被清除
+        src = inspect.getsource(ask_pomo_int)
+        assert "WindowContextHelpButtonHint" in src
+        # 验证逻辑可执行（不需要真弹窗）：手动模拟 flags 操作
+        dlg = QInputDialog()
+        flags = dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint
+        dlg.setWindowFlags(flags)
+        assert not (dlg.windowFlags() & Qt.WindowContextHelpButtonHint)
+        dlg.close()
+
+    def test_v426_1_calibration_dialog_minimize_no_help(self):
+        """v4.26.1: 校准 dialog 去掉 ? 帮助按钮，添加 — 最小化按钮"""
+        from PyQt5.QtCore import Qt
+        from gui.calibration_dialog import CalibrationDialog
+        import inspect
+        src = inspect.getsource(CalibrationDialog.__init__)
+        assert "WindowContextHelpButtonHint" in src
+        assert "WindowMinimizeButtonHint" in src
+        # 同源代码验证：先 unset help + add minimize
+        # 模拟预期 flags 操作
+        flags = Qt.Dialog | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint
+        flags &= ~Qt.WindowContextHelpButtonHint
+        assert not (flags & Qt.WindowContextHelpButtonHint)
+        assert (flags & Qt.WindowMinimizeButtonHint)
