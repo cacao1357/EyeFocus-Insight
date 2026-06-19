@@ -834,6 +834,107 @@ class HTMLReportGenerator:
             "streak": 0,
         }
 
+    # ── v4.27: L3 级深度分析数据 ──
+
+    def _compute_deep_llm_data(self, data: ReportData) -> dict:
+        """构造 L3 级深度分析数据字典（含时序模式 + 历史对比）"""
+        base = self._compute_llm_data(data)
+        fr = data.focus_records or []
+        dur = data.total_duration or 0.0
+        avg = data.avg_focus or 50.0
+
+        # 1. 专注悬崖（>15 分降幅）
+        cliffs = []
+        prev_score = None
+        for r in fr:
+            if prev_score is not None and r.focus_score is not None:
+                drop = prev_score - r.focus_score
+                if drop >= 15:
+                    minute = int(r.window_start // 60) if r.window_start else 0
+                    cliffs.append(f"第{minute}分: {prev_score:.0f}→{r.focus_score:.0f} (-{drop:.0f}分)")
+            prev_score = r.focus_score if r.focus_score is not None else prev_score
+
+        # 2. 疲劳演变时间线
+        fatigue_steps = []
+        last_level = None
+        for r in (data.fatigue_records or []):
+            level = r.fatigue_level.name if hasattr(r.fatigue_level, 'name') else str(r.fatigue_level)
+            if level != last_level:
+                minute = int(r.timestamp // 60) if r.timestamp else 0
+                fatigue_steps.append(f"第{minute}分 {level}")
+                last_level = level
+
+        # 3. 分心分布
+        dist_count = base.get("distractions", 0)
+        if dist_count > 0 and dur > 0:
+            # 从 low_focus records 估算分心时间分布
+            low_scores = [(r.window_start, r.focus_score) for r in fr
+                          if r.focus_score is not None and r.focus_score < 60]
+            half = dur / 2
+            first_half = sum(1 for t, _ in low_scores if t <= half)
+            second_half = len(low_scores) - first_half
+            if second_half > first_half:
+                dist_pattern = f"{dist_count}次分心，后段集中（{second_half}/{len(low_scores)}次低分）"
+            else:
+                dist_pattern = f"{dist_count}次分心，前后段分布均匀"
+        else:
+            dist_pattern = "无显著分心事件"
+
+        # 4. 历史对比
+        past_summary = self._get_past_sessions_summary(data.session, avg)
+
+        # 会话日期
+        session_date = ""
+        if data.session and data.session.start_time:
+            try:
+                session_date = data.session.start_time.strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                pass
+
+        base.update({
+            "session_date": session_date,
+            "focus_cliffs": "\n".join(cliffs[:5]) or "无显著专注悬崖（>15分降幅）",
+            "fatigue_evolution": " → ".join(fatigue_steps) or "疲劳等级无变化",
+            "dist_pattern": dist_pattern,
+            "past_sessions_summary": past_summary,
+        })
+        return base
+
+    def _get_past_sessions_summary(self, session, current_avg: float) -> str:
+        """查询过去若干次会话的摘要对比"""
+        if not self.db or not session:
+            return "无历史数据"
+        try:
+            with self.db._get_cursor() as cur:
+                cur.execute("""
+                    SELECT avg_focus, duration_seconds, fatigue_level,
+                           start_time FROM sessions
+                    WHERE session_id != ? AND start_time IS NOT NULL
+                    ORDER BY start_time DESC LIMIT 5
+                """, (session.session_id,))
+                rows = cur.fetchall()
+                if not rows:
+                    return "无历史数据"
+
+            lines = [f"近 {len(rows)} 次会话数据："]
+            for row in rows:
+                avg_s, dur_s, fl, st = row
+                if avg_s is None:
+                    continue
+                lines.append(f"- 专注度 {avg_s:.0f}/100，时长 {int((dur_s or 0)/60)}分钟")
+
+            past_avg = [r[0] for r in rows if r[0] is not None]
+            if past_avg:
+                mean_past = sum(past_avg) / len(past_avg)
+                diff = current_avg - mean_past
+                if abs(diff) > 3:
+                    direction = "↑ 高于" if diff > 0 else "↓ 低于"
+                    lines.append(f"本次 {direction} 历史平均 ({mean_past:.0f}) {diff:+.0f} 分")
+
+            return "\n".join(lines)
+        except Exception:
+            return "历史数据查询失败"
+
     def _ai_mode_enabled(self) -> bool:
         """检查 AI 模式是否开启"""
         try:
@@ -864,9 +965,24 @@ class HTMLReportGenerator:
         if sid in _cache:
             return _cache[sid]
 
-        llm_data = self._compute_llm_data(data)
+        # ── v4.27: L3 深度分析（仅 openai 等支持 deep_analyze 的后端） ──
+        backend = "template"
+        try:
+            from config import get_yaml_value
+            backend = get_yaml_value("ai", "backend", default="template")
+        except Exception:
+            pass
 
-        # ── 尝试 LLM 后端 ──
+        if backend != "template":
+            from analyzer.llm_client import OpenAICompatibleClient
+            deep_data = self._compute_deep_llm_data(data)
+            result = self._try_llm_deep(deep_data)
+            if result:
+                _cache[sid] = result
+                return result
+
+        # ── 标准 LLM 后端 ──
+        llm_data = self._compute_llm_data(data)
         result = self._try_llm_backend(llm_data)
         if result:
             _cache[sid] = result
@@ -894,6 +1010,10 @@ class HTMLReportGenerator:
                                                      default="http://127.0.0.1:11434")
             elif backend == "local":
                 kwargs["model_key"] = get_yaml_value("ai", "model_key", default="qwen2.5:1.5b")
+            elif backend == "openai":
+                kwargs["api_key"] = get_yaml_value("ai", "api_key", default="")
+                kwargs["base_url"] = get_yaml_value("ai", "api_url", default="https://api.deepseek.com/v1")
+                kwargs["model"] = get_yaml_value("ai", "api_model", default="deepseek-chat")
             client = create_llm_client(backend, **kwargs)
             if not client.available:
                 logger.info("AI 分析: %s 不可用，回退模板", client.name)
@@ -909,6 +1029,43 @@ class HTMLReportGenerator:
             logger.warning("AI 分析: LLM 超时 (15s)，回退模板")
         except Exception:
             logger.debug("AI 分析: LLM 异常，回退模板", exc_info=True)
+        return ""
+
+    def _try_llm_deep(self, llm_data: dict) -> str:
+        """v4.27: 尝试 L3 深度分析（deep_analyze），超时或不可用时返回空"""
+        try:
+            from config import get_yaml_value
+            from concurrent.futures import ThreadPoolExecutor as _TPE, TimeoutError as _TO
+            from analyzer.llm_client import create_llm_client
+
+            backend = get_yaml_value("ai", "backend", default="template")
+            if backend == "template":
+                return ""
+
+            kwargs = {}
+            if backend == "openai":
+                kwargs["api_key"] = get_yaml_value("ai", "api_key", default="")
+                kwargs["base_url"] = get_yaml_value("ai", "api_url", default="https://api.deepseek.com/v1")
+                kwargs["model"] = get_yaml_value("ai", "api_model", default="deepseek-chat")
+            else:
+                # 非 API 后端不支持 deep_analyze → 让标准路径处理
+                return ""
+
+            client = create_llm_client(backend, **kwargs)
+            if not client.available:
+                logger.info("AI 深度分析: %s 不可用，回退标准分析", client.name)
+                return ""
+
+            with _TPE(max_workers=1) as _pool:
+                _fut = _pool.submit(client.deep_analyze, llm_data)
+                result = _fut.result(timeout=30)
+            if result and result.strip():
+                logger.info("AI 深度分析: %s 生成成功", client.name)
+                return result.strip()
+        except _TO:
+            logger.warning("AI 深度分析: LLM 超时 (30s)，回退标准分析")
+        except Exception:
+            logger.debug("AI 深度分析: LLM 异常，回退标准分析", exc_info=True)
         return ""
 
     def _generate_template_summary(self, data: ReportData, d: dict) -> str:

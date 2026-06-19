@@ -296,11 +296,12 @@ class SettingsDialog(QDialog):
         self._ai_backend.setStyleSheet(self.INPUT_WIDGET_QSS)  # v4.26
         self._ai_backend.addItem("内置分析（模板）", "template")
         self._ai_backend.addItem("Ollama 本地", "ollama")
+        self._ai_backend.addItem("API (云端)", "openai")
         self._ai_backend.addItem("Qwen2.5-1.5B (当前)", "local_qwen2.5")
         self._ai_backend.addItem("Qwen3-1.7B", "local_qwen3")
         self._ai_backend.addItem("Qwen3.5-1.5B", "local_qwen3.5")
         ai_layout.addRow("分析引擎：", self._ai_backend)
-        ai_layout.addRow("", QLabel("需先通过 scripts/download_model.py 下载模型文件"))
+        ai_layout.addRow("", QLabel("API 模式需先在托盘菜单「API 设置」中配置凭证"))
         # 恢复已保存的后端选择
         self._restore_ai_backend()
         layout.addWidget(ai_group)

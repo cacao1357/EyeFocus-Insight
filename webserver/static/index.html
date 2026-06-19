@@ -465,6 +465,7 @@ body {
 <div class="report-panel" id="panelAi">
   <div class="card" style="margin-bottom:8px;">
     <h2>🤖 AI 分析报告</h2>
+    <div id="llmStatus" class="ai-text" style="font-size:12px;min-height:20px;padding:2px 4px;display:none;"></div>
     <div id="aiReport" class="ai-text" style="min-height:40px;padding:4px 0;">分析加载中...</div>
   </div>
   <div class="card" style="border-left:2px solid var(--iris-600);">
@@ -756,6 +757,7 @@ async function loadSessions() {
 }
 
 async function switchSession(sid) {
+  stopLlmPolling();
   if (!sid) {
     // 切回实时
     viewingHistory = false;
@@ -908,6 +910,51 @@ function switchReportTab(name) {
 }
 
 // ═══════════════════════════════════════════
+// LLM 状态轮询
+// ═══════════════════════════════════════════
+var llmReady = false;
+var llmPollTimer = null;
+
+async function checkLlmStatus() {
+  try {
+    const resp = await fetch('/api/llm_status');
+    const data = await resp.json();
+    var statusEl = document.getElementById('llmStatus');
+    if (!statusEl) return;
+
+    llmReady = data.ready;
+    if (data.ready) {
+      statusEl.innerHTML = '<span style="color:var(--sage);">✅ AI 模型就绪</span>';
+      statusEl.style.display = 'block';
+      // 如果 AI 分析还在 loading，自动重试
+      var reportEl = document.getElementById('aiReport');
+      if (reportEl && reportEl.textContent === '分析加载中...' && currentSid) {
+        triggerAiAnalysis();
+      }
+    } else if (data.error) {
+      statusEl.innerHTML = '<span style="color:var(--rose);">❌ ' + data.error + '</span>';
+      statusEl.style.display = 'block';
+    } else {
+      statusEl.innerHTML = '<span style="color:var(--amber);">⏳ AI 模型加载中…</span>';
+      statusEl.style.display = 'block';
+    }
+  } catch (e) {}
+}
+
+function startLlmPolling() {
+  if (llmPollTimer) return;
+  checkLlmStatus();
+  llmPollTimer = setInterval(checkLlmStatus, 3000);
+}
+
+function stopLlmPolling() {
+  if (llmPollTimer) {
+    clearInterval(llmPollTimer);
+    llmPollTimer = null;
+  }
+}
+
+// ═══════════════════════════════════════════
 // AI 分析 + 对话
 // ═══════════════════════════════════════════
 var chatHistory = [];
@@ -916,20 +963,29 @@ async function triggerAiAnalysis() {
   if (!currentSid) return;
   switchReportTab('ai');
   var reportEl = document.getElementById('aiReport');
+  var statusEl = document.getElementById('llmStatus');
   reportEl.textContent = '分析加载中...';
+  startLlmPolling();
 
   try {
     const resp = await fetch(`/api/analyze/${currentSid}`);
     const data = await resp.json();
+    if (data.status === 'loading') {
+      reportEl.innerHTML = '<div class="ai-loading">⏳ AI 模型加载中，完成后自动分析…</div>';
+      return;
+    }
     if (data.error) {
-      reportEl.innerHTML = `<span style="color:var(--rose-600);">${data.error}</span>`;
+      reportEl.innerHTML = `<span style="color:var(--rose);">${data.error}</span>`;
     } else {
       var label = data.backend === 'template' ? '内置模板' : data.backend;
-      reportEl.innerHTML = data.analysis || '（分析结果为空）' +
+      reportEl.innerHTML = (data.analysis || '（分析结果为空）') +
         '<br><span style="font-size:10px;color:var(--gray);">— ' + label + '</span>';
+      if (statusEl && data.backend !== 'template') {
+        statusEl.style.display = 'none';
+      }
     }
   } catch (e) {
-    reportEl.innerHTML = '<span style="color:var(--rose-600);">请求失败: ' + e + '</span>';
+    reportEl.innerHTML = '<span style="color:var(--rose);">请求失败: ' + e + '</span>';
   }
 }
 
@@ -968,7 +1024,9 @@ async function sendChat() {
       }),
     });
     const data = await resp.json();
-    if (data.answer) {
+    if (data.status === 'loading') {
+      addChatMsg('⏳ 模型加载中（约 5 秒），请稍候…', false);
+    } else if (data.answer) {
       addChatMsg(data.answer, false);
       chatHistory.push({role: 'user', text: q}, {role: 'assistant', text: data.answer});
     } else if (data.error) {

@@ -88,3 +88,6 @@ docs/superpowers/
 
 # ── 跨平台行尾符锁定 ──
 .gitattributes tracked in repo
+
+# ── 敏感配置（含 API Key，不入仓）──
+config.yaml

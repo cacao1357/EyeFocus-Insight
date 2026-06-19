@@ -44,6 +44,13 @@ class WebDashboard:
         # v4.26: 控制回调
         self._callbacks: Dict[str, callable] = {}
 
+        # v4.27: 共享 LLM 客户端（单例，后台预热）
+        self._llm_client: Any = None
+        self._llm_lock = threading.Lock()
+        self._llm_ready = threading.Event()
+        self._llm_backend: str = "template"
+        self._llm_error: str = ""
+
     def set_db(self, db: Any) -> None:
         """设置数据库引用（用于历史会话查询）"""
         self._db = db
@@ -88,6 +95,8 @@ class WebDashboard:
             name="web-dashboard",
         )
         self._thread.start()
+        # v4.27: 后台预热 LLM（不阻塞主程序启动）
+        self._start_llm_warmup()
         logger.info("Web 仪表盘启动: http://%s:%d", self._host, self._port)
         return True
 
@@ -129,6 +138,158 @@ class WebDashboard:
     def is_running(self) -> bool:
         return self._running
 
+    # ── v4.27: 共享 LLM 客户端 ──
+
+    @staticmethod
+    def _sanitize_err(msg: str) -> str:
+        """清除错误信息中可能泄露的 API Key"""
+        if not msg:
+            return msg
+        for token in msg.split():
+            if token.startswith("sk-"):
+                return "认证失败（无效 API Key）"
+        return msg
+
+    def _ensure_llm_client(self) -> bool:
+        """确保 LLM 客户端可用（按需创建，处理启动后才配置 API 的场景）
+
+        Returns:
+            True 如果客户端可用，False 表示应使用模板
+        """
+        if self._llm_client is not None:
+            return True
+        # 从 config 读取当前后端（启动后可能被托盘 API 设置改变）
+        try:
+            from config import get_yaml_value
+            from analyzer.llm_client import create_llm_client
+
+            backend = get_yaml_value("ai", "backend", default="template")
+            if backend == "template":
+                return False
+            if backend == "openai":
+                api_key = get_yaml_value("ai", "api_key", default="")
+                if not api_key:
+                    return False
+                client = create_llm_client("openai",
+                    api_key=api_key,
+                    base_url=get_yaml_value("ai", "api_url", default="https://api.deepseek.com/v1"),
+                    model=get_yaml_value("ai", "api_model", default="deepseek-chat"),
+                )
+                if client.available:
+                    self._llm_client = client
+                    self._llm_backend = "openai"
+                    logger.info("LLM 客户端已按需创建 (openai)")
+                    return True
+            elif backend == "ollama":
+                client = create_llm_client("ollama",
+                    base_url=get_yaml_value("ai", "ollama_url", default="http://127.0.0.1:11434"),
+                )
+                if client.available:
+                    self._llm_client = client
+                    self._llm_backend = "ollama"
+                    return True
+            elif backend == "local":
+                client = create_llm_client("local",
+                    model_key=get_yaml_value("ai", "model_key", default="qwen2.5:1.5b"),
+                    n_gpu_layers=-1,
+                    n_ctx=8192,
+                )
+                if client.available and client._load_model():
+                    self._llm_client = client
+                    self._llm_backend = "local"
+                    return True
+        except Exception as e:
+            logger.debug("按需创建 LLM 客户端失败: %s", e)
+        return False
+
+    def _start_llm_warmup(self) -> None:
+        """后台预热 LLM 模型（非阻塞）
+
+        在后台线程加载模型，通过 _llm_ready Event 通知就绪。
+        _llm_client 被 chat 和 analyze 端点共享，避免每请求加载一次。
+        """
+        def _warm():
+            try:
+                from config import get_yaml_value
+                from analyzer.llm_client import create_llm_client
+
+                backend = get_yaml_value("ai", "backend", default="template")
+                if backend == "template":
+                    self._llm_backend = "template"
+                    self._llm_ready.set()
+                    logger.info("LLM 模式: 模板（无需加载）")
+                    return
+
+                if backend == "local":
+                    kwargs = dict(
+                        model_key=get_yaml_value("ai", "model_key", default="qwen2.5:1.5b"),
+                        n_gpu_layers=-1,
+                        n_ctx=8192,
+                    )
+                    client = create_llm_client(backend, **kwargs)
+                    if not client.available:
+                        self._llm_error = "模型文件不存在或依赖未安装"
+                        self._llm_ready.set()
+                        logger.warning("LLM 预热失败: %s", self._llm_error)
+                        return
+                    if not client._load_model():
+                        self._llm_error = f"模型加载失败: {client._model_path}"
+                        self._llm_ready.set()
+                        logger.warning("LLM 预热失败: %s", self._llm_error)
+                        return
+                elif backend == "ollama":
+                    client = create_llm_client(backend,
+                        base_url=get_yaml_value("ai", "ollama_url", default="http://127.0.0.1:11434"),
+                    )
+                    if not client.available:
+                        self._llm_error = "Ollama 服务不可用"
+                        self._llm_ready.set()
+                        logger.warning("LLM 预热失败: %s", self._llm_error)
+                        return
+                elif backend == "openai":
+                    client = create_llm_client("openai",
+                        api_key=get_yaml_value("ai", "api_key", default=""),
+                        base_url=get_yaml_value("ai", "api_url", default="https://api.deepseek.com/v1"),
+                        model=get_yaml_value("ai", "api_model", default="deepseek-chat"),
+                    )
+                    if not client.available:
+                        self._llm_error = "API Key 未设置"
+                        self._llm_ready.set()
+                        logger.warning("LLM 预热失败: %s", self._llm_error)
+                        return
+                    err = client.test_connection()
+                    if err:
+                        self._llm_error = f"API 连接失败: {err}"
+                        logger.warning("LLM 预热: %s", self._llm_error)
+
+                self._llm_client = client
+                self._llm_backend = backend
+                self._llm_ready.set()
+                logger.info("LLM 预热完成: %s (%s)", client.name, backend)
+            except Exception as e:
+                # 任何异常都不应包含 API Key
+                err_msg = str(e)
+                for token in err_msg.split():
+                    if token.startswith("sk-"):
+                        err_msg = "预热异常（认证相关错误）"
+                        break
+                self._llm_error = err_msg
+                self._llm_ready.set()
+                logger.warning("LLM 预热异常: %s", err_msg)
+
+        t = threading.Thread(target=_warm, daemon=True, name="llm-warmup")
+        t.start()
+
+    async def _handle_api_llm_status(self, request):
+        """REST: 获取 LLM 状态（前端轮询用）"""
+        ready = self._llm_ready.is_set()
+        client_ok = self._llm_client is not None
+        return aiohttp.web.json_response({
+            "ready": ready and client_ok,
+            "backend": self._llm_backend,
+            "error": self._llm_error if not client_ok and ready else "",
+        })
+
     # ── 后台线程 ──
 
     def _run_loop(self) -> None:
@@ -147,6 +308,7 @@ class WebDashboard:
         self._app.router.add_get("/api/analyze/{sid}", self._handle_api_analyze)
         self._app.router.add_get("/api/control", self._handle_api_control)  # v4.26
         self._app.router.add_post("/api/chat", self._handle_api_chat)  # v4.26
+        self._app.router.add_get("/api/llm_status", self._handle_api_llm_status)  # v4.27
         self._app.router.add_static(
             "/static",
             os.path.join(os.path.dirname(__file__), "static"),
@@ -283,76 +445,57 @@ class WebDashboard:
     async def _handle_api_analyze(self, request):
         """REST: 调用 AI 分析指定会话
 
-        使用已配置的 LLM 后端（OpenAI/Ollama/本地等）生成分析建议。
+        复用共享 LLM 客户端（由 _start_llm_warmup 预热加载）。
+        未就绪时返回 loading 状态，前端轮询后自动重试。
         """
         sid = request.match_info.get("sid", "")
         if not self._db or not sid:
             return aiohttp.web.json_response({"error": "参数不足"}, status=400)
         try:
             from reporter.report_html import create_html_generator
-            from config import get_yaml_value
             from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
             generator = create_html_generator(self._db)
             html = generator.generate_report(sid)
 
-            # 尝试获取 AI 摘要（_data 在 generate_report 后被填充）
             ai_data = getattr(generator, '_data', None)
             if not ai_data:
                 return aiohttp.web.json_response({"error": "数据不足"}, status=400)
 
-            # 调用 LLM
-            backend = get_yaml_value("ai", "backend", default="template")
-            result_text = ""
-            if backend != "template":
-                from analyzer.llm_client import create_llm_client
-
-                kwargs = {}
-                if backend == "ollama":
-                    kwargs["base_url"] = get_yaml_value("ai", "ollama_url",
-                                                         default="http://127.0.0.1:11434")
-                elif backend == "local":
-                    kwargs["model_key"] = get_yaml_value("ai", "model_key", default="qwen2.5:1.5b")
-
-                client = create_llm_client(backend, **kwargs)
-                if client.available:
-                    fr = ai_data.focus_records or []
-                    dur = ai_data.total_duration or 0.0
-                    avg = ai_data.avg_focus or 50.0
-                    third = max(1, len(fr) // 3)
-                    def safe_avg(recs):
-                        if not recs:
-                            return avg
-                        ss = [r.focus_score for r in recs if r.focus_score is not None]
-                        return sum(ss)/len(ss) if ss else avg
-
-                    llm_data = {
-                        "duration": int(dur / 60),
-                        "avg_focus": avg,
-                        "baseline": 60,
-                        "seg_start": safe_avg(fr[:third]),
-                        "seg_mid": safe_avg(fr[third:2*third]) if len(fr) >= 2*third else avg,
-                        "seg_end": safe_avg(fr[-third:]),
-                        "distractions": len(getattr(ai_data, 'distraction_records', None) or []),
-                        "head_pct": 50,
-                        "gaze_pct": 50,
-                        "fatigue": ai_data.fatigue_level.name if hasattr(ai_data.fatigue_level, 'name') else "LOW",
-                        "pomo_count": 0,
-                        "streak": 0,
-                    }
-                    with ThreadPoolExecutor(max_workers=1) as pool:
-                        fut = pool.submit(client.analyze, llm_data)
-                        result_text = fut.result(timeout=15) or ""
-                else:
-                    result_text = "（AI 后端不可用，请检查 Ollama 或本地模型配置）"
-            else:
-                # 使用内置模板
+            # ── 检查共享 LLM 状态 ──
+            if not self._llm_ready.is_set():
+                return aiohttp.web.json_response({
+                    "status": "loading",
+                    "message": "AI 模型加载中，请稍候…",
+                })
+            if not self._ensure_llm_client():
+                # 模板模式或预热失败 → 用生成器内置模板
                 result_text = generator._generate_ai_summary()
+                return aiohttp.web.json_response({
+                    "session_id": sid,
+                    "analysis": result_text,
+                    "backend": "template",
+                })
+
+            # ── 使用共享 LLM 客户端 ──
+            # v4.27: API 后端走 L3 深度分析（含时序模式 + 历史对比）
+            if self._llm_backend == "openai" and hasattr(self._llm_client, 'deep_analyze'):
+                from reporter.report_html import ReportData
+                llm_data = generator._compute_deep_llm_data(ai_data)
+                timeout = 30
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    fut = pool.submit(self._llm_client.deep_analyze, llm_data)
+                    result_text = fut.result(timeout=timeout) or ""
+            else:
+                llm_data = generator._compute_llm_data(ai_data)
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    fut = pool.submit(self._llm_client.analyze, llm_data)
+                    result_text = fut.result(timeout=15) or ""
 
             return aiohttp.web.json_response({
                 "session_id": sid,
                 "analysis": result_text,
-                "backend": backend,
+                "backend": self._llm_backend,
             })
         except TimeoutError:
             return aiohttp.web.json_response({
@@ -360,17 +503,12 @@ class WebDashboard:
                 "analysis": "（AI 分析超时，请稍后重试）",
                 "backend": "timeout",
             })
-        except ImportError as e:
-            return aiohttp.web.json_response({
-                "session_id": sid,
-                "analysis": f"（AI 模块未安装: {e}）",
-                "backend": "error",
-            })
         except Exception as e:
-            logger.warning("AI 分析失败: %s", e)
+            err_str = self._sanitize_err(str(e))
+            logger.warning("AI 分析失败: %s", err_str)
             return aiohttp.web.json_response({
                 "session_id": sid,
-                "analysis": f"（AI 分析异常: {e}）",
+                "analysis": f"（AI 分析异常: {err_str}）",
                 "backend": "error",
             })
 
@@ -467,25 +605,21 @@ class WebDashboard:
         if not ai_data:
             return aiohttp.web.json_response({"error": "会话数据不足"}, status=400)
 
-        # 构造 LLM 上下文数据
-        llm_data = generator._compute_llm_data(ai_data)
+        # ── 构造 LLM 上下文数据（API 后端使用深度数据） ──
+        if self._llm_backend == "openai":
+            llm_data = generator._compute_deep_llm_data(ai_data)
+        else:
+            llm_data = generator._compute_llm_data(ai_data)
 
-        # 调用 LLM
-        from config import get_yaml_value
-        from analyzer.llm_client import create_llm_client
-        from concurrent.futures import ThreadPoolExecutor, TimeoutError
+        # ── 检查共享 LLM 状态 ──
+        if not self._llm_ready.is_set():
+            return aiohttp.web.json_response({
+                "status": "loading",
+                "message": "模型加载中，请稍候…",
+            })
 
-        backend = get_yaml_value("ai", "backend", default="template")
-        kwargs = {}
-        if backend == "ollama":
-            kwargs["base_url"] = get_yaml_value("ai", "ollama_url",
-                                                 default="http://127.0.0.1:11434")
-        elif backend == "local":
-            kwargs["model_key"] = get_yaml_value("ai", "model_key", default="qwen2.5:1.5b")
-            kwargs["n_gpu_layers"] = -1
-        client = create_llm_client(backend, **kwargs)
-        if not client.available:
-            # 模板降级
+        backend = self._llm_backend
+        if not self._ensure_llm_client():
             answer = self._template_chat_answer(question, llm_data)
             return aiohttp.web.json_response({"answer": answer, "backend": "template"})
 
@@ -494,6 +628,7 @@ class WebDashboard:
         trend_desc = "上升" if e > s else ("下降" if s > e else "平稳")
         context = (
             f"## 会话数据\n"
+            f"- 日期：{llm_data.get('session_date', '')}\n"
             f"- 时长: {llm_data['duration']} 分钟\n"
             f"- 平均专注度: {llm_data['avg_focus']}/100 分\n"
             f"- 历史平均: {llm_data['hist_avg_focus']}/100 分\n"
@@ -501,6 +636,15 @@ class WebDashboard:
             f"- 疲劳: 高 {llm_data['fatigue_high_pct']}% / 中 {llm_data['fatigue_mid_pct']}% / 低 {llm_data['fatigue_low_pct']}%\n"
             f"- 分心: {llm_data['distractions']} 次\n"
         )
+        # v4.27: 深度数据附加上下文
+        deep_sections = ""
+        for key, label in [("focus_cliffs", "## 专注悬崖"), ("fatigue_evolution", "## 疲劳演变"),
+                           ("dist_pattern", "## 分心分布"), ("past_sessions_summary", "## 历史对比")]:
+            val = llm_data.get(key, "")
+            if val and "无" not in str(val)[:5]:
+                deep_sections += f"\n{label}\n{val}\n"
+        if deep_sections:
+            context += "\n" + deep_sections.strip()
 
         system_prompt = (
             "你是一名专注力数据分析师。根据提供的会话数据回答用户问题。\n\n"
@@ -521,9 +665,10 @@ class WebDashboard:
         messages.append({"role": "user", "content": question})
 
         try:
+            from concurrent.futures import ThreadPoolExecutor
             with ThreadPoolExecutor(max_workers=1) as pool:
                 fut = pool.submit(
-                    self._llm_chat, client, messages, backend)
+                    self._llm_chat, self._llm_client, messages, backend)
                 answer = fut.result(timeout=20)
             return aiohttp.web.json_response({"answer": answer, "backend": backend})
         except TimeoutError:
@@ -534,7 +679,7 @@ class WebDashboard:
             return aiohttp.web.json_response({"answer": fallback, "backend": "template"})
 
     def _llm_chat(self, client, messages: list, backend: str) -> str:
-        """调用 LLM 聊天（在线程池中运行）"""
+        """调用 LLM 聊天（在线程池中运行，加锁保护 llama-cpp 并发安全）"""
         if backend == "ollama":
             import urllib.request, json as _json
             payload = _json.dumps({
@@ -551,26 +696,28 @@ class WebDashboard:
             with urllib.request.urlopen(req, timeout=20) as resp:
                 result = _json.loads(resp.read())
                 return result.get("message", {}).get("content", "")
+        elif backend == "openai":
+            if not hasattr(client, 'chat'):
+                return "（API 客户端不支持对话）"
+            return client.chat(messages, max_tokens=500)
         elif backend == "local":
             llm = getattr(client, '_llm', None)
             if llm is None:
-                client._load_model()
-                llm = client._llm
-            if llm:
-                prompt = ""
-                for m in messages:
-                    role = m["role"]
-                    if role == "system":
-                        prompt += f"<|im_start|>system\n{m['content']}<|im_end|>\n"
-                    elif role == "user":
-                        prompt += f"<|im_start|>user\n{m['content']}<|im_end|>\n"
-                    elif role == "assistant":
-                        prompt += f"<|im_start|>assistant\n{m['content']}<|im_end|>\n"
-                prompt += "<|im_start|>assistant\n"
+                return "（模型未加载）"
+            prompt = ""
+            for m in messages:
+                role = m["role"]
+                if role == "system":
+                    prompt += f"<|im_start|>system\n{m['content']}<|im_end|>\n"
+                elif role == "user":
+                    prompt += f"<|im_start|>user\n{m['content']}<|im_end|>\n"
+                elif role == "assistant":
+                    prompt += f"<|im_start|>assistant\n{m['content']}<|im_end|>\n"
+            prompt += "<|im_start|>assistant\n"
+            with self._llm_lock:
                 resp = llm(prompt, max_tokens=500, temperature=0.7,
                            stop=["<|im_end|>", "<|im_start|>"])
-                return resp["choices"][0]["text"].strip()
-            return ""
+            return resp["choices"][0]["text"].strip()
         return ""
 
     def _template_chat_answer(self, question: str, d: dict) -> str:

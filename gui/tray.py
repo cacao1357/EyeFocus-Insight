@@ -143,11 +143,13 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         self._dnd_action.setChecked(False)
         self._dnd_action.triggered.connect(self._toggle_dnd)
 
-        # v4.26: AI 模式开关（替代 AI 分析子菜单）
-        self._ai_mode_action = menu.addAction("🤖 AI 模式")
-        self._ai_mode_action.setCheckable(True)
-        self._ai_mode_action.setChecked(self._load_ai_mode())
-        self._ai_mode_action.triggered.connect(self._toggle_ai_mode)
+        # v4.27: AI 对话（打开命令行窗口）
+        ai_chat_action = menu.addAction("💬 AI 对话")
+        ai_chat_action.triggered.connect(self._launch_ai_cli)
+
+        # v4.27: API 设置
+        api_setup_action = menu.addAction("🔑 API 设置")
+        api_setup_action.triggered.connect(self._show_api_setup)
 
         # v4.22: 设置面板
         settings_action = menu.addAction("设置...")
@@ -483,6 +485,15 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         self._do_not_disturb = checked
         logger.info("免打扰模式: %s", "ON" if checked else "OFF")
 
+    def _show_api_setup(self):
+        """打开 API 设置对话框"""
+        try:
+            from gui.api_dialog import ApiSetupDialog
+            dlg = ApiSetupDialog(self._window)
+            dlg.exec_()
+        except Exception as e:
+            logger.error("API 设置对话框异常: %s", e)
+
     def _show_settings(self):
         """打开设置对话框"""
         try:
@@ -536,29 +547,24 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         except Exception as e:
             logger.error("AI 后端切换异常: %s", e)
 
-    # ── v4.26: AI 模式开关 ──
+    # ── v4.27: AI 对话 ──
 
-    def _load_ai_mode(self) -> bool:
-        """从 config 读取 AI 模式"""
+    def _launch_ai_cli(self):
+        """打开新终端窗口运行 AI 对话 CLI"""
         try:
-            from config import get_yaml_value
-            return get_yaml_value("ai", "mode", default=True)
-        except Exception:
-            return True
-
-    def _save_ai_mode(self, enabled: bool) -> None:
-        """保存 AI 模式到 config"""
-        try:
-            from config import set_yaml_value, save_yaml_config
-            set_yaml_value("ai", "mode", value=enabled)
-            save_yaml_config()
-        except Exception:
-            pass
-
-    def _toggle_ai_mode(self, checked: bool) -> None:
-        """切换 AI 模式"""
-        self._save_ai_mode(checked)
-        logger.info("AI 模式: %s", "开启" if checked else "关闭")
+            import sys as _sys
+            import subprocess as _sp
+            py = _sys.executable
+            cmd = f'"{py}" -X utf8 -m analyzer.ai_cli'
+            if _sys.platform == "win32":
+                # Windows: 开新 cmd 窗口
+                _sp.Popen(f'start "EyeFocus AI" cmd /k {cmd}', shell=True)
+            else:
+                # Linux/Mac: 开新终端
+                _sp.Popen(['x-terminal-emulator', '-e', cmd])
+            logger.info("AI 对话窗口已启动")
+        except Exception as e:
+            logger.error("启动 AI 对话失败: %s", e)
 
     def _restart_app(self):
         """重启程序 — 启动新进程后退出当前进程"""

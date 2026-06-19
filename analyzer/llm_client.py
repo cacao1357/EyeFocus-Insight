@@ -18,13 +18,15 @@ logger = logging.getLogger("eyefocus.analyzer")
 
 # ── 标准分析提示模板 ──
 
-ANALYSIS_SYSTEM_PROMPT = """你是一个专注力分析教练。根据用户提供的专注度数据，给出分析。
-要求：
-1. 先说整体表现（好/一般/差，与用户基线对比）
-2. 指出 1-2 个具体发现（如"第 35 分钟后专注度明显下降"）
-3. 给出 1 条可执行的建议
-4. 语言简洁，3-4 句
-5. 用中文，口语化，像朋友聊天"""
+ANALYSIS_SYSTEM_PROMPT = """你是一个专注力分析教练，用朋友聊天的方式说话。
+
+分析要求：
+1. 先说整体表现（好/一般/差），跟用户历史基线对比
+2. 指出 1-2 个具体发现，每个发现必须引用数字
+3. 分析原因而非只描述现象（比如：专注度下降可能是因为疲劳累积）
+4. 给 1 条可执行的建议
+5. 语言简洁自然，像朋友聊天
+6. 不知道就说不知道，不编造"""
 
 ANALYSIS_USER_TEMPLATE = """会话时长：{duration} 分钟
 平均专注度：{avg_focus} 分（用户基线：{baseline} 分，历史平均：{hist_avg_focus} 分）
@@ -34,6 +36,46 @@ ANALYSIS_USER_TEMPLATE = """会话时长：{duration} 分钟
 分心高峰时段：{dist_peak_hour}
 番茄钟完成：{pomo_count} 个
 连续专注天数：{streak} 天"""
+
+
+# ── L3 级深度分析提示模板（v4.27） ──
+
+DEEP_ANALYSIS_SYSTEM_PROMPT = """你是一个专注力分析教练，像朋友一样聊天。任务是深度模式分析（L3级）：基于时序数据识别重复模式、因果链条，给可执行策略。
+
+分析结构（每部分都要）：
+1. 一句话总结 + 整体评分
+2. 发现 1-2 个具体模式（如"每次第30分钟出现专注悬崖"、"疲劳上升总在分心前5分钟出现"）
+   - 每个发现必须引用 2+ 个数字
+   - 指出是单次异常还是重复模式
+3. 与历史对比，指出改善/退步
+4. 给 1 个可执行建议（含具体时间点）
+5. 鼓励一句
+
+铁律：
+- 每个结论附具体数字，不写模糊结论
+- 不确定就说"数据不足"
+- 用中文，口语化，像朋友聊天
+- 不说"根据数据"这种废话，直接说数字"""
+
+DEEP_ANALYSIS_USER_TEMPLATE = """## 当前会话
+- 日期：{session_date}
+- 时长：{duration} 分钟
+- 平均专注度：{avg_focus}/100 分（历史平均：{hist_avg_focus}）
+- 专注趋势：前段 {seg_start} → 中段 {seg_mid} → 后段 {seg_end}
+- 疲劳占比：高 {fatigue_high_pct}% / 中 {fatigue_mid_pct}% / 低 {fatigue_low_pct}%
+- 分心事件：{distractions} 次
+
+## 专注悬崖（>15 分降幅）
+{focus_cliffs}
+
+## 疲劳演变时间线
+{fatigue_evolution}
+
+## 分心分布
+{dist_pattern}
+
+## 历史对比
+{past_sessions_summary}"""
 
 
 # ── 抽象基类 ──
@@ -54,6 +96,10 @@ class LLMClient(ABC):
     @abstractmethod
     def analyze(self, data: Dict[str, Any]) -> str:
         """分析专注度数据，返回中文分析文本"""
+
+    def deep_analyze(self, data: Dict[str, Any]) -> str:
+        """L3 级深度分析（默认回退到标准分析）"""
+        return self.analyze(data)
 
 
 # ── 模板版（零依赖） ──
@@ -155,6 +201,205 @@ class TemplateClient(LLMClient):
         return "。" if not parts else "".join(parts) + "。"
 
 
+# ── OpenAI 兼容版（覆盖 OpenAI / DeepSeek / Moonshot / Qwen 等） ──
+
+OPENAI_COMPATIBLE_PROVIDERS = {
+    "deepseek":   {"base_url": "https://api.deepseek.com/v1",          "model": "deepseek-chat"},
+    "qwen":       {"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "model": "qwen-plus"},
+    "openai":     {"base_url": "https://api.openai.com/v1",            "model": "gpt-4o-mini"},
+    "moonshot":   {"base_url": "https://api.moonshot.cn/v1",           "model": "moonshot-v1-8k"},
+    "siliconflow":{"base_url": "https://api.siliconflow.cn/v1",        "model": "Qwen/Qwen2.5-7B-Instruct"},
+    "zhipu":      {"base_url": "https://open.bigmodel.cn/api/paas/v4", "model": "glm-4-flash"},
+    "openrouter": {"base_url": "https://openrouter.ai/api/v1",         "model": "openai/gpt-4o-mini"},
+    "groq":       {"base_url": "https://api.groq.com/openai/v1",       "model": "llama-3.3-70b-versatile"},
+}
+
+
+class OpenAICompatibleClient(LLMClient):
+    """OpenAI 兼容 API（覆盖大多数主流云端 LLM）
+
+    支持：DeepSeek / Qwen / OpenAI / Moonshot / SiliconFlow 等
+    只需配 base_url + api_key + model_name。
+    """
+
+    def __init__(self, api_key: str = "",
+                 base_url: str = "https://api.deepseek.com/v1",
+                 model: str = "deepseek-chat"):
+        self._api_key = api_key
+        self._base_url = base_url.rstrip("/")
+        self._model = model
+
+    def __repr__(self) -> str:
+        masked = self._mask_key(self._api_key)
+        return f"OpenAICompatibleClient(model={self._model}, base={self._base_url}, key={masked})"
+
+    @staticmethod
+    def _mask_key(key: str) -> str:
+        if not key or len(key) <= 8:
+            return "****"
+        return key[:4] + "****" + key[-4:]
+
+    @staticmethod
+    def _sanitize_err(msg: str) -> str:
+        if not msg:
+            return msg
+        for word in msg.split():
+            if word.startswith("sk-"):
+                return "认证失败（无效 API Key）"
+            if word.startswith("Bearer "):
+                return "认证失败（API Key 格式错误）"
+        return msg
+
+    @property
+    def name(self) -> str:
+        for provider, cfg in OPENAI_COMPATIBLE_PROVIDERS.items():
+            if cfg["base_url"].rstrip("/") == self._base_url:
+                return f"{provider} ({self._model})"
+        return f"API ({self._base_url})"
+
+    @property
+    def available(self) -> bool:
+        return bool(self._api_key)
+
+    def test_connection(self) -> str:
+        """测试 API 连通性，返回空字符串表示成功，否则返回错误描述"""
+        if not self._api_key:
+            return "API Key 未设置"
+        try:
+            import urllib.request
+            import json as _json
+            # 发一个极简请求验证连通性
+            payload = _json.dumps({
+                "model": self._model,
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 1,
+            }).encode()
+            req = urllib.request.Request(
+                f"{self._base_url}/chat/completions",
+                data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self._api_key}",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return "" if resp.status == 200 else f"HTTP {resp.status}"
+        except Exception as e:
+            return self._sanitize_err(str(e))
+
+    def analyze(self, data: Dict[str, Any]) -> str:
+        import urllib.request
+        import json as _json
+
+        _safe = lambda k, d: data.get(k, d)
+        user_msg = ANALYSIS_USER_TEMPLATE.format(
+            duration=_safe("duration", 0), avg_focus=_safe("avg_focus", 50),
+            baseline=_safe("baseline", 60), hist_avg_focus=_safe("hist_avg_focus", 60),
+            seg_start=_safe("seg_start", 50), seg_mid=_safe("seg_mid", 50), seg_end=_safe("seg_end", 50),
+            fatigue=_safe("fatigue", "LOW"),
+            fatigue_high_pct=_safe("fatigue_high_pct", 0),
+            fatigue_mid_pct=_safe("fatigue_mid_pct", 0),
+            fatigue_low_pct=_safe("fatigue_low_pct", 100),
+            distractions=_safe("distractions", 0), head_pct=_safe("head_pct", 0),
+            gaze_pct=_safe("gaze_pct", 0), dist_peak_hour=_safe("dist_peak_hour", ""),
+            pomo_count=_safe("pomo_count", 0), streak=_safe("streak", 0),
+        )
+        payload = _json.dumps({
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+            "max_tokens": 500,
+            "temperature": 0.7,
+        }).encode()
+
+        req = urllib.request.Request(
+            f"{self._base_url}/chat/completions",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._api_key}",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = _json.loads(resp.read())
+                return result["choices"][0]["message"]["content"]
+        except Exception as e:
+            raise RuntimeError(self._sanitize_err(str(e)))
+
+    def deep_analyze(self, data: Dict[str, Any]) -> str:
+        """L3 级深度分析（使用 DEEP_ANALYSIS 系列提示模板 + 时序数据）"""
+        import urllib.request
+        import json as _json
+
+        # 构造 L3 数据上下文
+        context_parts = []
+        for key in ["duration", "avg_focus", "hist_avg_focus", "seg_start", "seg_mid", "seg_end",
+                     "fatigue_high_pct", "fatigue_mid_pct", "fatigue_low_pct", "distractions"]:
+            context_parts.append(f"- {key}: {data.get(key, 'N/A')}")
+        context_parts.append("")
+        for extra_key in ["focus_cliffs", "fatigue_evolution", "dist_pattern", "past_sessions_summary"]:
+            val = data.get(extra_key, "")
+            if val:
+                context_parts.append(f"## {extra_key.replace('_', ' ').title()}\n{val}")
+                context_parts.append("")
+
+        user_msg = "\n".join(context_parts).strip()
+        payload = _json.dumps({
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": DEEP_ANALYSIS_SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+            "max_tokens": 800,
+            "temperature": 0.7,
+        }).encode()
+
+        req = urllib.request.Request(
+            f"{self._base_url}/chat/completions",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._api_key}",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                result = _json.loads(resp.read())
+                return result["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            raise RuntimeError(self._sanitize_err(str(e)))
+
+    def chat(self, messages: list, max_tokens: int = 500) -> str:
+        """OpenAI 格式对话（供 server.py _llm_chat 调用）"""
+        import urllib.request
+        import json as _json
+
+        payload = _json.dumps({
+            "model": self._model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": 0.7,
+        }).encode()
+
+        req = urllib.request.Request(
+            f"{self._base_url}/chat/completions",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._api_key}",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = _json.loads(resp.read())
+                return result["choices"][0]["message"]["content"]
+        except Exception as e:
+            raise RuntimeError(self._sanitize_err(str(e)))
+
+
 # ── Ollama 本地版 ──
 
 class OllamaClient(LLMClient):
@@ -226,11 +471,11 @@ class LocalClient(LLMClient):
         "qwen3.5:1.5b": ("Qwen3.5-1.5B", "qwen3.5-1.5b-instruct-q4_k_m.gguf"),
     }
 
-    def __init__(self, model_path: Optional[str] = None, n_gpu_layers: int = 0,
-                 model_key: str = "qwen2.5:1.5b"):
+    def __init__(self, model_path=None, n_gpu_layers=0, model_key="qwen2.5:1.5b", n_ctx=4096):
         self._model_key = model_key
         self._model_path = model_path or self._resolve_path(model_key)
         self._n_gpu_layers = n_gpu_layers
+        self._n_ctx = n_ctx
         self._llm = None
 
     @classmethod
@@ -273,7 +518,7 @@ class LocalClient(LLMClient):
             ngl = self._n_gpu_layers
             self._llm = Llama(
                 model_path=self._model_path,
-                n_ctx=2048,
+                n_ctx=self._n_ctx,
                 n_threads=16,
                 n_gpu_layers=ngl,
                 verbose=False,
@@ -326,19 +571,27 @@ def create_llm_client(client_type: str = "template", **kwargs) -> LLMClient:
     """创建 LLM 客户端
 
     Args:
-        client_type: "template" | "ollama" | "local"
+        client_type: "template" | "openai" | "ollama" | "local"
         **kwargs: 传递给具体客户端的参数
+            api_key / base_url / model: OpenAI 兼容
             base_url: Ollama 地址
             model: Ollama 模型名
             model_path: 本地模型路径
-            model_key: 本地模型标识 (qwen2.5:1.5b / qwen3:1.7b / qwen3.5:1.5b)
-            n_gpu_layers: GPU 层数 (-1=全部)
+            model_key: 本地模型标识
+            n_gpu_layers: GPU 层数
+            n_ctx: 上下文长度
 
     Returns:
         LLMClient 实例
     """
     if client_type == "template":
         return TemplateClient()
+    elif client_type == "openai":
+        return OpenAICompatibleClient(
+            api_key=kwargs.get("api_key", ""),
+            base_url=kwargs.get("base_url", "https://api.deepseek.com/v1"),
+            model=kwargs.get("model", "deepseek-chat"),
+        )
     elif client_type == "ollama":
         return OllamaClient(
             base_url=kwargs.get("base_url", "http://127.0.0.1:11434"),
@@ -349,6 +602,7 @@ def create_llm_client(client_type: str = "template", **kwargs) -> LLMClient:
             model_path=kwargs.get("model_path", ""),
             n_gpu_layers=kwargs.get("n_gpu_layers", 0),
             model_key=kwargs.get("model_key", "qwen2.5:1.5b"),
+            n_ctx=kwargs.get("n_ctx", 4096),
         )
     else:
         logger.warning("未知客户端类型 %s，使用模板版", client_type)
