@@ -1,5 +1,7 @@
 # Phase 1.6 Insights Spike 实施计划
 
+> **状态**: ✅ 已完成 (pipeline + 测试全绿)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在正式实施 `analyzer/insights/` 子包（T220-T231）之前，先 spike 验证 5 个分析方法（聚类/变点/时序/异常/关联）在实际数据上的表现，调出推荐参数，再决定是否进入正式实施。

@@ -1,5 +1,7 @@
 # Calibration 模块重设计实施计划
 
+> **状态**: ✅ 已完成 (v4.2-v4.3, CQS=1.0 验收)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 实现独立 `calibration/` 子包，取代失效的 T148 用户辅助校准模块。模块自有摄像头 + 自有 UI 窗口 + 自有音频反馈，通过单一接口 `calibration.run(session_id) → Optional[CalibrationResult]` 与主程序连接。

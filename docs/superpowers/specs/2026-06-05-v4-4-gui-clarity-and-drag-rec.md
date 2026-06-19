@@ -1,5 +1,6 @@
 # v4.4 GUI 清晰化 + 校验阶段拖窗口 REC 指示
 
+> **状态**: ✅ 已完成 (v4.4) | **实装**: `gui/overlay.py`, `calibration/flow.py`
 > **Spec 日期**: 2026-06-05
 > **作者**: D1 + Claude Code
 > **状态**: ✅ 已批准

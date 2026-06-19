@@ -1,5 +1,7 @@
 # v4.4 GUI 清晰化 + 拖窗口 REC 指示 Implementation Plan
 
+> **状态**: ✅ 已完成 (v4.4)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 让用户能 (1) 校验阶段拖窗口时知道数据继续记录, (2) 主程序 GUI 信息一眼看清 (MODE/focus/fatigue/无脸).
