@@ -7,6 +7,7 @@ detector/face_mesh.py — MediaPipe 人脸网格检测封装
 
 import logging
 import os
+import queue
 import threading
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
@@ -62,6 +63,12 @@ class FaceMeshDetector:
         """
         self._lock = threading.Lock()
         self._running_mode = running_mode
+        # v4.29: async producer-consumer 并行化
+        self._async_queue: "queue.Queue" = queue.Queue(maxsize=1)
+        self._async_result = FaceMeshResult(landmarks=None, face_detected=False, confidence=0.0)
+        self._async_result_lock = threading.Lock()
+        self._async_thread: Optional[threading.Thread] = None
+        self._async_running = False
 
         if model_path is None:
             model_path = os.path.join(
@@ -109,50 +116,90 @@ class FaceMeshDetector:
         self._last_rgb_frame: Optional[np.ndarray] = None
         logger.info("FaceMeshDetector 初始化完成 (mode=%s)", running_mode)
 
-    def detect_from_frame(
-        self,
-        frame: np.ndarray,
-        timestamp_ms: int,
-    ) -> FaceMeshResult:
-        """从视频帧检测人脸网格（视频模式）
+    # ── v4.29: Async producer-consumer（管道并行化） ──
+
+    def start_async(self) -> None:
+        """启动后台检测线程"""
+        if self._async_thread is not None and self._async_thread.is_alive():
+            return
+        self._async_running = True
+        self._async_thread = threading.Thread(target=self._async_worker, daemon=True)
+        self._async_thread.start()
+        logger.debug("FaceMeshDetector async worker 已启动")
+
+    def stop_async(self) -> None:
+        """停止后台检测线程"""
+        self._async_running = False
+        if self._async_thread and self._async_thread.is_alive():
+            self._async_thread.join(timeout=2.0)
+        self._async_thread = None
+        logger.debug("FaceMeshDetector async worker 已停止")
+
+    def push_frame(self, frame: np.ndarray, timestamp_ms: int) -> None:
+        """推送帧到异步队列（非阻塞，队列满则丢弃旧帧）
 
         Args:
-            frame: BGR 格式的 OpenCV 图像 (H, W, 3)
-            timestamp_ms: 帧时间戳（毫秒）
-
-        Returns:
-            FaceMeshResult 对象
+            frame: BGR 帧
+            timestamp_ms: 时间戳
         """
-        # M-10: 入口校验 None/空帧/非数组 → 返回 face_detected=False
-        if frame is None or frame.size == 0 or frame.ndim < 2:
-            return FaceMeshResult(
-                landmarks=None,
-                face_detected=False,
-                confidence=0.0,
-            )
-
+        # 缓存 RGB 供 Qt 显示（取最新帧，不等待 MediaPipe 处理完）
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        self._last_rgb_frame = frame_rgb  # v4.26: 缓存供 Qt 显示
-        from mediapipe import Image, ImageFormat
+        self._last_rgb_frame = frame_rgb
+        try:
+            self._async_queue.put_nowait((frame, timestamp_ms))
+        except queue.Full:
+            pass  # 前帧仍在处理 → 丢弃此帧
 
+    def get_latest(self) -> FaceMeshResult:
+        """获取最新完成的检测结果（非阻塞）"""
+        with self._async_result_lock:
+            return self._async_result
+
+    def _async_worker(self) -> None:
+        """后台循环：从队列取帧 → MediaPipe 检测 → 缓存结果"""
+        while self._async_running:
+            try:
+                frame, timestamp_ms = self._async_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            result = self._detect_sync(frame, timestamp_ms)
+            with self._async_result_lock:
+                self._async_result = result
+
+    def _detect_sync(self, frame: np.ndarray, timestamp_ms: int) -> FaceMeshResult:
+        """同步检测（供 async worker 和 backward compat 使用）"""
+        if frame is None or frame.size == 0 or frame.ndim < 2:
+            return FaceMeshResult(landmarks=None, face_detected=False, confidence=0.0)
+
+        from mediapipe import Image, ImageFormat
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = Image(image_format=ImageFormat.SRGB, data=frame_rgb)
 
-        # v4.5.2: try-lock 防止主线程阻塞卡死
         if not self._lock.acquire(blocking=False):
-            del mp_image  # v4.6.2: 显式释放引用
-            return FaceMeshResult(
-                landmarks=None,
-                face_detected=False,
-                confidence=0.0,
-            )
+            del mp_image
+            return FaceMeshResult(landmarks=None, face_detected=False, confidence=0.0)
 
         try:
             result = self._detector.detect_for_video(mp_image, timestamp_ms)
         finally:
             self._lock.release()
-            del mp_image  # v4.6.2: 显式释放引用 MediaPipe Image
+            del mp_image
 
         return self._process_result(result, frame.shape[1], frame.shape[0])
+
+    def detect_from_frame(
+        self,
+        frame: np.ndarray,
+        timestamp_ms: int,
+    ) -> FaceMeshResult:
+        """从视频帧检测人脸网格（视频模式，同步）
+
+        使用 _detect_sync 实现（v4.29: 复用 async 内部方法）。
+        仍缓存 _last_rgb_frame 供 Qt 显示（非 async 模式下）。
+        """
+        if frame is not None and frame.size > 0 and frame.ndim >= 2:
+            self._last_rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        return self._detect_sync(frame, timestamp_ms)
 
     def detect_from_image(self, frame: np.ndarray) -> FaceMeshResult:
         """从图像检测人脸网格（图片模式）

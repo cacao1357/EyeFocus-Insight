@@ -307,6 +307,7 @@ class WebDashboard:
         self._app.router.add_get("/api/session/{sid}", self._handle_api_session_detail)
         self._app.router.add_get("/api/analyze/{sid}", self._handle_api_analyze)
         self._app.router.add_get("/api/control", self._handle_api_control)  # v4.26
+        self._app.router.add_get("/api/settings", self._handle_api_settings)  # v4.29
         self._app.router.add_post("/api/chat", self._handle_api_chat)  # v4.26
         self._app.router.add_get("/api/llm_status", self._handle_api_llm_status)  # v4.27
         self._app.router.add_static(
@@ -519,6 +520,24 @@ class WebDashboard:
             return aiohttp.web.json_response({"success": False, "error": "missing action"}, status=400)
         ok = self._exec_callback(action)
         return aiohttp.web.json_response({"success": ok, "action": action})
+
+    async def _handle_api_settings(self, request):
+        """REST: 返回当前配置（不含 api_key 等敏感值）"""
+        try:
+            from config import get_yaml_value
+            settings = {
+                "camera_index": get_yaml_value("camera", "index", default=0),
+                "voice_enabled": get_yaml_value("voice", "enabled", default=True),
+                "backend": get_yaml_value("ai", "backend", default="template"),
+                "api_model": get_yaml_value("ai", "api_model", default=""),
+                "api_url": "***" if get_yaml_value("ai", "api_url", default="") else "",  # v4.29: 脱敏
+                "has_api_key": bool(get_yaml_value("ai", "api_key", default="")),
+                "web_port": get_yaml_value("web", "port", default=8080),
+                "gamification": get_yaml_value("gamification", "enabled", default=True),
+            }
+            return aiohttp.web.json_response({"success": True, "settings": settings})
+        except Exception as e:
+            return aiohttp.web.json_response({"success": False, "error": str(e)}, status=500)
 
     async def _handle_websocket(self, request):
         """WebSocket 端点 — 实时推送"""

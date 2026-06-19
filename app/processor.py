@@ -111,8 +111,9 @@ class FrameProcessor:
         self._frame_count += 1
         timestamp_ms = int(time.time() * 1000)
 
-        # 人脸检测
-        face_result = self._face_detector.detect_from_frame(frame, timestamp_ms)
+        # v4.29: 异步人脸检测 — push_frame 排队, get_latest 非阻塞取上一帧结果
+        self._face_detector.push_frame(frame, timestamp_ms)
+        face_result = self._face_detector.get_latest()
         self._latest_face_detected = face_result.face_detected
 
         if not face_result.face_detected:

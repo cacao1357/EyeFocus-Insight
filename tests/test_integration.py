@@ -187,7 +187,7 @@ class TestEyeFocusAppIntegration:
         frame = make_mock_frame()
         mock_face_result = make_mock_face_result()
 
-        app._face_detector.detect_from_frame.return_value = mock_face_result
+        app._face_detector.get_latest.return_value = mock_face_result
         app._eye_detector.compute.return_value = MagicMock(
             ear_left=0.3, ear_right=0.31, ear_avg=0.305, is_blink=False
         )
@@ -209,8 +209,9 @@ class TestEyeFocusAppIntegration:
 
         app._frame_processor.process_frame(frame)
 
-        # 验证各检测器被调用
-        app._face_detector.detect_from_frame.assert_called_once()
+        # v4.29: 异步检测 — push_frame + get_latest 代替 detect_from_frame
+        app._face_detector.push_frame.assert_called_once()
+        app._face_detector.get_latest.assert_called_once()
         app._eye_detector.compute.assert_called_once()
         app._light_detector.analyze_frame.assert_called_once()
         app._gaze_detector.detect.assert_called_once()
@@ -222,7 +223,7 @@ class TestEyeFocusAppIntegration:
         mock_face_result = make_mock_face_result()
         mock_face_result.face_detected = False
 
-        app._face_detector.detect_from_frame.return_value = mock_face_result
+        app._face_detector.get_latest.return_value = mock_face_result
 
         # 不应抛出异常
         app._frame_processor.process_frame(frame)
@@ -244,7 +245,7 @@ class TestEyeFocusAppIntegration:
             ear_avg=ear_value,
             is_blink=False,
         )
-        app._face_detector.detect_from_frame.return_value = mock_face_result
+        app._face_detector.get_latest.return_value = mock_face_result
         app._eye_detector.compute.return_value = mock_eye_result
         app._eye_detector.get_blink_events.return_value = []
         app._eye_detector.get_blink_rate.return_value = (0.0, 0)
@@ -271,7 +272,7 @@ class TestEyeFocusAppIntegration:
         frame = make_mock_frame()
         mock_face_result = make_mock_face_result(yaw=5.0, pitch=-3.0)
 
-        app._face_detector.detect_from_frame.return_value = mock_face_result
+        app._face_detector.get_latest.return_value = mock_face_result
         app._eye_detector.compute.return_value = MagicMock(
             ear_left=0.3, ear_right=0.31, ear_avg=0.305, is_blink=False
         )
@@ -299,7 +300,7 @@ class TestEyeFocusAppIntegration:
         frame = make_mock_frame(brightness=180)
 
         mock_face_result = make_mock_face_result()
-        app._face_detector.detect_from_frame.return_value = mock_face_result
+        app._face_detector.get_latest.return_value = mock_face_result
         app._eye_detector.compute.return_value = MagicMock(
             ear_left=0.3, ear_right=0.31, ear_avg=0.305, is_blink=False
         )
@@ -332,7 +333,7 @@ class TestEyeFocusAppIntegration:
         }
         mock_face_result = make_mock_face_result(blendshapes=blendshapes)
 
-        app._face_detector.detect_from_frame.return_value = mock_face_result
+        app._face_detector.get_latest.return_value = mock_face_result
         app._eye_detector.compute.return_value = MagicMock(
             ear_left=0.3, ear_right=0.31, ear_avg=0.305, is_blink=False
         )
@@ -359,7 +360,7 @@ class TestEyeFocusAppIntegration:
         frame = make_mock_frame()
         mock_face_result = make_mock_face_result()
 
-        app._face_detector.detect_from_frame.return_value = mock_face_result
+        app._face_detector.get_latest.return_value = mock_face_result
         app._eye_detector.compute.return_value = MagicMock(
             ear_left=0.3, ear_right=0.31, ear_avg=0.305, is_blink=False
         )
@@ -400,7 +401,7 @@ class TestEyeFocusAppIntegration:
             duration=0.2, ear_nadir=0.15, is_confirmed=True
         )
 
-        app._face_detector.detect_from_frame.return_value = mock_face_result
+        app._face_detector.get_latest.return_value = mock_face_result
         app._eye_detector.compute.return_value = mock_eye_result
         app._eye_detector.get_blink_events.return_value = [mock_blink]
         app._eye_detector.get_blink_rate.return_value = (22.0, 7)
@@ -426,7 +427,7 @@ class TestEyeFocusAppIntegration:
         frame = make_mock_frame()
         mock_face_result = make_mock_face_result()
 
-        app._face_detector.detect_from_frame.return_value = mock_face_result
+        app._face_detector.get_latest.return_value = mock_face_result
         app._eye_detector.compute.return_value = MagicMock(
             ear_left=0.3, ear_right=0.31, ear_avg=0.305, is_blink=False
         )
@@ -465,7 +466,7 @@ class TestEyeFocusAppIntegration:
         frame = make_mock_frame()
         mock_face_result = make_mock_face_result()
 
-        app._face_detector.detect_from_frame.return_value = mock_face_result
+        app._face_detector.get_latest.return_value = mock_face_result
         app._eye_detector.compute.return_value = MagicMock(
             ear_left=0.3, ear_right=0.31, ear_avg=0.305, is_blink=False
         )
@@ -508,7 +509,7 @@ class TestEyeFocusAppIntegration:
         frame = make_mock_frame()
         mock_face_result = make_mock_face_result()
 
-        app._face_detector.detect_from_frame.return_value = mock_face_result
+        app._face_detector.get_latest.return_value = mock_face_result
         app._eye_detector.compute.return_value = MagicMock(
             ear_left=0.3, ear_right=0.31, ear_avg=0.305, is_blink=False
         )

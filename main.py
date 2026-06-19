@@ -246,6 +246,9 @@ class EyeFocusApp:
 
             # 初始化检测器
             self._face_detector = create_face_mesh_detector()
+            # v4.29: 启动异步检测管道（后台线程处理，主线程不阻塞）
+            if self._face_detector is not None:
+                self._face_detector.start_async()
             self._eye_detector = create_eye_aspect_detector()
             self._gaze_detector = create_gaze_detector()
             self._light_detector = create_light_detector()
@@ -1438,6 +1441,7 @@ class EyeFocusApp:
         # 关闭检测器 — H-13: 异常用 logger.exception 记录完整 traceback
         if self._face_detector:
             try:
+                self._face_detector.stop_async()  # v4.29: 先停异步线程
                 self._face_detector.close()
             except Exception as e:
                 self._cleanup_errors += 1
