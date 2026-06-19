@@ -855,7 +855,7 @@ class HTMLReportGenerator:
         hist_avg = None
         if self.db and data.session:
             try:
-                with self.db.get_cursor() as cur:
+                with self.db.get_readonly_cursor() as cur:
                     cur.execute("""
                         SELECT AVG(focus_score) FROM focus_records
                         WHERE session_id != ? AND focus_score IS NOT NULL
@@ -968,7 +968,7 @@ class HTMLReportGenerator:
         if not self.db or not session:
             return "无历史数据"
         try:
-            with self.db.get_cursor() as cur:
+            with self.db.get_readonly_cursor() as cur:
                 # sessions 表无 avg_focus/duration_seconds，需 JOIN focus_records
                 cur.execute("""
                     SELECT s.session_id, s.start_time, s.end_time,
