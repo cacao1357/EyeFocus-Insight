@@ -648,71 +648,92 @@ class EyeFocusWindow(QMainWindow):
                     fps: float = 0.0,
                     light_condition: Optional[str] = None,
                     distraction_causes: Optional[dict] = None) -> None:  # v4.17
-        """更新所有显示数据 (v4.26: 适配新 4 行布局)"""
+        """更新所有显示数据 (v4.29: 缓存样式表避免每帧重绘)"""
         self._focus_duration_minutes = focus_duration_minutes
         self._face_detected = face_detected
         self._eye_detected = eye_detected
         self._fps = fps
         self._light_condition = light_condition
 
-        # ── Hero 监测时长 ──
+        # ── Hero 监测时长（值变化时更新） ──
         if focus_duration_minutes is not None:
-            self._hero_value.setText(str(int(focus_duration_minutes)))
-            if focus_duration_minutes >= 60:
-                self._hero_unit.setText("min")
-            else:
-                self._hero_unit.setText("min")
+            dur_text = str(int(focus_duration_minutes))
+            if getattr(self, '_last_dur_text', None) != dur_text:
+                self._hero_value.setText(dur_text)
+                self._last_dur_text = dur_text
         else:
-            self._hero_value.setText("--")
-            self._hero_unit.setText("min")
+            if getattr(self, '_last_dur_text', None) != "--":
+                self._hero_value.setText("--")
+                self._last_dur_text = "--"
 
-        # ── 专注度进度条 ──
+        # ── 专注度进度条（值变化 + 颜色变化时更新） ──
         if focus_score is not None:
             score = max(0, min(100, int(focus_score)))
-            self._focus_bar.setValue(score)
-            self._focus_bar_value.setText(f"{score} / 100")
-            # 颜色
-            if score >= 70:
-                bar_color = "#5A8A6D"
-            elif score >= 50:
-                bar_color = "#C9843A"
-            else:
-                bar_color = "#B55C5C"
-            self._focus_bar.setStyleSheet(
-                "QProgressBar {"
-                "  background-color: #F2F2F7;"
-                "  border: none; border-radius: 3px;"
-                "}"
-                f"QProgressBar::chunk {{"
-                "  border-radius: 3px;"
-                f"  background-color: {bar_color};"
-                "}"
-            )
+            if getattr(self, '_last_focus_score', None) != score:
+                self._last_focus_score = score
+                self._focus_bar.setValue(score)
+                self._focus_bar_value.setText(f"{score} / 100")
+                # 颜色变化时才更新样式表
+                if score >= 70:
+                    new_color = "#5A8A6D"
+                elif score >= 50:
+                    new_color = "#C9843A"
+                else:
+                    new_color = "#B55C5C"
+                if getattr(self, '_last_bar_color', None) != new_color:
+                    self._last_bar_color = new_color
+                    self._focus_bar.setStyleSheet(
+                        "QProgressBar {"
+                        "  background-color: #F2F2F7;"
+                        "  border: none; border-radius: 3px;"
+                        "}"
+                        f"QProgressBar::chunk {{"
+                        "  border-radius: 3px;"
+                        f"  background-color: {new_color};"
+                        "}"
+                    )
         else:
-            self._focus_bar.setValue(0)
-            self._focus_bar_value.setText("-- / 100")
+            if getattr(self, '_last_focus_score', None) is not None:
+                self._last_focus_score = None
+                self._focus_bar.setValue(0)
+                self._focus_bar_value.setText("-- / 100")
 
-        # ── 识别状态 ──
+        # ── 识别状态（仅状态变化时更新） ──
         if not face_detected:
-            self._status_label.setText("🔴 人脸丢失")
-            self._status_label.setStyleSheet("color: #B55C5C; background: transparent; border: none;")
+            new_status = "face_lost"
         elif not eye_detected:
-            self._status_label.setText("🟡 闭眼中")
-            self._status_label.setStyleSheet("color: #C9843A; background: transparent; border: none;")
+            new_status = "eyes_closed"
         else:
-            self._status_label.setText("🟢 正常")
-            self._status_label.setStyleSheet("color: #5A8A6D; background: transparent; border: none;")
+            new_status = "normal"
+        if getattr(self, '_last_face_status', None) != new_status:
+            self._last_face_status = new_status
+            if not face_detected:
+                self._status_label.setText("🔴 人脸丢失")
+                self._status_label.setStyleSheet("color: #B55C5C; background: transparent; border: none;")
+            elif not eye_detected:
+                self._status_label.setText("🟡 闭眼中")
+                self._status_label.setStyleSheet("color: #C9843A; background: transparent; border: none;")
+            else:
+                self._status_label.setText("🟢 正常")
+                self._status_label.setStyleSheet("color: #5A8A6D; background: transparent; border: none;")
 
-        # ── Toast 警告（优先级：人脸丢失 > 光照不足） ──
+        # ── Toast 警告（仅消息变化时更新） ──
         if not face_detected:
-            self._show_toast("⚠ 人脸丢失 · 监测已暂停", "err")
+            new_toast = ("⚠ 人脸丢失 · 监测已暂停", "err")
         elif light_condition == "DARK":
-            self._show_toast("⚠ 光照不足 · 检测精度可能下降", "warn")
+            new_toast = ("⚠ 光照不足 · 检测精度可能下降", "warn")
         else:
-            self._show_toast()
+            new_toast = None
+        if getattr(self, '_last_toast', None) != new_toast:
+            self._last_toast = new_toast
+            if new_toast:
+                self._show_toast(*new_toast)
+            else:
+                self._show_toast()
 
         # ── 分心原因 ──
-        if hasattr(self, '_distraction_label'):
+        if hasattr(self, '_distraction_label') and distraction_causes != getattr(self, '_last_causes', None):
+            self._last_causes = distraction_causes
             self._distraction_label.update_causes(distraction_causes or {})
 
         # ── 托盘状态 ──

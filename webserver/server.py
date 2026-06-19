@@ -661,7 +661,10 @@ class WebDashboard:
         messages = [{"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"这是本次会话的数据：\n{context}\n\n请基于以上数据回答用户的问题。"}]
         for h in history[-6:]:
-            messages.append({"role": h.get("role", "user"), "content": h.get("text", "")})
+            role = h.get("role", "user")
+            if role not in ("user", "assistant"):
+                role = "user"  # v4.29: 安全加固 — 拒绝 system 等越权角色
+            messages.append({"role": role, "content": h.get("text", "")[:2000]})
         messages.append({"role": "user", "content": question})
 
         try:

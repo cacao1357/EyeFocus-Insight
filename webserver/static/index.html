@@ -975,17 +975,22 @@ async function triggerAiAnalysis() {
       return;
     }
     if (data.error) {
-      reportEl.innerHTML = `<span style="color:var(--rose);">${data.error}</span>`;
+      reportEl.textContent = data.error;
     } else {
       var label = data.backend === 'template' ? '内置模板' : data.backend;
-      reportEl.innerHTML = (data.analysis || '（分析结果为空）') +
-        '<br><span style="font-size:10px;color:var(--gray);">— ' + label + '</span>';
+      reportEl.textContent = '';
+      reportEl.appendChild(document.createTextNode(data.analysis || '（分析结果为空）'));
+      reportEl.appendChild(document.createElement('br'));
+      var ls = document.createElement('span');
+      ls.style.cssText = 'font-size:10px;color:var(--gray);';
+      ls.textContent = '— ' + label;
+      reportEl.appendChild(ls);
       if (statusEl && data.backend !== 'template') {
         statusEl.style.display = 'none';
       }
     }
   } catch (e) {
-    reportEl.innerHTML = '<span style="color:var(--rose);">请求失败: ' + e + '</span>';
+    reportEl.textContent = '请求失败: ' + e;
   }
 }
 
