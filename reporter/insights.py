@@ -16,7 +16,7 @@ from typing import List, Optional
 
 import numpy as np
 
-from storage.models import FocusRecord, FatigueRecord, FatigueLevel
+from storage.models import FocusRecord, FatigueRecord, FatigueLevel, BlinkRecord
 
 logger = logging.getLogger("eyefocus.reporter")
 
@@ -30,6 +30,7 @@ class Insight:
     description: str       # 详细描述
     suggestion: str        # 改善建议
     data_evidence: Optional[dict] = None  # 支持数据
+    priority: int = 10     # v4.38: 优先级评分（越高越靠前），默认 info=10
 
 
 @dataclass
@@ -145,6 +146,8 @@ class InsightsEngine:
         is_daily: bool = False,
         session_count: int = 1,
         max_session_duration: float = 0.0,
+        blink_records: Optional[List[BlinkRecord]] = None,
+        same_day_sessions: Optional[List] = None,
     ) -> List[Insight]:
         """分析数据并生成建议
 
@@ -159,54 +162,83 @@ class InsightsEngine:
             is_daily: 是否为日汇总报告（v4.37: 多会话合并时 True）
             session_count: 日汇总包含的会话数
             max_session_duration: 日汇总中最长单次会话时长（秒）
+            blink_records: 可选，眨眼事件列表（v4.38: 微眠检测）
+            same_day_sessions: 可选，同日其他会话列表（v4.38: 同日对比）
 
         Returns:
-            Insight 列表，按严重程度排序
+            Insight 列表，按 priority 降序排列
         """
         insights: List[Insight] = []
 
-        # 分析专注度模式
+        # ── 分析专注度模式 ──
         if focus_records:
             pattern = self._detect_focus_pattern(focus_records, session_start_time)
             insights.extend(self._pattern_to_insights(pattern))
 
-            # 专注度下降趋势分析
             focus_trend_insight = self._analyze_focus_trend(focus_records)
             if focus_trend_insight:
                 insights.append(focus_trend_insight)
 
-            # Tier 2: 薄弱环节分析（v4.37: 自动按 session_id 分组）
             weak_insights = self._find_weak_segments(focus_records)
             insights.extend(weak_insights)
 
-        # 疲劳分析
+            # v4.38: L1 新 Insight — 专注耐力 + 恢复速度 + 最优时长
+            endurance_i = self._analyze_focus_endurance(focus_records, session_duration)
+            if endurance_i:
+                insights.append(endurance_i)
+
+            recovery_i = self._analyze_recovery_speed(focus_records)
+            if recovery_i:
+                insights.append(recovery_i)
+
+            optimal_i = self._analyze_optimal_duration(focus_records, session_duration)
+            if optimal_i:
+                insights.append(optimal_i)
+
+            # 分心原因分解
+            cause_i = self._analyze_distraction_causes(focus_records)
+            if cause_i:
+                insights.append(cause_i)
+
+        # ── 疲劳分析 ──
         if fatigue_records:
             insights.extend(self._analyze_fatigue(fatigue_records))
 
-        # 眨眼频率分析
+        # ── 眨眼分析 ──
         blink_insights = self._analyze_blink_rate(avg_blink_rate)
         insights.extend(blink_insights)
 
-        # 综合建议
+        # v4.38: L1 微眠/长闭眼预警
+        if blink_records:
+            micro_i = self._detect_micro_sleeps(blink_records, session_duration)
+            if micro_i:
+                insights.append(micro_i)
+
+        # ── 综合建议 ──
         insights.extend(self._generate_recommendations(
-            avg_focus=avg_focus,
-            avg_blink_rate=avg_blink_rate,
-            session_duration=session_duration,
-            focus_records=focus_records,
-            is_daily=is_daily,
-            session_count=session_count,
+            avg_focus=avg_focus, avg_blink_rate=avg_blink_rate,
+            session_duration=session_duration, focus_records=focus_records,
+            is_daily=is_daily, session_count=session_count,
             max_session_duration=max_session_duration,
         ))
 
-        # Tier 3: 历史对比
+        # ── 历史对比 ──
         hist_insight = self._compare_with_history(
             avg_focus, avg_blink_rate, session_id, session_start_time)
         if hist_insight:
             insights.append(hist_insight)
 
-        # 按严重程度排序
-        severity_order = {'alert': 0, 'warning': 1, 'info': 2}
-        insights.sort(key=lambda x: severity_order.get(x.severity, 2))
+        # ── v4.38: L2 同日其他时段对比 ──
+        if same_day_sessions and not is_daily:
+            same_day_insights = self._analyze_same_day(
+                same_day_sessions, avg_focus, session_duration, session_id)
+            insights.extend(same_day_insights)
+
+        # ── v4.38: L3 priority 评分 + 正向平衡 ──
+        self._compute_priorities(insights)
+        insights = self._balance_positive_feedback(insights, focus_records,
+                                                    avg_focus, avg_blink_rate)
+        insights.sort(key=lambda x: x.priority, reverse=True)
 
         return insights
 
@@ -824,6 +856,469 @@ class InsightsEngine:
                 if ai.title not in existing_titles:
                     insights.append(ai)
                     existing_titles.add(ai.title)
+
+        return insights
+
+    # ═══════════════════════════════════════════════════════════════
+    # v4.38: L1 — 5 个新 Insight 类型
+    # ═══════════════════════════════════════════════════════════════
+
+    def _analyze_focus_endurance(
+        self, focus_records: List[FocusRecord], session_duration: float,
+    ) -> Optional[Insight]:
+        """F. 专注耐力分析 — 最长连续高效期
+
+        扫描 focus_records，找最长连续 >= focus_good 的区间，
+        忽略 <= 2min 的短暂掉落（微休息）。
+        """
+        if len(focus_records) < 6:
+            return None
+        # focus_records 约 30s 间隔，2min = 4 个窗口
+        min_streak = 4
+        good_threshold = self._user_focus_good
+        best_start = best_end = best_len = 0
+        cur_start = cur_len = 0
+        in_streak = False
+
+        for i, r in enumerate(focus_records):
+            if r.focus_score is not None and r.focus_score >= good_threshold:
+                if not in_streak:
+                    cur_start = i
+                    cur_len = 1
+                    in_streak = True
+                else:
+                    cur_len += 1
+            else:
+                if in_streak:
+                    # 检查是否是短暂掉落（<=2min 即 <=4 个窗口）
+                    gap_end = i
+                    for j in range(i, min(i + min_streak + 1, len(focus_records))):
+                        if focus_records[j].focus_score is not None and \
+                           focus_records[j].focus_score >= good_threshold:
+                            cur_len += (j - gap_end)  # 减去掉落窗口
+                            gap_end = j + 1
+                            break
+                    else:
+                        # 真结束
+                        if cur_len > best_len:
+                            best_len = cur_len
+                            best_start = cur_start
+                            best_end = i
+                        in_streak = False
+        if in_streak and cur_len > best_len:
+            best_len = cur_len
+
+        # 换算分钟（假设 ~30s/record）
+        endurance_min = int(best_len * 0.5)
+        if endurance_min < 15:
+            return None
+
+        pct = round(endurance_min / max(1, session_duration / 60) * 100)
+        return Insight(
+            category='focus',
+            severity='info',
+            title='专注耐力分析',
+            description=f'最长连续高效期 {endurance_min} 分钟'
+                       f'（占会话 {pct}%），专注度保持在 {good_threshold:.0f} 分以上',
+            suggestion=f'你的高效专注可持续约 {endurance_min} 分钟，'
+                      f'建议以此为单次深度工作时长，之后安排 3-5 分钟微休息',
+            data_evidence={'endurance_minutes': endurance_min, 'streak_pct': pct},
+            priority=15,
+        )
+
+    def _analyze_distraction_causes(
+        self, focus_records: List[FocusRecord],
+    ) -> Optional[Insight]:
+        """G. 分心原因分解 — 低专注帧的眼/头/视线贡献百分比"""
+        if len(focus_records) < 10:
+            return None
+        low_focus = [r for r in focus_records
+                     if r.focus_score is not None and r.focus_score < 60]
+        if len(low_focus) < len(focus_records) * 0.10:
+            return None  # 低专注帧 < 10%
+
+        total = len(low_focus)
+        eye_low = sum(1 for r in low_focus if (r.eye_score or 0) < 60)
+        head_low = sum(1 for r in low_focus if (r.head_score or 0) < 60)
+        gaze_low = sum(1 for r in low_focus if (r.gaze_score or 0) < 60)
+        # 归一化（可能重叠，取最大比例项）
+        if total == 0:
+            return None
+        eye_pct = round(eye_low / total * 100)
+        head_pct = round(head_low / total * 100)
+        gaze_pct = round(gaze_low / total * 100)
+
+        # 找主导原因
+        parts = []
+        max_pct = max(eye_pct, head_pct, gaze_pct)
+        if gaze_pct >= max_pct and gaze_pct >= 30:
+            parts.append(f'视线偏离占比最高（{gaze_pct}%），建议减少屏幕外视觉干扰源，'
+                        f'如关闭不必要的窗口/通知')
+        elif head_pct >= max_pct and head_pct >= 30:
+            parts.append(f'头部偏移占比最高（{head_pct}%），建议检查坐姿和屏幕高度，'
+                        f'确保显示器与视线平齐')
+        elif eye_pct >= max_pct and eye_pct >= 30:
+            parts.append(f'眨眼/眼部异常占比最高（{eye_pct}%），可能存在眼疲劳，'
+                        f'建议使用 20-20-20 法则')
+
+        if not parts:
+            return None
+
+        return Insight(
+            category='behavior',
+            severity='info',
+            title='分心原因分析',
+            description=f'低专注时段中：视线偏离 {gaze_pct}%、头部偏移 {head_pct}%、'
+                       f'眼部异常 {eye_pct}%',
+            suggestion='；'.join(parts),
+            data_evidence={'eye_pct': eye_pct, 'head_pct': head_pct, 'gaze_pct': gaze_pct},
+            priority=14,
+        )
+
+    def _analyze_recovery_speed(
+        self, focus_records: List[FocusRecord],
+    ) -> Optional[Insight]:
+        """H. 专注恢复速度 — 分心后回到正常水平的耗时"""
+        if len(focus_records) < 10:
+            return None
+        warning = self._user_focus_warning
+        good = self._user_focus_good
+        recovery_times = []
+        in_dip = False
+        dip_start = 0
+
+        for i, r in enumerate(focus_records):
+            fs = r.focus_score
+            if fs is None:
+                continue
+            if not in_dip and fs < warning:
+                in_dip = True
+                dip_start = i
+            elif in_dip and fs >= good:
+                # 恢复到 good 水平
+                recovery_times.append(i - dip_start)  # 窗口数
+                in_dip = False
+
+        if len(recovery_times) < 3:
+            return None
+
+        median_windows = float(np.median(recovery_times))
+        recovery_sec = int(median_windows * 30)  # ~30s/record
+        if recovery_sec < 30:
+            return None  # 太快恢复 = 噪声
+
+        if recovery_sec < 90:
+            speed_label = '较快'
+            advice = '抗干扰能力良好，继续保持'
+        elif recovery_sec < 180:
+            speed_label = '一般'
+            advice = '建议分心后闭眼 5 秒重新聚焦，减少恢复耗时'
+        else:
+            speed_label = '较慢'
+            advice = '分心后恢复慢，建议增加专注环境隔离（降噪耳机/免打扰模式）'
+
+        return Insight(
+            category='focus',
+            severity='info',
+            title='专注恢复速度',
+            description=f'分心后平均 {recovery_sec} 秒恢复专注（{speed_label}），'
+                       f'共 {len(recovery_times)} 次分心事件',
+            suggestion=advice,
+            data_evidence={'recovery_seconds': recovery_sec,
+                           'recovery_events': len(recovery_times)},
+            priority=13,
+        )
+
+    def _analyze_optimal_duration(
+        self, focus_records: List[FocusRecord], session_duration: float,
+    ) -> Optional[Insight]:
+        """I. 最优会话时长 — 专注趋势从稳定转为持续下降的拐点"""
+        if len(focus_records) < 12:
+            return None
+        scores = [r.focus_score for r in focus_records if r.focus_score is not None]
+        if len(scores) < 12:
+            return None
+
+        # 滑动窗口检测拐点：计算每个点的前后斜率差
+        half_w = 4  # 前后各 4 个窗口 (~2min)
+        max_slope_change = 0.0
+        inflection_idx = 0
+        for i in range(half_w, len(scores) - half_w):
+            before_slope = (scores[i] - scores[i - half_w]) / half_w
+            after_slope = (scores[i + half_w] - scores[i]) / half_w
+            slope_change = before_slope - after_slope  # 正=从升转降
+            if slope_change > max_slope_change:
+                max_slope_change = slope_change
+                inflection_idx = i
+
+        if max_slope_change < 0.15 or inflection_idx < 8:
+            return None  # 无显著拐点或太早
+
+        optimal_min = int(inflection_idx * 0.5)  # ~30s/record
+        before_avg = float(np.mean(scores[:inflection_idx]))
+        after_avg = float(np.mean(scores[inflection_idx:]))
+        drop = before_avg - after_avg
+        if optimal_min < 15 or drop < 5:
+            return None
+
+        return Insight(
+            category='focus',
+            severity='info',
+            title='最优会话时长',
+            description=f'专注约在 {optimal_min} 分钟后开始下降'
+                       f'（{before_avg:.0f} → {after_avg:.0f}，降 {drop:.0f} 分），'
+                       f'之后效率递减',
+            suggestion=f'建议将番茄钟周期设为 {max(25, optimal_min - 5)} 分钟，'
+                      f'在专注开始下降前主动休息 5 分钟，保持高效循环',
+            data_evidence={'optimal_minutes': optimal_min, 'drop': round(drop, 1)},
+            priority=16,
+        )
+
+    def _detect_micro_sleeps(
+        self, blink_records: List[BlinkRecord], session_duration: float,
+    ) -> Optional[Insight]:
+        """J. 微眠/长闭眼预警 — 眨眼时长 > 500ms 的长闭眼事件"""
+        if not blink_records:
+            return None
+        long_blinks = [b for b in blink_records if b.duration_seconds > 0.5]
+        n = len(long_blinks)
+        if n == 0:
+            return None
+        max_dur = max(b.duration_seconds for b in long_blinks)
+        severity = 'alert' if n >= 10 else 'warning' if n >= 3 else 'info'
+        if severity == 'info':
+            return None  # < 3 次不报
+        freq = n / max(1, session_duration / 60)  # 次/分钟
+
+        return Insight(
+            category='fatigue',
+            severity=severity,
+            title='长闭眼/微睡眠预警',
+            description=f'检测到 {n} 次超长闭眼（>500ms），最长 {max_dur:.1f}s，'
+                       f'频率 {freq:.1f} 次/分钟',
+            suggestion='长闭眼是微疲劳的可靠信号。建议：①立即远眺窗外 20 秒以上；'
+                      '②起身活动 2-3 分钟促进血液循环；③如果频繁出现，考虑休息 10-15 分钟',
+            data_evidence={'long_blink_count': n, 'max_duration': max_dur,
+                           'frequency_per_min': round(freq, 1)},
+            priority=25 if severity == 'alert' else 18,
+        )
+
+    # ═══════════════════════════════════════════════════════════════
+    # v4.38: L2 — 同日其他时段对比
+    # ═══════════════════════════════════════════════════════════════
+
+    def _analyze_same_day(
+        self,
+        same_day_sessions: list,
+        current_avg_focus: float,
+        current_duration: float,
+        current_session_id: Optional[str],
+    ) -> List[Insight]:
+        """L2: 同日其他会话对比分析
+
+        same_day_sessions: 同日已完成会话列表（Session 对象），已排除当前和 <10min 的
+        """
+        insights = []
+        valid = [s for s in same_day_sessions
+                 if s.session_id != current_session_id and s.end_time]
+        if not valid:
+            return insights
+
+        # ① 当日前期专注对比
+        prior_avgs = []
+        for s in valid:
+            dur = (s.end_time - s.start_time).total_seconds()
+            if dur < 600:  # < 10min 跳过
+                continue
+            prior_avgs.append((s.start_time, dur))
+        if not prior_avgs:
+            return insights
+
+        # 加权平均（时长越长约可信）
+        total_w = sum(d for _, d in prior_avgs)
+        weighted_avg = sum(s.avg_focus * d for (s, d) in
+                          zip([s for s in valid if (s.end_time - s.start_time).total_seconds() >= 600],
+                              [d for _, d in prior_avgs])) / max(1, total_w)
+        # 简化：直接用已知数据
+        prior_focus_vals = []
+        for s in valid:
+            dur = (s.end_time - s.start_time).total_seconds()
+            if dur < 600:
+                continue
+            # 从 session 统计数据查平均专注
+            try:
+                if hasattr(self, '_db') and self._db:
+                    stats = self._db.get_session_statistics(s.session_id)
+                    if stats and stats.get('avg_focus'):
+                        prior_focus_vals.append((stats['avg_focus'], dur))
+            except Exception:
+                pass
+
+        if prior_focus_vals:
+            total_w = sum(d for _, d in prior_focus_vals)
+            prior_avg = sum(f * d for f, d in prior_focus_vals) / max(1, total_w)
+            diff = current_avg_focus - prior_avg
+            if abs(diff) >= 3:
+                direction = '↑' if diff > 0 else '↓'
+                insights.append(Insight(
+                    category='recommendation',
+                    severity='info',
+                    title='当日专注对比',
+                    description=f'今天前 {len(prior_focus_vals)} 次会话专注平均 {prior_avg:.0f} 分，'
+                               f'本次 {current_avg_focus:.0f} 分（{direction} {abs(diff):.0f} 分）',
+                    suggestion='下午专注下降是正常生理节律，可将重要任务安排在上午高效时段'
+                              if diff < -5 else '专注趋势向好，保持当前节奏',
+                    data_evidence={'prior_avg': round(prior_avg, 1),
+                                   'current_avg': round(current_avg_focus, 1),
+                                   'diff': round(diff, 1)},
+                    priority=17,
+                ))
+
+        # ② 当日累计时长
+        cumulative = current_duration
+        for s in valid:
+            dur = (s.end_time - s.start_time).total_seconds()
+            if dur >= 600:
+                cumulative += dur
+        total_min = int(cumulative / 60)
+        if total_min > 90:
+            insights.append(Insight(
+                category='recommendation',
+                severity='warning' if total_min > 240 else 'info',
+                title='当日累计工作时长',
+                description=f'今日已累计工作 {total_min} 分钟（含本次），'
+                           f'共 {len(valid) + 1} 个会话',
+                suggestion='累计超过 4 小时，建议今天不再安排高强度工作' if total_min > 240
+                          else '注意安排间歇休息，避免当日疲劳累积',
+                data_evidence={'cumulative_minutes': total_min,
+                               'session_count': len(valid) + 1},
+                priority=20 if total_min > 240 else 12,
+            ))
+
+        # ③ 当日专注趋势线
+        all_sessions = sorted(valid, key=lambda s: s.start_time)
+        if len(all_sessions) >= 2:
+            session_avgs = []
+            for s in all_sessions:
+                try:
+                    if hasattr(self, '_db') and self._db:
+                        stats = self._db.get_session_statistics(s.session_id)
+                        if stats and stats.get('avg_focus'):
+                            session_avgs.append(stats['avg_focus'])
+                except Exception:
+                    pass
+            session_avgs.append(current_avg_focus)
+            if len(session_avgs) >= 3:
+                # 简单线性趋势
+                x = list(range(len(session_avgs)))
+                slope = float(np.polyfit(x, session_avgs, 1)[0])
+                if abs(slope) > 1.5:
+                    trend_word = '上升' if slope > 0 else '下降'
+                    trend_arrow = '📈' if slope > 0 else '📉'
+                    insights.append(Insight(
+                        category='recommendation',
+                        severity='info',
+                        title='当日专注趋势',
+                        description=f'{trend_arrow} 今天专注逐会话{trend_word}'
+                                   f'（{session_avgs[0]:.0f} → {session_avgs[-1]:.0f}），'
+                                   f'共 {len(session_avgs)} 次会话',
+                        suggestion='专注上升—状态越来越好，可乘胜追击完成高难度任务'
+                                  if slope > 0 else '专注下降—可能已疲劳累积，'
+                                                  '建议降低后续任务强度或安排休息',
+                        data_evidence={'trend_slope': round(slope, 2),
+                                       'session_count': len(session_avgs)},
+                        priority=16,
+                    ))
+
+        return insights
+
+    # ═══════════════════════════════════════════════════════════════
+    # v4.38: L3 — priority 评分 + 正向反馈平衡
+    # ═══════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _compute_priorities(insights: List[Insight]) -> None:
+        """L3-1: 为每条 Insight 计算 priority 评分
+
+        基础分: alert=30, warning=20, info=10
+        加成: data_evidence 中的效应量越大分越高
+        """
+        for ins in insights:
+            base = {'alert': 30, 'warning': 20, 'info': 10}.get(ins.severity, 10)
+            bonus = 0
+            de = ins.data_evidence or {}
+            # 专注下降幅度
+            if 'drop' in de:
+                bonus += int(min(abs(de['drop']), 30))
+            if 'duration_minutes' in de:
+                bonus += int(min(de['duration_minutes'] / 10, 10))
+            if 'diff' in de:
+                bonus += int(min(abs(de['diff']), 15))
+            if 'forecast_min' in de and de['forecast_min'] is not None:
+                bonus += int(min(abs(50 - de['forecast_min']), 10))
+            ins.priority = base + bonus
+
+    def _balance_positive_feedback(
+        self, insights: List[Insight], focus_records: List[FocusRecord],
+        avg_focus: float, avg_blink_rate: float,
+    ) -> List[Insight]:
+        """L3-3: 确保每条"问题"类 Insight 至少配对一条正向反馈"""
+        negative_categories = {'focus', 'fatigue', 'behavior'}
+        has_negative = any(
+            i.category in negative_categories and i.severity in ('warning', 'alert')
+            for i in insights
+        )
+        has_positive = any(i.title in ('专注状态良好', '专注耐力分析')
+                          for i in insights)
+
+        if has_negative and not has_positive:
+            # 找最佳时段
+            if focus_records:
+                best_idx = max(range(len(focus_records)),
+                              key=lambda i: focus_records[i].focus_score or 0)
+                best_r = focus_records[best_idx]
+                best_fs = best_r.focus_score or 0
+                if best_fs >= self._user_focus_good:
+                    t0 = focus_records[0].window_start
+                    offset_sec = int(best_r.window_start - t0)
+                    m, s = offset_sec // 60, offset_sec % 60
+                    time_str = f"{m}:{s:02d}"
+                    insights.append(Insight(
+                        category='recommendation',
+                        severity='info',
+                        title='专注亮点时刻',
+                        description=f'本次最佳专注出现在 {time_str} 附近，'
+                                   f'达到 {best_fs:.0f} 分，表现优秀',
+                        suggestion='这就是你的高效节奏。记住这个状态，'
+                                  '尽量把重要任务安排在你感觉最好的时段',
+                        data_evidence={'best_focus': best_fs,
+                                       'best_time': time_str},
+                        priority=8,
+                    ))
+
+        # 总评正向化
+        label_map = {80: '优秀', 65: '良好', 50: '中等', 0: '偏低'}
+        for thresh, word in sorted(label_map.items(), reverse=True):
+            if avg_focus >= thresh:
+                break
+        # 正向眨眼的额外表扬
+        blink_compliment = ''
+        if self._user_blink_normal > 0 and avg_blink_rate > 0:
+            blink_ratio = avg_blink_rate / self._user_blink_normal
+            if 0.85 <= blink_ratio <= 1.15:
+                blink_compliment = '，眨眼频率健康'
+        # 找分数最高的 insight
+        existing_titles = {i.title for i in insights}
+        if '专注总结' not in existing_titles:
+            insights.append(Insight(
+                category='recommendation',
+                severity='info',
+                title='专注总结',
+                description=f'本次专注 {avg_focus:.0f} 分，评定 {word}{blink_compliment}',
+                suggestion='关注报告中标记的高效时段，把它们变成你的固定深度工作时间',
+                data_evidence={'avg_focus': round(avg_focus, 1)},
+                priority=5,
+            ))
 
         return insights
 
