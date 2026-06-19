@@ -142,6 +142,9 @@ class InsightsEngine:
         session_duration: float,
         session_id: Optional[str] = None,
         session_start_time: Optional[float] = None,
+        is_daily: bool = False,
+        session_count: int = 1,
+        max_session_duration: float = 0.0,
     ) -> List[Insight]:
         """分析数据并生成建议
 
@@ -150,9 +153,12 @@ class InsightsEngine:
             fatigue_records: 疲劳记录列表
             avg_focus: 平均专注度
             avg_blink_rate: 平均眨眼频率
-            session_duration: 会话时长（秒）
+            session_duration: 会话时长（秒）；日汇总时为多会话累计
             session_id: 可选，会话 ID（用于历史对比）
             session_start_time: 可选，会话开始时间戳（用于时段分析）
+            is_daily: 是否为日汇总报告（v4.37: 多会话合并时 True）
+            session_count: 日汇总包含的会话数
+            max_session_duration: 日汇总中最长单次会话时长（秒）
 
         Returns:
             Insight 列表，按严重程度排序
@@ -169,7 +175,7 @@ class InsightsEngine:
             if focus_trend_insight:
                 insights.append(focus_trend_insight)
 
-            # Tier 2: 薄弱环节分析
+            # Tier 2: 薄弱环节分析（v4.37: 自动按 session_id 分组）
             weak_insights = self._find_weak_segments(focus_records)
             insights.extend(weak_insights)
 
@@ -187,6 +193,9 @@ class InsightsEngine:
             avg_blink_rate=avg_blink_rate,
             session_duration=session_duration,
             focus_records=focus_records,
+            is_daily=is_daily,
+            session_count=session_count,
+            max_session_duration=max_session_duration,
         ))
 
         # Tier 3: 历史对比
@@ -405,65 +414,91 @@ class InsightsEngine:
     # ── v4.10: Tier 2 薄弱环节分析 ──
 
     def _find_weak_segments(self, focus_records: List[FocusRecord]) -> List[Insight]:
-        """分析专注度各维度（眼部/头部/视线）的薄弱环节"""
+        """分析专注度各维度（眼部/头部/视线）的薄弱环节
+
+        v4.37: 按 session_id 自动分组，多会话各自独立分析，避免跨会话
+        时间偏移产生 "777:10" 等荒谬标签。
+        """
         insights = []
         if len(focus_records) < 3:
             return insights
 
-        # 计算基准时间（第一个记录的 window_start）
-        t0 = focus_records[0].window_start
+        # ── v4.37: 按 session_id 分组 ──
+        from collections import OrderedDict
+        groups: OrderedDict = OrderedDict()
+        for r in focus_records:
+            sid = getattr(r, 'session_id', '__default__')
+            groups.setdefault(sid, []).append(r)
 
-        def _elapsed_label(ts: float) -> str:
-            """将时间戳转为 MM:SS 格式"""
-            elapsed = max(0, int(ts - t0))
-            m, s = elapsed // 60, elapsed % 60
-            return f"{m}:{s:02d}"
+        multi_session = len(groups) > 1
 
-        # 找出眼部得分最低的时段
-        min_eye_idx = min(range(len(focus_records)), key=lambda i: focus_records[i].eye_score)
-        min_eye = focus_records[min_eye_idx]
-        if min_eye.eye_score < 60:
-            label = _elapsed_label(min_eye.window_start)
-            insights.append(Insight(
-                category='behavior',
-                severity='info',
-                title='眼部状态偏低时段',
-                description=f'{label}时段眼部得分仅{min_eye.eye_score:.0f}分（低于60），'
-                           f'可能存在视线偏离或短暂闭眼',
-                suggestion='注意保持眼睛注视屏幕，如需查看其他内容请减少转头幅度',
-                data_evidence={'segment_time': label, 'eye_score': min_eye.eye_score},
-            ))
+        for gidx, (sid, records) in enumerate(groups.items(), 1):
+            if len(records) < 3:
+                continue
 
-        # 找出头部得分最低的时段
-        min_head_idx = min(range(len(focus_records)), key=lambda i: focus_records[i].head_score)
-        min_head = focus_records[min_head_idx]
-        if min_head.head_score < 60:
-            label = _elapsed_label(min_head.window_start)
-            insights.append(Insight(
-                category='behavior',
-                severity='info',
-                title='头部姿态变化时段',
-                description=f'{label}时段头部姿态得分{min_head.head_score:.0f}分（低于60），'
-                           f'可能有较大幅度的头部转动',
-                suggestion='调整坐姿保持头部稳定，如需转头尽量减小幅度',
-                data_evidence={'segment_time': label, 'head_score': min_head.head_score},
-            ))
+            # 每组独立 t0
+            t0 = records[0].window_start
+            session_prefix = f"会话{gidx} · " if multi_session else ""
 
-        # 找出眨眼频率最高的时段
-        blink_rates = [r.blink_rate for r in focus_records]
-        if max(blink_rates) > 25:
-            max_blink_idx = blink_rates.index(max(blink_rates))
-            max_blink_r = focus_records[max_blink_idx]
-            label = _elapsed_label(max_blink_r.window_start)
-            insights.append(Insight(
-                category='fatigue',
-                severity='info',
-                title='眨眼频率高峰时段',
-                description=f'{label}时段眨眼频率达{max_blink_r.blink_rate:.1f}次/分，'
-                           f'显著高于正常水平',
-                suggestion='该时段可能有眼部疲劳或干涩，建议注意用眼休息',
-                data_evidence={'segment_time': label, 'blink_rate': max_blink_r.blink_rate},
-            ))
+            def _elapsed_label(ts: float) -> str:
+                """v4.37: H:MM:SS 格式（≥1h）或 M:SS（<1h）"""
+                elapsed = max(0, int(ts - t0))
+                if elapsed >= 3600:
+                    h = elapsed // 3600
+                    m = (elapsed % 3600) // 60
+                    s = elapsed % 60
+                    return f"{h}:{m:02d}:{s:02d}"
+                m, s = elapsed // 60, elapsed % 60
+                return f"{m}:{s:02d}"
+
+            # 找出眼部得分最低的时段
+            min_eye_idx = min(range(len(records)), key=lambda i: records[i].eye_score)
+            min_eye = records[min_eye_idx]
+            if min_eye.eye_score < 60:
+                label = _elapsed_label(min_eye.window_start)
+                insights.append(Insight(
+                    category='behavior',
+                    severity='info',
+                    title='眼部状态偏低时段',
+                    description=f'{session_prefix}{label}时段眼部得分仅{min_eye.eye_score:.0f}分（低于60），'
+                               f'可能存在视线偏离或短暂闭眼',
+                    suggestion='注意保持眼睛注视屏幕，如需查看其他内容请减少转头幅度',
+                    data_evidence={'segment_time': label, 'eye_score': min_eye.eye_score,
+                                   'session_index': gidx if multi_session else None},
+                ))
+
+            # 找出头部得分最低的时段
+            min_head_idx = min(range(len(records)), key=lambda i: records[i].head_score)
+            min_head = records[min_head_idx]
+            if min_head.head_score < 60:
+                label = _elapsed_label(min_head.window_start)
+                insights.append(Insight(
+                    category='behavior',
+                    severity='info',
+                    title='头部姿态变化时段',
+                    description=f'{session_prefix}{label}时段头部姿态得分{min_head.head_score:.0f}分（低于60），'
+                               f'可能有较大幅度的头部转动',
+                    suggestion='调整坐姿保持头部稳定，如需转头尽量减小幅度',
+                    data_evidence={'segment_time': label, 'head_score': min_head.head_score,
+                                   'session_index': gidx if multi_session else None},
+                ))
+
+            # 找出眨眼频率最高的时段
+            blink_rates = [r.blink_rate for r in records]
+            if max(blink_rates) > 25:
+                max_blink_idx = blink_rates.index(max(blink_rates))
+                max_blink_r = records[max_blink_idx]
+                label = _elapsed_label(max_blink_r.window_start)
+                insights.append(Insight(
+                    category='fatigue',
+                    severity='info',
+                    title='眨眼频率高峰时段',
+                    description=f'{session_prefix}{label}时段眨眼频率达{max_blink_r.blink_rate:.1f}次/分，'
+                               f'显著高于正常水平',
+                    suggestion='该时段可能有眼部疲劳或干涩，建议注意用眼休息',
+                    data_evidence={'segment_time': label, 'blink_rate': max_blink_r.blink_rate,
+                                   'session_index': gidx if multi_session else None},
+                ))
 
         return insights
 
@@ -578,32 +613,57 @@ class InsightsEngine:
         avg_blink_rate: float,
         session_duration: float,
         focus_records: List[FocusRecord],
+        is_daily: bool = False,
+        session_count: int = 1,
+        max_session_duration: float = 0.0,
     ) -> List[Insight]:
-        """生成综合建议（v4.29: 新增时段/波动/多层级建议）"""
+        """生成综合建议（v4.29: 新增时段/波动/多层级建议；v4.37: 日汇总文案）"""
         insights = []
         duration_minutes = session_duration / 60.0
+        max_single_minutes = max_session_duration / 60.0 if max_session_duration > 0 else 0.0
 
         # ── 1. 工作时长建议 ──
-        if duration_minutes > 60:
-            remain = duration_minutes - 45
-            insights.append(Insight(
-                category='recommendation',
-                severity='info',
-                title='连续工作时长较长',
-                description=f'已连续工作{int(duration_minutes)}分钟，超过推荐高效周期',
-                suggestion=f'建议每45-50分钟休息5-10分钟，超时{int(remain)}分钟，尽快休息',
-                data_evidence={'duration_minutes': duration_minutes},
-            ))
+        if is_daily:
+            # v4.37: 日汇总 — 多会话累计，非连续工作
+            if duration_minutes > 60:
+                insights.append(Insight(
+                    category='recommendation',
+                    severity='info',
+                    title='当日累计工作时长',
+                    description=f'当日累计工作{int(duration_minutes)}分钟（{session_count}个会话），'
+                               f'最长单次{int(max_single_minutes)}分钟',
+                    suggestion=f'建议每45-50分钟休息5-10分钟。'
+                              f'当前最长连续会话{int(max_single_minutes)}分钟，'
+                              f'{"已超推荐周期，建议增加休息频率" if max_single_minutes > 50 else "节奏良好"}',
+                    data_evidence={'duration_minutes': duration_minutes,
+                                   'session_count': session_count,
+                                   'max_single_minutes': max_single_minutes},
+                ))
+        else:
+            # 单会话 — 连续工作文案
+            if duration_minutes > 60:
+                remain = duration_minutes - 45
+                insights.append(Insight(
+                    category='recommendation',
+                    severity='info',
+                    title='连续工作时长较长',
+                    description=f'已连续工作{int(duration_minutes)}分钟，超过推荐高效周期',
+                    suggestion=f'建议每45-50分钟休息5-10分钟，超时{int(remain)}分钟，尽快休息',
+                    data_evidence={'duration_minutes': duration_minutes},
+                ))
 
         # ── 2. 疲劳后恢复建议 ──
-        if duration_minutes > 90 and avg_focus < self._user_focus_good:
+        check_dur = max_single_minutes if is_daily and max_single_minutes > 0 else duration_minutes
+        if check_dur > 90 and avg_focus < self._user_focus_good:
+            dur_label = f'最长连续{int(check_dur)}分钟' if is_daily else f'连续工作{int(check_dur)}分钟'
             insights.append(Insight(
                 category='recommendation',
                 severity='warning',
                 title='长时间工作后专注下降',
-                description=f'连续工作{int(duration_minutes)}分钟且专注度{avg_focus:.0f}分，已达效率瓶颈',
+                description=f'{dur_label}且专注度{avg_focus:.0f}分，已达效率瓶颈',
                 suggestion='建议10-15分钟彻底休息（起身走动+远眺+补水），之后效率明显回升',
-                data_evidence={'duration_minutes': duration_minutes, 'avg_focus': avg_focus},
+                data_evidence={'duration_minutes': check_dur, 'avg_focus': avg_focus,
+                               'is_daily': is_daily},
             ))
 
         # ── 3. 专注度分级建议 ──

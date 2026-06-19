@@ -233,9 +233,11 @@ class HTMLReportGenerator:
             calibrated = [s for s in sessions if s.is_calibrated and s.baseline_blink_rate]
             if calibrated:
                 baseline_blink = calibrated[-1].baseline_blink_rate
+            # v4.37: 用首个真实会话时间，非午夜（Bug #5）
+            real_start = first.start_time if first.start_time else datetime.strptime(date_str, "%Y-%m-%d")
             combined_session = Session(
                 session_id=f"daily_{date_str}",
-                start_time=datetime.strptime(date_str, "%Y-%m-%d"),
+                start_time=real_start,
                 end_time=last.end_time or datetime.now(),
                 baseline_blink_rate=baseline_blink,
                 is_calibrated=bool(calibrated),
@@ -245,6 +247,11 @@ class HTMLReportGenerator:
             avg_blink_rate = self._calc_avg_blink_rate(focus_records)
             total_duration = data["total_duration"]
             fatigue_level = self._determine_fatigue_level(data["fatigue_records"])
+            # v4.37: 计算最长单次会话时长（用于日汇总建议）
+            max_session_duration = max(
+                (s.end_time - s.start_time).total_seconds()
+                for s in sessions if s.end_time
+            ) if sessions else 0.0
 
             report_data = self._data = ReportData(
                 session=combined_session,
@@ -267,6 +274,9 @@ class HTMLReportGenerator:
                 session_duration=total_duration,
                 session_id=combined_session.session_id,
                 session_start_time=combined_session.start_time.timestamp(),
+                is_daily=True,
+                session_count=len(sessions),
+                max_session_duration=max_session_duration,
             )
             return self._render_daily_html(report_data, charts, insights, len(sessions))
         except Exception as e:
@@ -865,12 +875,22 @@ class HTMLReportGenerator:
 
     # ── v4.27: L3 级深度分析数据 ──
 
-    def _compute_deep_llm_data(self, data: ReportData) -> dict:
-        """构造 L3 级深度分析数据字典（含时序模式 + 历史对比）"""
+    def _compute_deep_llm_data(self, data: ReportData, session_start: float = 0.0) -> dict:
+        """构造 L3 级深度分析数据字典（含时序模式 + 历史对比）
+
+        v4.37: session_start 用于计算相对分钟偏移，避免 Unix 时间戳 //60 产生荒谬值。
+        """
         base = self._compute_llm_data(data)
         fr = data.focus_records or []
         dur = data.total_duration or 0.0
         avg = data.avg_focus or 50.0
+
+        # 确保 session_start 有效
+        if session_start == 0.0 and data.session and data.session.start_time:
+            try:
+                session_start = data.session.start_time.timestamp()
+            except Exception:
+                pass
 
         # 1. 专注悬崖（>15 分降幅）
         cliffs = []
@@ -879,8 +899,9 @@ class HTMLReportGenerator:
             if prev_score is not None and r.focus_score is not None:
                 drop = prev_score - r.focus_score
                 if drop >= 15:
-                    minute = int(r.window_start // 60) if r.window_start else 0
-                    cliffs.append(f"第{minute}分: {prev_score:.0f}→{r.focus_score:.0f} (-{drop:.0f}分)")
+                    # v4.37: 相对偏移而非 Unix 时间戳直接除 60
+                    offset = int((r.window_start - session_start) // 60) if (r.window_start and session_start) else 0
+                    cliffs.append(f"第{offset}分: {prev_score:.0f}→{r.focus_score:.0f} (-{drop:.0f}分)")
             prev_score = r.focus_score if r.focus_score is not None else prev_score
 
         # 2. 疲劳演变时间线
@@ -889,8 +910,9 @@ class HTMLReportGenerator:
         for r in (data.fatigue_records or []):
             level = r.fatigue_level.name if hasattr(r.fatigue_level, 'name') else str(r.fatigue_level)
             if level != last_level:
-                minute = int(r.timestamp // 60) if r.timestamp else 0
-                fatigue_steps.append(f"第{minute}分 {level}")
+                # v4.37: 相对偏移而非 Unix 时间戳直接除 60
+                offset = int((r.timestamp - session_start) // 60) if (r.timestamp and session_start) else 0
+                fatigue_steps.append(f"第{offset}分 {level}")
                 last_level = level
 
         # 3. 分心分布
@@ -1102,17 +1124,20 @@ class HTMLReportGenerator:
         import html as _html
 
         avg = d["avg_focus"]
+        # v4.37: 检测日汇总
+        is_daily = bool(data.session and data.session.session_id.startswith("daily_"))
         parts = []
 
         # ── 整体评价 ──
+        label = "当日" if is_daily else "本次会话"
         if avg >= 80:
-            parts.append(f"本次会话专注度 {avg:.0f} 分，表现优秀。")
+            parts.append(f"{label}专注度 {avg:.0f} 分，表现优秀。")
         elif avg >= 65:
-            parts.append(f"本次会话专注度 {avg:.0f} 分，整体良好。")
+            parts.append(f"{label}专注度 {avg:.0f} 分，整体良好。")
         elif avg >= 50:
-            parts.append(f"本次会话专注度 {avg:.0f} 分，处于中等水平。")
+            parts.append(f"{label}专注度 {avg:.0f} 分，处于中等水平。")
         else:
-            parts.append(f"本次会话专注度 {avg:.0f} 分，偏低。")
+            parts.append(f"{label}专注度 {avg:.0f} 分，偏低。")
 
         # ── 历史对比 ──
         hist = d.get("hist_avg_focus", 0)
@@ -1146,8 +1171,12 @@ class HTMLReportGenerator:
 
         # ── 时长 ──
         dur = d["duration"]
-        if dur >= 90:
-            parts.append(f"连续工作 {dur} 分钟，注意规律休息。")
+        if is_daily:
+            if dur >= 90:
+                parts.append(f"当日累计工作 {dur} 分钟（多会话），注意规律休息。")
+        else:
+            if dur >= 90:
+                parts.append(f"连续工作 {dur} 分钟，注意规律休息。")
 
         # ── 建议 ──
         suggestions = []
