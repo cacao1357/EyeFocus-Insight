@@ -105,6 +105,9 @@ class WebDashboard:
         self._running = False
         if self._loop and not self._loop.is_closed():
             asyncio.run_coroutine_threadsafe(self._shutdown(), self._loop)
+        # v4.31: 等待 daemon 线程退出，避免残留
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
 
     def broadcast(self, data: Dict[str, Any]) -> None:
         """广播数据到所有连接的 WebSocket 客户端

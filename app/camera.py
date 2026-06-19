@@ -45,6 +45,14 @@ class CameraManager:
                     "CameraManager.start(): 残留 read 线程未在 3s 内退出, 继续启动"
                 )
 
+        # v4.31: 防御性释放在用摄像头，避免双开
+        if self._cap is not None:
+            try:
+                self._cap.release()
+            except Exception:
+                pass
+            self._cap = None
+
         self._cap = cv2.VideoCapture(self._camera_index, cv2.CAP_DSHOW)
 
         if not self._cap.isOpened():

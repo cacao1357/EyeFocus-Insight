@@ -276,14 +276,12 @@ class TestEyeAspectDetector:
         """测试 reset() 清除状态"""
         detector = EyeAspectDetector()
         detector.set_baseline(0.35)
-        detector._blinks_in_progress = 2
         detector._frame_count = 100
 
         detector.reset()
 
         stats = detector.get_stats()
         assert stats["has_baseline"] is False
-        assert stats["blinks_in_progress"] == 0
         assert stats["frame_count"] == 0
         assert stats["head_pose_weight"] == 1.0
         assert stats["face_stability_weight"] == 1.0

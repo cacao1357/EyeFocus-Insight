@@ -982,11 +982,11 @@ class TestEndToEndScenarios:
         result = analyzer.analyze(closure_type="open", blink_rate=15.0)
         assert result.fatigue_indicator.value == "rested"
 
-        # v4.6.1: 模拟 3 分钟内 9 次长闭眼 → TIRED
+        # v4.30: 模拟 3 分钟内 16 次长闭眼 → TIRED (TIRED≥15)
         import time as _time
         now = _time.time()
-        for i in range(9):
-            analyzer._prolonged_events.append(now - i * 15)
+        for i in range(16):
+            analyzer._prolonged_events.append(now - i * 10)
         result = analyzer.analyze(closure_type="open", blink_rate=15.0)
         assert result.fatigue_indicator.value == "tired", (
-            f"9次长闭眼应判定 TIRED, 实际: {result.fatigue_indicator}")
+            f"16次长闭眼应判定 TIRED, 实际: {result.fatigue_indicator}")

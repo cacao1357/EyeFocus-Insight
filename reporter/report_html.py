@@ -62,6 +62,9 @@ class ReportData:
     fatigue_level: FatigueLevel
 
 
+# v4.32: 模块级图表缓存 — 同一天内重复打开报告免重新生成 Plotly
+_chart_html_cache: "Dict[str, Dict[str, str]]" = {}
+
 class HTMLReportGenerator:
     """HTML 报告生成器
 
@@ -85,7 +88,9 @@ class HTMLReportGenerator:
         import shutil
         import plotly as _plotly
         src = _os.path.join(_os.path.dirname(_plotly.__file__), 'package_data', 'plotly.min.js')
-        dst = _os.path.join(report_dir, 'plotly.min.js')
+        # v4.30: 基于 reporter 所在目录解析，避免 CWD 漂移
+        base = _os.path.dirname(_os.path.abspath(__file__))
+        dst = _os.path.join(base, report_dir, 'plotly.min.js')
         if not _os.path.exists(dst) and _os.path.exists(src):
             try:
                 shutil.copy2(src, dst)
@@ -201,6 +206,88 @@ class HTMLReportGenerator:
         # 渲染 HTML
         return self._render_html(report_data, charts, insights)
 
+    def generate_daily_report(self, date_str: str) -> str:
+        """生成当天所有会话的合并汇总报告
+
+        Args:
+            date_str: "YYYY-MM-DD"
+
+        Returns:
+            HTML 字符串
+        """
+        if not self.db:
+            return self._error_html("数据库管理器未初始化")
+
+        try:
+            data = self.db.get_daily_merged_data(date_str)
+            if not data:
+                return self._error_html(f"未找到 {date_str} 的数据")
+
+            sessions = data["sessions"]
+            focus_records = data["focus_records"]
+            if not sessions or len(focus_records) < 2:
+                return self._render_insufficient_data(f"daily_{date_str}")
+
+            # 构造合成 Session（占位，total_duration 从 merge 数据来）
+            from datetime import datetime
+            first = sessions[0]
+            last = sessions[-1]
+            baseline_blink = None
+            calibrated = [s for s in sessions if s.is_calibrated and s.baseline_blink_rate]
+            if calibrated:
+                baseline_blink = calibrated[-1].baseline_blink_rate
+            combined_session = Session(
+                session_id=f"daily_{date_str}",
+                start_time=datetime.strptime(date_str, "%Y-%m-%d"),
+                end_time=last.end_time or datetime.now(),
+                baseline_blink_rate=baseline_blink,
+                is_calibrated=bool(calibrated),
+            )
+
+            avg_focus = self._calc_avg_focus(focus_records)
+            avg_blink_rate = self._calc_avg_blink_rate(focus_records)
+            total_duration = data["total_duration"]
+            fatigue_level = self._determine_fatigue_level(data["fatigue_records"])
+
+            report_data = self._data = ReportData(
+                session=combined_session,
+                focus_records=focus_records,
+                fatigue_records=data["fatigue_records"],
+                blink_records=data["blink_records"],
+                frame_records=data["frame_records"],
+                avg_focus=avg_focus,
+                avg_blink_rate=avg_blink_rate,
+                total_duration=total_duration,
+                fatigue_level=fatigue_level,
+            )
+
+            charts = self._generate_charts(report_data)
+            insights = self.insights_engine.analyze(
+                focus_records=focus_records,
+                fatigue_records=data["fatigue_records"],
+                avg_focus=avg_focus,
+                avg_blink_rate=avg_blink_rate,
+                session_duration=total_duration,
+                session_id=combined_session.session_id,
+                session_start_time=combined_session.start_time.timestamp(),
+            )
+            return self._render_daily_html(report_data, charts, insights, len(sessions))
+        except Exception as e:
+            logger.error("生成日汇总报告失败: %s", e)
+            return self._error_html(f"生成日汇总报告失败: {e}")
+
+    def _render_daily_html(self, data: ReportData, charts: dict,
+                           insights: List[Insight], session_count: int) -> str:
+        """日汇总报告的 HTML（头部加会话数提示）"""
+        html = self._render_html(data, charts, insights)
+        safe_sid = html_escape(data.session.session_id)
+        old = f'会话 ID: {safe_sid} |'
+        new = (f'📅 当日汇总 · {session_count} 个会话 &nbsp;|&nbsp;'
+               f'<span style="font-size:11px;color:var(--quiet)">'
+               f'会话 ID: {safe_sid} |')
+        html = html.replace(old, new, 1)
+        return html
+
     def generate_report_from_data(
         self,
         session: Session,
@@ -256,70 +343,87 @@ class HTMLReportGenerator:
         return self._render_html(report_data, charts, insights)
 
     def _generate_charts(self, data: ReportData) -> dict:
-        """生成所有图表
+        """生成所有图表（v4.32: 图表缓存 + 6 线程并行）
 
         每个图表独立 try/except，失败不互相影响。返回值结构:
             {name: {"data": base64_str | None, "error": str | None}}
-
-        - data != None, error == None: 成功
-        - data == None, error == None:  无数据（按业务逻辑跳过）
-        - data == None, error != None:  生成失败（异常被记录，HTML 渲染会
-          显示 chart-error 标记，让用户/调用方知道是失败不是无数据）
-
-        H-10 修复: 原代码一个 try/except 包全部 4 个图表，任一失败时
-        charts dict 部分缺失但调用方无任何反馈，HTML 只能看到一片空白。
         """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        # v4.32: 缓存键 = (会话ID, 各表记录数) — 同数据集命中缓存，免 Plotly 重渲染
+        sid = data.session.session_id
+        cache_key = (
+            sid,
+            len(data.focus_records),
+            len(data.fatigue_records),
+            len(data.frame_records),
+        )
+        if cache_key in _chart_html_cache:
+            logger.debug("图表缓存命中: %s", sid)
+            return _chart_html_cache[cache_key]
+
         charts = {}
+        has_focus = bool(data.focus_records)
 
-        # 每个图表独立 try/except + always populate entry (即使失败)
-        def _try_chart(name, gen_fn, has_data):
-            """v4.16: Plotly 返回 HTML 字符串，直接使用。"""
-            if not has_data:
-                charts[name] = {"data": None, "error": None}
-                return
-            try:
-                result = gen_fn()
-                # v4.16: Plotly 返回 HTML 字符串；session_colorbar 也返回 HTML
-                if isinstance(result, bytes):
-                    charts[name] = {"data": self._bytes_to_base64(result), "error": None}
-                else:
-                    charts[name] = {"data": result, "error": None}
-            except Exception as e:
-                logger.error("生成图表 %s 失败: %s", name, e)
-                charts[name] = {"data": None, "error": str(e)}
+        # 定义图表任务 (name, gen_fn, has_data)
+        tasks = [
+            ("focus_trend",
+             lambda: self.chart_gen.generate_focus_trend_chart(data.focus_records),
+             has_focus),
+            ("blink_rate",
+             lambda: self.chart_gen.generate_blink_rate_chart(
+                 data.focus_records,
+                 baseline_blink_rate=data.session.baseline_blink_rate,
+             ),
+             has_focus),
+            ("fatigue_timeline",
+             lambda: self.chart_gen.generate_fatigue_timeline(data.fatigue_records),
+             bool(data.fatigue_records)),
+            ("session_colorbar",
+             lambda: self.chart_gen.generate_session_colorbar(data.focus_records),
+             has_focus),
+            ("head_pose_scatter",
+             lambda: self.chart_gen.generate_head_pose_scatter(data.frame_records),
+             bool(data.frame_records)),
+        ]
 
-        _try_chart(
-            "focus_trend",
-            lambda: self.chart_gen.generate_focus_trend_chart(data.focus_records),
-            has_data=bool(data.focus_records),
-        )
-        _try_chart(
-            "blink_rate",
-            lambda: self.chart_gen.generate_blink_rate_chart(data.focus_records),
-            has_data=bool(data.focus_records),
-        )
-        _try_chart(
-            "fatigue_timeline",
-            lambda: self.chart_gen.generate_fatigue_timeline(data.fatigue_records),
-            has_data=bool(data.fatigue_records),
-        )
-        _try_chart(
-            "session_colorbar",
-            lambda: self.chart_gen.generate_session_colorbar(data.focus_records),
-            has_data=bool(data.focus_records),
-        )
-        _try_chart(
-            "head_pose_scatter",
-            lambda: self.chart_gen.generate_head_pose_scatter(data.frame_records),
-            has_data=bool(data.frame_records),
-        )
+        # 并行生成 5 个 Plotly 图表（纯 CPU 无 DB I/O）
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            futures = {}
+            for name, gen_fn, has_data in tasks:
+                if not has_data:
+                    charts[name] = {"data": None, "error": None}
+                    continue
+                futures[executor.submit(gen_fn)] = name
 
-        # v4.17: 日历热力图
-        _try_chart(
-            "calendar_heatmap",
-            lambda: self._generate_calendar_chart(),
-            has_data=True,
-        )
+            for future in as_completed(futures):
+                name = futures[future]
+                try:
+                    result = future.result()
+                    if isinstance(result, bytes):
+                        charts[name] = {"data": self._bytes_to_base64(result), "error": None}
+                    else:
+                        charts[name] = {"data": result, "error": None}
+                except Exception as e:
+                    logger.error("生成图表 %s 失败: %s", name, e)
+                    charts[name] = {"data": None, "error": str(e)}
+
+        # 日历热力图 — 串行（内部调用 self.db，避免线程竞争）
+        try:
+            charts["calendar_heatmap"] = {
+                "data": self._generate_calendar_chart(),
+                "error": None,
+            }
+        except Exception as e:
+            logger.warning("日历热力图生成失败: %s", e)
+            charts["calendar_heatmap"] = {"data": None, "error": str(e)}
+
+        # v4.32: 缓存图表结果（同数据集再打开免重渲染）
+        _chart_html_cache[cache_key] = charts
+        # 限制缓存 ≤ 5 条目，防内存增长
+        if len(_chart_html_cache) > 5:
+            oldest = next(iter(_chart_html_cache))
+            del _chart_html_cache[oldest]
 
         return charts
 
@@ -417,14 +521,27 @@ class HTMLReportGenerator:
         focused_count = sum(1 for r in data.focus_records if r.focus_score >= 80)
         stats["focus_rate"] = (focused_count / max(1, len(data.focus_records))) * 100
 
-        # 与历史对比
+        # 与历史对比（v4.30: 每个会话等权重平均，长会话不主导）
         if self.db and data.session.session_id:
             try:
+                sid = data.session.session_id
+                if sid.startswith("daily_"):
+                    exclude_where = "AND date(s.start_time) != ?"
+                    exclude_val = sid.replace("daily_", "")
+                else:
+                    exclude_where = "AND s.session_id != ?"
+                    exclude_val = sid
+
                 with self.db._get_cursor() as cur:
-                    cur.execute("""
-                        SELECT AVG(focus_score) FROM focus_records
-                        WHERE session_id != ? AND focus_score IS NOT NULL
-                    """, (data.session.session_id,))
+                    cur.execute(f"""
+                        SELECT AVG(session_avg) FROM (
+                            SELECT AVG(f.focus_score) AS session_avg
+                            FROM sessions s
+                            JOIN focus_records f ON s.session_id = f.session_id
+                            WHERE f.focus_score IS NOT NULL {exclude_where}
+                            GROUP BY s.session_id
+                        )
+                    """, (exclude_val,))
                     row = cur.fetchone()
                     if row and row[0] is not None:
                         stats["hist_avg_focus"] = round(row[0], 1)
@@ -503,22 +620,16 @@ class HTMLReportGenerator:
         if weekly_html:
             parts.append(weekly_html)
 
-        # ── v4.26: AI 摘要 snippet ──
-        try:
-            summary = self._generate_ai_summary()
-            if summary and len(summary) > 5:
-                snippet = summary[:120] + "…" if len(summary) > 120 else summary
-                parts.append(f'''
-                    <div class="card" style="border-left:2px solid var(--iris-600);">
-                        <h2>🤖 AI 分析速览</h2>
-                        <div class="card-desc" style="font-size:13px;line-height:1.7;">
-                            {snippet}
-                            <br><a href="#" onclick="switchTab('suggestions');return false;"
-                               style="color:var(--iris-600);font-size:12px;">查看完整分析 →</a>
-                        </div>
-                    </div>''')
-        except Exception:
-            pass
+        # v4.33: AI 分析速览已移除
+
+        # ── v4.33: 数据更新时间标注 ──
+        from datetime import datetime as _dt
+        now_str = _dt.now().strftime("%H:%M:%S")
+        parts.append(f'''
+            <div style="text-align:center;color:var(--quiet);font-size:10px;
+                        padding:8px 0 4px 0;opacity:0.7;">
+            📊 数据更新至 {now_str} · 5分钟内重复打开免重新生成
+            </div>''')
 
         return "\n".join(parts)
 
@@ -526,7 +637,7 @@ class HTMLReportGenerator:
     # v4.25: 周聚合（嵌入主报告概览 Tab）
     # ════════════════════════════════════════════
     def _compute_weekly_stats(self):
-        """计算本周聚合统计数据"""
+        """计算本周聚合统计数据（v4.30: 按天汇总）"""
         if not self.db:
             return None
         from datetime import datetime, timedelta
@@ -539,38 +650,55 @@ class HTMLReportGenerator:
         if not sessions:
             return None
 
-        total_minutes = 0.0
-        total_score = 0.0
-        score_count = 0
-        session_list = []
-
+        # 按天分组
+        from collections import defaultdict
+        day_groups = defaultdict(list)
         for sess in sessions:
-            dur = sess.duration_seconds() or 0.0
-            total_minutes += dur / 60.0
-            records = self.db.get_focus_records(sess.session_id)
-            avg = 0.0
-            if records:
-                valid = [r.focus_score for r in records if r.focus_score is not None]
-                if valid:
-                    avg = sum(valid) / len(valid)
-                    total_score += avg
-                    score_count += 1
-            session_list.append({
-                "id": sess.session_id[:8],
-                "date": sess.start_time.strftime("%m-%d %H:%M"),
-                "duration": dur / 60.0,
-                "score": avg,
+            if sess.end_time is None:
+                continue  # 跳过未结束的孤立会话
+            day_key = sess.start_time.strftime("%Y-%m-%d")
+            day_groups[day_key].append(sess)
+
+        if not day_groups:
+            return None
+
+        # v4.31: 批量获取所有会话的专注度记录（单次查询，消除 N+1）
+        all_sids = [s.session_id for s in sessions if s.end_time is not None]
+        focus_map = self.db.get_focus_records_batch(all_sids)
+
+        total_minutes = 0.0
+        days_list = []
+
+        for day_key in sorted(day_groups, reverse=True):
+            day_sessions = day_groups[day_key]
+            day_dur = 0.0
+            day_scores = []
+            for sess in day_sessions:
+                dur = sess.duration_seconds() or 0.0
+                day_dur += dur
+                records = focus_map.get(sess.session_id, [])
+                if records:
+                    valid = [r.focus_score for r in records if r.focus_score is not None]
+                    day_scores.extend(valid)
+
+            total_minutes += day_dur / 60.0
+            day_avg = sum(day_scores) / len(day_scores) if day_scores else 0.0
+            days_list.append({
+                "date": day_key,
+                "label": datetime.strptime(day_key, "%Y-%m-%d").strftime("%m-%d"),
+                "duration": day_dur / 60.0,
+                "score": day_avg,
+                "count": len(day_sessions),
             })
 
-        avg_score = total_score / max(1, score_count) if score_count > 0 else 0
-        days_active = len(set(s.start_time.strftime("%Y-%m-%d") for s in sessions))
+        avg_score = sum(d["score"] for d in days_list) / max(1, len(days_list))
 
         return {
             "total_minutes": total_minutes,
             "avg_score": avg_score,
-            "session_count": len(sessions),
-            "days_active": days_active,
-            "sessions": session_list,
+            "session_count": sum(d["count"] for d in days_list),
+            "days_active": len(days_list),
+            "sessions": days_list,
             "range": f"{week_ago.strftime('%m-%d')} ~ {today.strftime('%m-%d')}",
         }
 
@@ -598,17 +726,18 @@ class HTMLReportGenerator:
             f'</div>'
         )
 
-        # 会话明细表
+        # 按天明细表（v4.30: 每天一行，含会话数）
         rows = "".join(
-            f'<tr><td>{s["date"]}</td><td>{s["duration"]:.0f}分</td>'
-            f'<td>{s["score"]:.0f}分</td></tr>'
+            f'<tr><td>{s["label"]}</td><td>{s["duration"]:.0f}分</td>'
+            f'<td>{s["score"]:.0f}分</td><td style="color:var(--quiet);font-size:11px;">×{s["count"]}</td></tr>'
             for s in stats["sessions"][:10]
         )
         table = f"""
         <table class="detail-table" style="margin-top:8px;">
-            <tr><th style="text-align:left;color:var(--quiet);font-weight:500;font-size:11px;">时间</th>
+            <tr><th style="text-align:left;color:var(--quiet);font-weight:500;font-size:11px;">日期</th>
                 <th style="text-align:left;color:var(--quiet);font-weight:500;font-size:11px;">时长</th>
-                <th style="text-align:left;color:var(--quiet);font-weight:500;font-size:11px;">专注度</th></tr>
+                <th style="text-align:left;color:var(--quiet);font-weight:500;font-size:11px;">专注度</th>
+                <th style="text-align:left;color:var(--quiet);font-weight:500;font-size:11px;">会话</th></tr>
             {rows}
         </table>""" if stats["sessions"] else ""
 
@@ -1329,29 +1458,44 @@ class HTMLReportGenerator:
         if len(sessions) < 2:
             return self._error_html("本周数据不足（至少需要 2 个会话才能生成周报）")
 
-        # 聚合统计
-        total_minutes = 0.0
-        total_score = 0.0
-        score_count = 0
-        session_list = []
-
+        # 按天聚合统计（v4.30）
+        from collections import defaultdict
+        day_groups = defaultdict(list)
         for sess in sessions:
-            dur = sess.duration_seconds() or 0.0
-            total_minutes += dur / 60.0
-            records = self.db.get_focus_records(sess.session_id)
-            if records:
-                valid = [r.focus_score for r in records if r.focus_score is not None]
-                avg = sum(valid) / max(1, len(valid)) if valid else 0.0
-                total_score += avg
-                score_count += 1
-                session_list.append({"date": sess.start_time.strftime("%m-%d"),
-                                     "duration": dur / 60.0, "score": avg})
-            else:
-                session_list.append({"date": sess.start_time.strftime("%m-%d"),
-                                     "duration": dur / 60.0, "score": 0})
+            if sess.end_time is None:
+                continue
+            day_key = sess.start_time.strftime("%Y-%m-%d")
+            day_groups[day_key].append(sess)
 
-        avg_score = total_score / max(1, score_count) if score_count > 0 else 0
-        days_active = len(set(s.start_time.strftime("%Y-%m-%d") for s in sessions))
+        if not day_groups:
+            return self._error_html("本周无已完成会话")
+
+        total_minutes = 0.0
+        session_list = []
+        for day_key in sorted(day_groups, reverse=True):
+            day_sessions = day_groups[day_key]
+            day_dur = 0.0
+            day_scores = []
+            for sess in day_sessions:
+                dur = sess.duration_seconds() or 0.0
+                day_dur += dur
+                records = self.db.get_focus_records(sess.session_id)
+                if records:
+                    for r in records:
+                        if r.focus_score is not None:
+                            day_scores.append(r.focus_score)
+            total_minutes += day_dur / 60.0
+            day_avg = sum(day_scores) / len(day_scores) if day_scores else 0.0
+            from datetime import datetime as _dt
+            session_list.append({
+                "date": _dt.strptime(day_key, "%Y-%m-%d").strftime("%m-%d"),
+                "duration": day_dur / 60.0,
+                "score": day_avg,
+                "count": len(day_sessions),
+            })
+
+        avg_score = sum(s["score"] for s in session_list) / max(1, len(session_list))
+        days_active = len(session_list)
 
         # 日历热力图数据
         all_stats = self.db.get_all_daily_stats()
@@ -1371,7 +1515,8 @@ class HTMLReportGenerator:
         rows = "".join(
             f'<tr><td>{s["date"]}</td>'
             f'<td>{s["duration"]:.0f}分钟</td>'
-            f'<td>{s["score"]:.0f}分</td></tr>'
+            f'<td>{s["score"]:.0f}分</td>'
+            f'<td style="color:var(--quiet);font-size:12px;">×{s["count"]}</td></tr>'
             for s in session_list[:7]
         )
 
@@ -1401,15 +1546,15 @@ class HTMLReportGenerator:
     <div class="hero">
         <div class="hero-item"><div class="num">{total_minutes:.0f}</div><div class="lbl">总专注(分钟)</div></div>
         <div class="hero-item"><div class="num">{avg_score:.0f}</div><div class="lbl">平均专注度</div></div>
-        <div class="hero-item"><div class="num">{len(sessions)}</div><div class="lbl">会话数</div></div>
+        <div class="hero-item"><div class="num">{sum(s["count"] for s in session_list)}</div><div class="lbl">总会话</div></div>
         <div class="hero-item"><div class="num">{days_active}</div><div class="lbl">活跃天数</div></div>
     </div>
 
     <h2 style="font-size:16px;font-weight:400;border-bottom:1px solid var(--line);padding-bottom:8px;">📅 专注日历</h2>
     <div style="margin:12px 0;">{cal_html}</div>
 
-    <h2 style="font-size:16px;font-weight:400;border-bottom:1px solid var(--line);padding-bottom:8px;">📋 会话明细</h2>
-    <table><tr><th>日期</th><th>时长</th><th>平均专注度</th></tr>{rows}</table>
+    <h2 style="font-size:16px;font-weight:400;border-bottom:1px solid var(--line);padding-bottom:8px;">📋 每日明细</h2>
+    <table><tr><th>日期</th><th>时长</th><th>专注度</th><th>会话</th></tr>{rows}</table>
 
     <div class="footer">EyeFocus Insight · 自动生成</div>
 </body></html>"""
@@ -1710,11 +1855,14 @@ class HTMLReportGenerator:
         return "\n".join(sections)
 
     def _format_duration(self, seconds: float) -> str:
-        """格式化时长"""
+        """格式化时长（自动按小时/分钟/秒分级）"""
         if seconds <= 0:
             return "0秒"
-        minutes = int(seconds // 60)
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
         secs = int(seconds % 60)
+        if hours > 0:
+            return f"{hours}小时{minutes}分"
         if minutes > 0:
             return f"{minutes}分{secs}秒"
         return f"{secs}秒"

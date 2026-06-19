@@ -258,6 +258,7 @@ class FrameProcessor:
             ear_nadir = recent_blinks[-1].ear_nadir
 
         fatigue_result = self._fatigue_analyzer.analyze(
+            closure_type=self._eye_detector.get_closure_type(),
             blink_rate=focus_result.blink_rate,
             ear_nadir=ear_nadir,
             head_stability=focus_result.head_score,

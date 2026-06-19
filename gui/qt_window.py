@@ -824,6 +824,7 @@ class EyeFocusWindow(QMainWindow):
         if self._enable_tray and self._tray_icon and not self._force_exit:
             logger.info("窗口关闭 → 最小化到托盘")
             self.hide()
+            self._toggle_visibility_action_text("显示窗口")
             event.ignore()
         else:
             logger.info("窗口关闭 → 退出程序")

@@ -42,7 +42,7 @@ _LAYOUT_BASE = dict(
     xaxis=dict(
         showgrid=False, zeroline=False,
         tickfont=dict(size=10, color=C_QUIET),
-        linecolor=C_LINE,
+        linecolor=C_LINE, nticks=15, automargin=True,
     ),
     yaxis=dict(
         showgrid=False, zeroline=False,
@@ -90,7 +90,174 @@ class ChartGenerator:
             v = getattr(r, 'window_start', None)
             return v if (v is not None and v != 0.0) else getattr(r, 'timestamp', 0.0)
         t0 = min(_ts(r) for r in sorted_r)
-        return [f"{int((_ts(r)-t0)//60)}:{int((_ts(r)-t0)%60):02d}" for r in sorted_r]
+        return [self._fmt_offset(_ts(r) - t0) for r in sorted_r]
+
+    @staticmethod
+    def _ts(r):
+        """提取记录的时间戳（秒）"""
+        v = getattr(r, 'window_start', None)
+        return v if (v is not None and v != 0.0) else getattr(r, 'timestamp', 0.0)
+
+    @staticmethod
+    def _numeric_offsets(records):
+        """返回从首条记录开始的秒偏移列表"""
+        if not records:
+            return []
+        sorted_r = ChartGenerator._sorted_records(records)
+        t0 = min(ChartGenerator._ts(r) for r in sorted_r)
+        return [ChartGenerator._ts(r) - t0 for r in sorted_r]
+
+    GAP_THRESHOLD = 1800  # 30 分钟 — 相邻记录间隔超过此值视为检测中断
+
+    @classmethod
+    def _insert_gap_breaks(cls, records, offsets, values):
+        """在数据间隔处插入 (None, None)，Plotly 自动断开线条。
+
+        Returns (offsets_with_nan, values_with_nan)
+        """
+        if len(records) < 2:
+            return list(offsets), list(values)
+
+        new_offsets, new_vals = [], []
+        for i in range(len(records)):
+            if i > 0:
+                dt = cls._ts(records[i]) - cls._ts(records[i - 1])
+                if dt > cls.GAP_THRESHOLD:
+                    new_offsets.append(None)
+                    new_vals.append(None)
+            new_offsets.append(offsets[i])
+            new_vals.append(values[i])
+        return new_offsets, new_vals
+
+    @staticmethod
+    def _downsample_focus(focus_records, target=30):
+        """间隙感知降采样 — 仅在有数据的时段内均匀分布标记点。
+
+        v4.33:
+        - 目标 30 个标记点（用户明确要求）
+        - 扫描相邻记录间隔 > GAP_THRESHOLD → 标记为间隙，不在间隙内分桶
+        - 有效时长 = 总时长 - 间隙时长。bucket_dt = 有效时长 / target
+        - 每桶 1 个代表点（等级跨越优先，否则中位数）
+        - 间隙边界记录始终保留
+        """
+        n = len(focus_records)
+        if n <= target:
+            return list(range(n))
+
+        kept = {0, n - 1}  # 首尾始终保留
+
+        # ── 阶段 1: 检测间隙 ──
+        gaps = []  # [(gap_start_idx, gap_end_idx), ...] — 间隙的记录索引
+        for i in range(1, n):
+            dt = ChartGenerator._ts(focus_records[i]) - ChartGenerator._ts(focus_records[i - 1])
+            if dt > ChartGenerator.GAP_THRESHOLD:
+                gaps.append((i - 1, i))
+                kept.add(i - 1)  # 间隙前边界
+                kept.add(i)      # 间隙后边界
+
+        # ── 阶段 2: 计算有效时长 ──
+        t0 = ChartGenerator._ts(focus_records[0])
+        tN = ChartGenerator._ts(focus_records[-1])
+        total_dt = max(1.0, tN - t0)
+        gap_dt = 0.0
+        for ga, gb in gaps:
+            gap_dt += ChartGenerator._ts(focus_records[gb]) - ChartGenerator._ts(focus_records[ga])
+        effective_dt = max(1.0, total_dt - gap_dt)
+        bucket_dt = effective_dt / target
+
+        # ── 阶段 3: 仅在有效时段内分桶 ──
+        def _level(s):
+            if s >= 70: return 2
+            if s >= 40: return 1
+            return 0
+
+        from statistics import median
+
+        # 构建有效段 (start_ts, end_ts) 列表
+        segments = []
+        seg_start = t0
+        for ga, gb in gaps:
+            seg_end = ChartGenerator._ts(focus_records[ga])
+            if seg_end - seg_start >= bucket_dt * 0.5:  # 段太短跳过
+                segments.append((seg_start, seg_end))
+            seg_start = ChartGenerator._ts(focus_records[gb])
+        if tN - seg_start >= bucket_dt * 0.5:
+            segments.append((seg_start, tN))
+
+        # 在每个有效段内分桶
+        for seg_start, seg_end in segments:
+            bucket_start = seg_start
+            bucket_items = []
+            last_level = None
+
+            for i, r in enumerate(focus_records):
+                t = ChartGenerator._ts(r)
+                if t < seg_start:
+                    continue
+                if t > seg_end:
+                    break
+
+                while t >= bucket_start + bucket_dt:
+                    if bucket_items:
+                        best = ChartGenerator._pick_bucket_rep(bucket_items, last_level)
+                        kept.add(best[0])
+                        last_level = None
+                    bucket_items = []
+                    bucket_start += bucket_dt
+
+                bucket_items.append((i, r.focus_score))
+                if last_level is None:
+                    last_level = _level(r.focus_score)
+
+            # 结算段内最后一个桶
+            if bucket_items:
+                best = ChartGenerator._pick_bucket_rep(bucket_items, last_level)
+                kept.add(best[0])
+
+        return sorted(kept)
+
+    @staticmethod
+    def _pick_bucket_rep(bucket_items, first_level):
+        """从桶内选 1 个代表点: 有等级跨越则选跨越点，否则选中位数点"""
+        from statistics import median
+
+        def _level(s):
+            if s >= 70: return 2
+            if s >= 40: return 1
+            return 0
+
+        if first_level is not None:
+            for idx, score in bucket_items:
+                if _level(score) != first_level:
+                    return (idx, score)
+
+        scores = [x[1] for x in bucket_items]
+        med = median(scores)
+        return min(bucket_items, key=lambda x: abs(x[1] - med))
+
+    def _regular_ticks(self, t_max_seconds: float, n_ticks: int = 24):
+        """生成 N 段均匀时间刻度
+
+        v4.31: 固定段数（默认 24 段），确保横坐标简洁、间隔均匀。
+        未采集到的时段在图表上自然留空（线条中断）。
+        """
+        t = max(1, int(t_max_seconds))
+        step = max(1, t // n_ticks)
+        tick_vals = list(range(0, t + step, step))
+        if len(tick_vals) > n_ticks + 1:
+            tick_vals = tick_vals[:n_ticks + 1]
+        tick_texts = [self._fmt_offset(v) for v in tick_vals]
+        return tick_vals, tick_texts
+
+    @staticmethod
+    def _fmt_offset(seconds: float) -> str:
+        """将秒偏移格式化为 H:MM:SS（或 M:SS）"""
+        s = int(seconds)
+        h, s = divmod(s, 3600)
+        m, s = divmod(s, 60)
+        if h > 0:
+            return f"{h}:{m:02d}:{s:02d}"
+        return f"{m}:{s:02d}"
 
     # ════════════════════════════════════════════
     # 1. 专注度趋势
@@ -99,37 +266,52 @@ class ChartGenerator:
         if not focus_records:
             return self._empty_html("无数据")
 
-        # v4.25: 排序保时序
         fr = self._sorted_records(focus_records)
-        labels = self._time_labels(focus_records)  # _time_labels 内部已排序
+        offsets = self._numeric_offsets(focus_records)
         scores = [r.focus_score for r in fr]
         colors = [_level_color(s) for s in scores]
+        hover_labels = [self._fmt_offset(o) for o in offsets]
 
         fig = go.Figure()
+
+        # 线条 — v4.33: 间隔处插入 NaN 断开
+        line_x, line_y = self._insert_gap_breaks(fr, offsets, scores)
+        line_text = [self._fmt_offset(x) if x is not None else "" for x in line_x]
         fig.add_trace(go.Scatter(
-            x=labels, y=scores, mode='lines',
+            x=line_x, y=line_y, mode='lines',
             line=dict(width=2.5, color=C_IRIS),
+            text=line_text,
             name='专注度',
-            hovertemplate='%{y:.0f} 分<br>%{x}<extra></extra>',
+            hovertemplate='%{y:.0f} 分<br>%{text}<extra></extra>',
+            connectgaps=False,
         ))
-        # 逐段着色标记点
-        for i, (s, c) in enumerate(zip(scores, colors)):
-            fig.add_trace(go.Scatter(
-                x=[labels[i]], y=[s], mode='markers',
-                marker=dict(size=6, color=c),
-                showlegend=False,
-                hoverinfo='skip',
-            ))
+
+        # 标记点 — 单 trace + 间隙感知降采样
+        sampled_idx = self._downsample_focus(fr, target=30)
+        s_offsets = [offsets[i] for i in sampled_idx]
+        s_scores = [scores[i] for i in sampled_idx]
+        s_colors = [colors[i] for i in sampled_idx]
+        fig.add_trace(go.Scatter(
+            x=s_offsets, y=s_scores, mode='markers',
+            marker=dict(size=6, color=s_colors),
+            showlegend=False,
+            hoverinfo='skip',
+        ))
 
         # 良好参考线
         fig.add_hline(y=70, line_dash="dash", line_color=C_LINE, line_width=1,
                       annotation_text="良好线 70", annotation_position="left",
                       annotation_font_size=10, annotation_font_color=C_SAGE)
 
+        # 规整时间刻度
+        t_max = offsets[-1] if offsets else 0
+        tick_vals, tick_texts = self._regular_ticks(t_max)
+
         fig.update_layout(**_LAYOUT_BASE)
         fig.update_layout(
             yaxis=dict(**_LAYOUT_BASE["yaxis"], range=[0, 105], title="专注度"),
-            xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间"),
+            xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间",
+                       tickvals=tick_vals, ticktext=tick_texts),
             showlegend=False,
         )
         return self._to_html(fig, height=240)
@@ -137,35 +319,56 @@ class ChartGenerator:
     # ════════════════════════════════════════════
     # 2. 眨眼频率
     # ════════════════════════════════════════════
-    def generate_blink_rate_chart(self, focus_records, title="眨眼频率趋势"):
+    def generate_blink_rate_chart(self, focus_records, title="眨眼频率趋势", baseline_blink_rate=None):
         if not focus_records:
             return self._empty_html("无数据")
 
         fr = self._sorted_records(focus_records)
-        labels = self._time_labels(focus_records)  # 内部已排序
+        all_offsets = self._numeric_offsets(focus_records)
         rates = [r.blink_rate for r in fr]
 
-        bc = max(5, len(rates) // 5)
-        bs = [b for b in rates[:bc] if b > 0]
-        bl = float(np.median(bs)) if bs else 15.0
+        # 优先使用校准基线，否则自适应计算（取前 1/5 非零值中位数）
+        if baseline_blink_rate is not None and baseline_blink_rate > 0:
+            bl = baseline_blink_rate
+        else:
+            bc = max(5, len(rates) // 5)
+            bs = [b for b in rates[:bc] if b > 0]
+            bl = float(np.median(bs)) if bs else 15.0
 
-        colors = [C_ROSE if r > bl*1.5 else C_AMBER if r > bl*1.2 else C_SAGE for r in rates]
+        # v4.33: 间隙感知降采样，30 个宽柱
+        sampled_idx = self._downsample_focus(fr, target=30)
+        s_offsets = [all_offsets[i] for i in sampled_idx]
+        s_rates = [rates[i] for i in sampled_idx]
+        colors = [C_ROSE if r > bl*1.5 else C_AMBER if r > bl*1.2 else C_SAGE for r in s_rates]
+
+        # 计算柱宽（基于有效间隔）
+        if len(s_offsets) >= 2:
+            bar_w = max((s_offsets[-1] - s_offsets[0]) / len(s_offsets) * 0.8, 10.0)
+        else:
+            bar_w = 60.0
 
         fig = go.Figure()
         fig.add_trace(go.Bar(
-            x=labels, y=rates,
+            x=s_offsets, y=s_rates,
             marker_color=colors,
+            width=bar_w,
             name='眨眼频率',
-            hovertemplate='%{y:.1f} 次/分<br>%{x}<extra></extra>',
+            hovertemplate='%{y:.1f} 次/分<extra></extra>',
         ))
         fig.add_hline(y=bl, line_dash="dash", line_color=C_SAGE, line_width=1.5,
                       annotation_text=f"基线 {bl:.0f}", annotation_position="left",
                       annotation_font_size=10, annotation_font_color=C_SAGE)
 
+        # 规整时间刻度
+        t_max = all_offsets[-1] if all_offsets else 0
+        tick_vals, tick_texts = self._regular_ticks(t_max)
+
         fig.update_layout(**_LAYOUT_BASE)
         fig.update_layout(
             yaxis=dict(**_LAYOUT_BASE["yaxis"], title="次/分"),
-            xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间"),
+            xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间",
+                       tickvals=tick_vals, ticktext=tick_texts),
+            bargap=0.3,
             showlegend=False,
         )
         return self._to_html(fig, height=200)
@@ -178,25 +381,35 @@ class ChartGenerator:
             return self._empty_html("无数据")
 
         fr = self._sorted_records(fatigue_records)
-        labels = self._time_labels(fatigue_records)  # 内部已排序
+        offsets = self._numeric_offsets(fatigue_records)
         scores = [r.cumulative_fatigue_score for r in fr]
+        hover_labels = [self._fmt_offset(o) for o in offsets]
 
         fig = go.Figure()
+        # 间隔处插入 NaN 断开
+        line_x, line_y = self._insert_gap_breaks(fr, offsets, scores)
+        line_text = [self._fmt_offset(x) if x is not None else "" for x in line_x]
         fig.add_trace(go.Scatter(
-            x=labels, y=scores, mode='lines',
+            x=line_x, y=line_y, mode='lines',
             line=dict(width=2, color=C_ROSE),
-            fill='tozeroy', fillcolor=f'rgba(181,92,92,0.1)',
+            text=line_text,
             name='疲劳分',
-            hovertemplate='%{y:.0f} 分<br>%{x}<extra></extra>',
+            hovertemplate='%{y:.0f} 分<br>%{text}<extra></extra>',
+            connectgaps=False,
         ))
         fig.add_hline(y=60, line_dash="dash", line_color=C_LINE, line_width=1,
                       annotation_text="严重疲劳 60", annotation_position="left",
                       annotation_font_size=10, annotation_font_color=C_ROSE)
 
+        # 规整时间刻度
+        t_max = offsets[-1] if offsets else 0
+        tick_vals, tick_texts = self._regular_ticks(t_max)
+
         fig.update_layout(**_LAYOUT_BASE)
         fig.update_layout(
             yaxis=dict(**_LAYOUT_BASE["yaxis"], title="疲劳分"),
-            xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间"),
+            xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间",
+                       tickvals=tick_vals, ticktext=tick_texts),
             showlegend=False,
         )
         return self._to_html(fig, height=220)
@@ -259,27 +472,33 @@ class ChartGenerator:
 
         step = max(1, len(times) // 200)
         times, devs = times[::step], devs[::step]
-        time_labels = [f"{int(t//60)}:{int(t%60):02d}" for t in times]
+        hover_labels = [self._fmt_offset(t) for t in times]
 
         in_zone = sum(1 for d in devs if d <= 20)
         pct = in_zone / len(devs) * 100
 
         fig = go.Figure()
         fig.add_trace(go.Scatter(
-            x=time_labels, y=devs, mode='lines',
+            x=times, y=devs, mode='lines',
             line=dict(width=1.5, color=C_IRIS),
+            text=hover_labels,
             name='偏移角',
-            hovertemplate='%{y:.1f}°<br>%{x}<extra></extra>',
+            hovertemplate='%{y:.1f}°<br>%{text}<extra></extra>',
         ))
         # v4.25: annotation_position="right" 避免与数据点重叠
         fig.add_hline(y=20, line_dash="dash", line_color=C_SAGE, line_width=1,
                       annotation_text="舒适上限 20°", annotation_position="right",
                       annotation_font_size=10, annotation_font_color=C_SAGE)
 
+        # 规整时间刻度
+        t_max = times[-1] if times else 0
+        tick_vals, tick_texts = self._regular_ticks(t_max)
+
         fig.update_layout(**_LAYOUT_BASE)
         fig.update_layout(
             yaxis=dict(**_LAYOUT_BASE["yaxis"], title="偏移度 (°)", range=[0, max(devs)*1.15]),
-            xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间"),
+            xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间",
+                       tickvals=tick_vals, ticktext=tick_texts),
             showlegend=False,
             annotations=(
                 _LAYOUT_BASE.get("annotations", []) + [

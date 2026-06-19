@@ -137,6 +137,9 @@ def insights_engine():
 @pytest.fixture
 def html_generator():
     """创建 HTML 报告生成器（无数据库依赖）"""
+    # v4.32: 清空模块级图表缓存，避免测试间缓存污染
+    from reporter.report_html import _chart_html_cache
+    _chart_html_cache.clear()
     return create_html_generator(db_manager=None)
 
 

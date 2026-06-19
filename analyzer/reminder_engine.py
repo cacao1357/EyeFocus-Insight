@@ -40,6 +40,7 @@ class ReminderEngine:
         # 冷却追踪
         self._last_notify_time: float = 0.0
         self._notify_cooldown: float = 120.0  # 两次提醒最短间隔
+        self._consecutive_high: int = 0  # v4.30: 连续 HIGH 次数（指数退避）
         self._milestones_shown: Set[int] = set()
         self._last_break_suggest: float = 0.0
         self._break_cooldown: float = 300.0   # 建议休息 5 分钟冷却
@@ -121,13 +122,19 @@ class ReminderEngine:
         if self._in_silent_hours():
             return
 
-        # v4.26: 疲劳等级自适应冷却
+        # v4.30: 疲劳等级自适应冷却 + 指数退避
         if fatigue_level == "HIGH":
-            effective_cooldown = 60.0   # 高疲劳 → 缩短到 1 分钟
-        elif fatigue_level == "MEDIUM":
-            effective_cooldown = 90.0   # 中疲劳 → 1.5 分钟
+            self._consecutive_high += 1
+            # 指数退避：1min → 2min → 4min → 8min → max 15min
+            backoff = min(60 * (2 ** (self._consecutive_high - 1)), 900)
+            effective_cooldown = float(backoff)
+            logger.debug("HIGH 疲劳退避: #%d 冷却=%ds", self._consecutive_high, backoff)
         else:
-            effective_cooldown = self._notify_cooldown
+            self._consecutive_high = 0
+            if fatigue_level == "MEDIUM":
+                effective_cooldown = 90.0
+            else:
+                effective_cooldown = self._notify_cooldown
 
         # 全局冷却
         if now - self._last_notify_time < effective_cooldown:
@@ -212,6 +219,7 @@ class ReminderEngine:
         self._last_break_suggest = 0.0
         self._prev_level = None
         self._snoozed_until = 0.0
+        self._consecutive_high = 0
 
 
 def create_reminder_engine(tray_callback=None, voice_callback=None) -> ReminderEngine:

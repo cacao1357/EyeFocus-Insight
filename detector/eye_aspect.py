@@ -136,8 +136,8 @@ class EyeAspectDetector:
         self._head_pose_weight: float = 1.0  # 1.0=正常，0.5=异常
         self._face_stability_weight: float = 1.0  # 1.0=稳定，0.3=晃动
 
-        # BUG FIX: 初始化 _blinks_in_progress
-        self._blinks_in_progress: int = 0
+        # BUG FIX: 初始化 _blinks_in_progress (预留)
+        self._blinks_in_progress: int = 0  # TODO: 跟踪进行中的眨眼计数
 
     def set_baseline(self, ear: float) -> None:
         """设置个人基线 EAR，动态更新眨眼阈值
@@ -304,13 +304,17 @@ class EyeAspectDetector:
         return max(0.0, min(1.0, confidence))
 
     def _classify_eye_event(self, duration_seconds: float) -> bool:
-        """分类眼睑事件：眨眼 vs 眯眼
+        """分类眼睑事件：快眨眼 vs 长闭合
+
+        与 get_closure_type() 的分界一致：
+          duration < 0.4s → 快眨眼 (True)
+          duration ≥ 0.4s → 长闭合 (False，get_closure_type 中归入"open"灰色区或"prolonged")
 
         Args:
             duration_seconds: 眼睑闭合持续时间（秒）
 
         Returns:
-            True=眨眼, False=眯眼
+            True=眨眼, False=长闭合（眯眼/疲劳）
         """
         # < 400ms = 眨眼，>= 400ms = 眯眼
         return duration_seconds < SQUINT_THRESHOLD_SECONDS
@@ -338,12 +342,12 @@ class EyeAspectDetector:
             self._current_blink_ear_nadir = float('inf')
             self._eye_closed_start_time = self._current_blink_start_time
 
-        # 更新 EAR 最低值
+        # 更新 EAR 最低值（无条件，不与睁眼结束互斥）
         if self._current_blink_start is not None and ear_avg < self._current_blink_ear_nadir:
             self._current_blink_ear_nadir = ear_avg
 
-        # 睁眼结束
-        elif not is_blink and self._current_blink_start is not None:
+        # 睁眼结束（独立判断，不依赖 elif 链）
+        if not is_blink and self._current_blink_start is not None:
             # 确认眨眼（至少连续 N 帧低于阈值）
             recent_blinks = list(self._blink_frames)[-self.confirm_frames:]
             if sum(recent_blinks) >= 1:  # 至少 1 帧确认
@@ -421,11 +425,15 @@ class EyeAspectDetector:
         """返回当前眼睛闭合类型 (v4.6)
 
         基于闭眼持续时长区分快眨眼与疲劳长闭眼。
+        与 _classify_eye_event() 共享 0.4s/0.8s 分界：
+          <0.4s  → blink（快眨眼）
+          0.4-0.8s → open（灰色地带：眼闭但不触发疲劳）
+          ≥0.8s → prolonged（疲劳长闭眼）
 
         Returns:
-            "open"      — 睁眼（无闭合进行中）
+            "open"      — 睁眼（无闭合进行中 / 灰色地带）
             "blink"     — 正在快眨眼 (<0.4s, 正常生理)
-            "prolonged" — 正在长闭眼 (≥0.5s, 疲劳信号)
+            "prolonged" — 正在长闭眼 (≥0.8s, 疲劳信号)
         """
         if self._current_blink_start_time is None:
             return "open"
@@ -439,7 +447,7 @@ class EyeAspectDetector:
         elif duration < 0.4:
             return "blink"
         else:
-            return "open"  # 0.4~0.8s 灰色地带，不触发疲劳
+            return "open"  # 0.4~0.8s 灰色地带（眼闭但不触发疲劳）
 
     def get_blink_rate(
         self,
@@ -539,7 +547,6 @@ class EyeAspectDetector:
         self._current_blink_start_time = None
         self._current_blink_ear_nadir = float('inf')
         self._eye_closed_start_time = None
-        self._blinks_in_progress = 0
         self._frame_count = 0
         self._session_start_time = None
         self._head_pose_weight = 1.0
@@ -566,7 +573,6 @@ class EyeAspectDetector:
             "total_blinks": len(self._blink_events),
             "confirmed_blinks": confirmed,
             "suspicious_blinks": suspicious,
-            "blinks_in_progress": self._blinks_in_progress,
             "recent_ear_mean": float(np.mean(list(self._recent_ears))) if self._recent_ears else 0.0,
             "recent_ear_std": float(np.std(list(self._recent_ears))) if self._recent_ears else 0.0,
             "head_pose_weight": self._head_pose_weight,

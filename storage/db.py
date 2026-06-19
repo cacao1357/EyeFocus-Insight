@@ -523,50 +523,86 @@ class DatabaseManager:
 
         records = []
         for row in rows:
-            # v4.3 M-13 修复: 反序列化包 try/except, 坏字段降级 None, 整条 row 异常跳过
-            # 修复前 json.loads 无防护, 单条坏数据导致整次 get_frame_records 全失败
-            try:
-                blendshapes = None
-                if row["blendshapes_json"]:
-                    try:
-                        blendshapes = json.loads(row["blendshapes_json"])
-                    except (json.JSONDecodeError, TypeError) as e:
-                        logger.warning(
-                            "get_frame_records: blendshapes_json 反序列化失败 (ts=%s): %s",
-                            row["timestamp"], e,
-                        )
-                        blendshapes = None
+            rec = self._row_to_frame_record(row)
+            if rec is not None:
+                records.append(rec)
+        return records
 
-                records.append(FrameRecord(
-                    session_id=row["session_id"],
-                    timestamp=row["timestamp"],
-                    ear_left=row["ear_left"],
-                    ear_right=row["ear_right"],
-                    ear_avg=row["ear_avg"],
-                    yaw=row["yaw"],
-                    pitch=row["pitch"],
-                    roll=row["roll"],
-                    gaze_score=row["gaze_score"],
-                    brightness=row["brightness"],
-                    face_detected=bool(row["face_detected"]),
-                    blendshapes=blendshapes,
-                    # v4.3 H-08 修复: 补 7 个 v4.x 新增字段, 否则 FrameRecord dataclass 默认值覆盖 DB 真实值
-                    blink_flag=bool(row["blink_flag"]),
-                    perclos=row["perclos"],
-                    gaze_status=row["gaze_status"],
-                    fatigue_label=row["fatigue_label"],
-                    focus_score=row["focus_score"],
-                    focus_breakdown=row["focus_breakdown"],
-                    light_level=row["light_level"],
-                ))
-            except Exception as e:
-                # v4.3 M-13 修复: 整条 row 构造失败跳过, 不影响其他记录
-                logger.warning(
-                    "get_frame_records: 跳过坏记录 (ts=%s): %s",
-                    row["timestamp"] if "timestamp" in row.keys() else "?", e,
-                )
-                continue
+    def _row_to_frame_record(self, row: dict) -> Optional[FrameRecord]:
+        """单行 → FrameRecord（含 blendshapes 反序列化 try/except）"""
+        try:
+            blendshapes = None
+            if row["blendshapes_json"]:
+                try:
+                    blendshapes = json.loads(row["blendshapes_json"])
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.warning(
+                        "frame blendshapes_json 反序列化失败 (ts=%s): %s",
+                        row["timestamp"], e,
+                    )
+                    blendshapes = None
 
+            return FrameRecord(
+                session_id=row["session_id"],
+                timestamp=row["timestamp"],
+                ear_left=row["ear_left"],
+                ear_right=row["ear_right"],
+                ear_avg=row["ear_avg"],
+                yaw=row["yaw"],
+                pitch=row["pitch"],
+                roll=row["roll"],
+                gaze_score=row["gaze_score"],
+                brightness=row["brightness"],
+                face_detected=bool(row["face_detected"]),
+                blendshapes=blendshapes,
+                blink_flag=bool(row["blink_flag"]),
+                perclos=row["perclos"],
+                gaze_status=row["gaze_status"],
+                fatigue_label=row["fatigue_label"],
+                focus_score=row["focus_score"],
+                focus_breakdown=row["focus_breakdown"],
+                light_level=row["light_level"],
+            )
+        except Exception as e:
+            logger.warning(
+                "跳过坏帧记录 (ts=%s): %s",
+                row["timestamp"] if "timestamp" in row.keys() else "?", e,
+            )
+            return None
+
+    def get_frame_records_sampled(
+        self, session_id: str, max_samples: int = 500
+    ) -> List[FrameRecord]:
+        """在 SQL 层均匀采样帧记录（避免加载全量数据到 Python 再丢弃）
+
+        v4.31: 全天 6h=648K 行 → SQL 层采样后返回 ~500 行，I/O 降低 99.9%。
+        """
+        with self._get_cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) FROM frame_records WHERE session_id = ?",
+                (session_id,),
+            )
+            total = cursor.fetchone()[0]
+
+        if total <= max_samples:
+            return self.get_frame_records(session_id)
+
+        step = total // max_samples
+        with self._get_cursor() as cursor:
+            cursor.execute("""
+                SELECT * FROM (
+                    SELECT *, ROW_NUMBER() OVER (ORDER BY timestamp) AS _rn
+                    FROM frame_records WHERE session_id = ?
+                ) WHERE (_rn - 1) % ? = 0
+                ORDER BY timestamp
+            """, (session_id, step))
+            rows = cursor.fetchall()
+
+        records = []
+        for row in rows:
+            rec = self._row_to_frame_record(row)
+            if rec is not None:
+                records.append(rec)
         return records
 
     # ========== Focus Records ==========
@@ -621,6 +657,43 @@ class DatabaseManager:
             )
             for row in rows
         ]
+
+    def get_focus_records_batch(
+        self, session_ids: List[str]
+    ) -> "Dict[str, List[FocusRecord]]":
+        """批量获取多个会话的专注度记录（单次 SQL，消除 N+1）
+
+        v4.31: _compute_weekly_stats 从 N 次查询 → 1 次查询。
+        """
+        if not session_ids:
+            return {}
+        from collections import defaultdict
+
+        placeholders = ','.join('?' * len(session_ids))
+        with self._get_cursor() as cursor:
+            cursor.execute(f"""
+                SELECT * FROM focus_records
+                WHERE session_id IN ({placeholders})
+                ORDER BY session_id, window_start
+            """, session_ids)
+            rows = cursor.fetchall()
+
+        result = defaultdict(list)
+        for row in rows:
+            result[row["session_id"]].append(FocusRecord(
+                session_id=row["session_id"],
+                window_start=row["window_start"],
+                window_end=row["window_end"],
+                focus_score=row["focus_score"],
+                eye_score=row["eye_score"],
+                head_score=row["head_score"],
+                gaze_score=row["gaze_score"],
+                blink_rate=row["blink_rate"],
+                avg_ear=row["avg_ear"],
+                avg_yaw=row["avg_yaw"],
+                avg_pitch=row["avg_pitch"],
+            ))
+        return dict(result)
 
     # ========== Fatigue Records ==========
 
@@ -1043,6 +1116,118 @@ class DatabaseManager:
             for row in rows
         ]
 
+    def get_daily_merged_data(self, date_str: str) -> Optional[dict]:
+        """获取当天所有会话的合并数据（用于日汇总报告）
+
+        v4.31: 批量查询消除 N+1（focus/fatigue/blink 三表用 IN 一次查询），
+        帧记录用 SQL 层采样（避免加载全量 648K 行）。
+
+        Args:
+            date_str: 日期 "YYYY-MM-DD"
+
+        Returns:
+            {sessions, focus_records, fatigue_records, blink_records,
+             frame_records, total_duration, session_count}
+            或 None（当天无数据）
+        """
+        sessions = self.get_sessions_by_date_range(date_str, date_str)
+        if not sessions:
+            return None
+
+        session_ids = [s.session_id for s in sessions]
+        total_dur = 0.0
+        for sess in sessions:
+            if sess.end_time:
+                total_dur += (sess.end_time - sess.start_time).total_seconds()
+
+        placeholders = ','.join('?' * len(session_ids))
+
+        # 专注度 — 单次批量查询
+        with self._get_cursor() as cursor:
+            cursor.execute(f"""
+                SELECT * FROM focus_records
+                WHERE session_id IN ({placeholders})
+                ORDER BY window_start
+            """, session_ids)
+            rows = cursor.fetchall()
+        all_focus = [
+            FocusRecord(
+                session_id=row["session_id"],
+                window_start=row["window_start"],
+                window_end=row["window_end"],
+                focus_score=row["focus_score"],
+                eye_score=row["eye_score"],
+                head_score=row["head_score"],
+                gaze_score=row["gaze_score"],
+                blink_rate=row["blink_rate"],
+                avg_ear=row["avg_ear"],
+                avg_yaw=row["avg_yaw"],
+                avg_pitch=row["avg_pitch"],
+            )
+            for row in rows
+        ]
+
+        # 疲劳 — 单次批量查询
+        with self._get_cursor() as cursor:
+            cursor.execute(f"""
+                SELECT * FROM fatigue_records
+                WHERE session_id IN ({placeholders})
+                ORDER BY timestamp
+            """, session_ids)
+            rows = cursor.fetchall()
+        all_fatigue = [
+            FatigueRecord(
+                session_id=row["session_id"],
+                timestamp=row["timestamp"],
+                fatigue_level=FatigueLevel(row["fatigue_level"]),
+                blink_rate=row["blink_rate"],
+                avg_ear_nadir=row["avg_ear_nadir"],
+                head_stability=row["head_stability"],
+                cumulative_fatigue_score=row["cumulative_fatigue_score"],
+            )
+            for row in rows
+        ]
+
+        # 眨眼 — 单次批量查询
+        with self._get_cursor() as cursor:
+            cursor.execute(f"""
+                SELECT * FROM blink_events
+                WHERE session_id IN ({placeholders})
+                ORDER BY start_timestamp
+            """, session_ids)
+            rows = cursor.fetchall()
+        all_blinks = [
+            BlinkRecord(
+                session_id=row["session_id"],
+                start_timestamp=row["start_timestamp"],
+                end_timestamp=row["end_timestamp"],
+                duration_seconds=row["duration_seconds"],
+                ear_nadir=row["ear_nadir"],
+            )
+            for row in rows
+        ]
+
+        # 帧记录 — 逐会话 SQL 层采样（采样后无法跨会话批量）
+        all_frames: list = []
+        for sid in session_ids:
+            all_frames.extend(self.get_frame_records_sampled(sid, max_samples=500))
+
+        # 按时间排序
+        all_focus.sort(key=lambda r: r.window_start)
+        all_fatigue.sort(key=lambda r: r.timestamp)
+        all_blinks.sort(key=lambda r: r.start_timestamp)
+        all_frames.sort(key=lambda r: r.timestamp)
+
+        return {
+            "sessions": sessions,
+            "focus_records": all_focus,
+            "fatigue_records": all_fatigue,
+            "blink_records": all_blinks,
+            "frame_records": all_frames,
+            "total_duration": total_dur,
+            "session_count": len(sessions),
+        }
+
     def get_sessions_by_date_range(self, start_date: str, end_date: str):
         """按日期范围查询会话"""
         with self._get_cursor() as cursor:
@@ -1073,7 +1258,8 @@ class DatabaseManager:
                     is_calibrated=bool(row["is_calibrated"]),
                     is_active=bool(row["is_active"]),
                 ))
-            except Exception:
+            except Exception as e:
+                logger.warning("跳过异常会话行: %s", e)
                 continue
         return result
 

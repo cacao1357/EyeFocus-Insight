@@ -117,6 +117,11 @@ class CalibrationFlow:
         except Exception:
             pass
         self._tts.shutdown()
+        # v4.31: 释放 MediaPipe 资源（之前泄露 FaceLandmarker + XNNPACK 线程池）
+        if hasattr(self, '_face_detector') and self._face_detector is not None:
+            self._face_detector.close()
+        if hasattr(self, '_eye_detector') and self._eye_detector is not None:
+            self._eye_detector.close()
 
     def _tick_once(self) -> None:
         """一帧主循环。"""

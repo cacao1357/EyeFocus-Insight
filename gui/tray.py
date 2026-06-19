@@ -33,6 +33,7 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         self._app = app_ref
         self._do_not_disturb = False
         self._focus_score: Optional[float] = None
+        self._report_generating = False  # v4.31: 防双击重复生成
 
         # 生成初始图标（灰色默认）
         self.setIcon(self._create_icon("#BDBDBD"))
@@ -92,15 +93,13 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
 
         menu.addSeparator()
 
-        # ── 监测控制（3个独立按钮） ──
-        self._start_action = menu.addAction("▶ 启动监测")
-        self._start_action.triggered.connect(self._start_detection)
+        # ── 监测控制（切换式 + 暂停） ──
+        self._detection_is_running = False  # 追踪状态
+        self._toggle_det_action = menu.addAction("▶ 启动监测")
+        self._toggle_det_action.triggered.connect(self._toggle_detection)
 
         self._pause_action = menu.addAction("⏸ 暂停监测")
         self._pause_action.triggered.connect(self._pause_detection)
-
-        self._stop_action = menu.addAction("⏹ 结束检测")
-        self._stop_action.triggered.connect(self._stop_detection)
 
         menu.addSeparator()
 
@@ -254,7 +253,32 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             self._window.activateWindow()
             self._toggle_visibility_action.setText("隐藏窗口")
 
-    # ── 监测控制（3个独立按钮） ──
+    # ── 监测控制（切换式 + 暂停） ──
+
+    def _toggle_detection(self):
+        """切换启动/结束/恢复监测"""
+        if self._window.is_paused():
+            # 暂停中 → 恢复
+            self._resume_detection()
+        elif self._detection_is_running:
+            self._stop_detection()
+        else:
+            self._start_detection()
+
+    def sync_detection_state(self):
+        """与 app 的实际状态同步（如自动暂停后调用）"""
+        app = self._app
+        running = (hasattr(app, '_camera_manager') and
+                   app._camera_manager is not None and
+                   app._camera_manager.is_running)
+        paused = self._window.is_paused()
+        self._detection_is_running = running and not paused
+        if running and paused:
+            self._toggle_det_action.setText("▶ 恢复监测")
+        elif running:
+            self._toggle_det_action.setText("⏹ 结束检测")
+        else:
+            self._toggle_det_action.setText("▶ 启动监测")
 
     def _start_detection(self):
         """启动/恢复监测 — 新会话 + 摄像头 + 定时器"""
@@ -292,12 +316,26 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         if self._window.is_paused():
             self._window.set_paused(False)
         logger.info("托盘菜单: 启动监测")
+        self._detection_is_running = True
+        self._toggle_det_action.setText("⏹ 结束检测")
+
+    def _resume_detection(self):
+        """从暂停恢复监测"""
+        if self._window.is_paused():
+            self._window.set_paused(False)
+        self._detection_is_running = True
+        self._toggle_det_action.setText("⏹ 结束检测")
+        logger.info("托盘菜单: 恢复监测")
 
     def _pause_detection(self):
-        """暂停监测（保留会话+摄像头）"""
-        if not self._window.is_paused():
+        """暂停/恢复监测（toggle）"""
+        if self._window.is_paused():
+            self._resume_detection()
+        else:
             self._window.set_paused(True)
-        logger.info("托盘菜单: 暂停监测")
+            self._detection_is_running = False
+            self._toggle_det_action.setText("▶ 恢复监测")
+            logger.info("托盘菜单: 暂停监测")
 
     def _stop_detection(self):
         """结束检测 — 释放摄像头+停止定时器+结束会话，托盘常驻"""
@@ -325,36 +363,45 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             self._window.hide()
             self._toggle_visibility_action.setText("显示窗口")
         logger.info("托盘菜单: 结束检测（资源已释放，托盘常驻）")
+        self._detection_is_running = False
+        self._toggle_det_action.setText("▶ 启动监测")
 
     def _generate_report(self):
         """生成报告快照（不终止会话）并自动打开
 
         v4.22 修复: 改用 generate_report_snapshot 而非 _finalize_session，
         避免托盘"打开报告"意外结束当前会话。
+        v4.31: 加互斥锁防双击重复生成。
         """
         logger.info("托盘菜单: 打开报告")
+        if self._report_generating:
+            logger.info("报告生成中，忽略重复触发")
+            return
         if not hasattr(self._app, 'generate_report_snapshot'):
             logger.warning("无法生成报告: _app 无 generate_report_snapshot")
             return
 
-        # v4.22: 移除"报告生成中"进度通知（正常操作不弹窗）
-        report_path = self._app.generate_report_snapshot()
-        if report_path and os.path.exists(report_path):
-            try:
-                os.startfile(report_path)
-                logger.info("报告已打开（会话继续）: %s", report_path)
-            except Exception as e:
-                logger.warning("打开报告失败: %s", e)
+        self._report_generating = True
+        try:
+            report_path = self._app.generate_report_snapshot()
+            if report_path and os.path.exists(report_path):
+                try:
+                    os.startfile(report_path)
+                    logger.info("报告已打开（会话继续）: %s", report_path)
+                except Exception as e:
+                    logger.warning("打开报告失败: %s", e)
+                    self.showMessage(
+                        "EyeFocus Insight", "打开报告失败，请手动打开 reports/ 目录",
+                        QSystemTrayIcon.Critical, 3000,
+                    )
+            else:
+                logger.warning("报告生成失败或文件不存在")
                 self.showMessage(
-                    "EyeFocus Insight", "打开报告失败，请手动打开 reports/ 目录",
+                    "EyeFocus Insight", "报告生成失败，数据不足或系统错误",
                     QSystemTrayIcon.Critical, 3000,
                 )
-        else:
-            logger.warning("报告生成失败或文件不存在")
-            self.showMessage(
-                "EyeFocus Insight", "报告生成失败，数据不足或系统错误",
-                QSystemTrayIcon.Critical, 3000,
-            )
+        finally:
+            self._report_generating = False
 
     # ── v4.18: 最近会话 ──
 

@@ -42,10 +42,14 @@ class Session:
     is_active: bool = True
 
     def duration_seconds(self) -> Optional[float]:
-        """计算会话时长（秒）"""
-        if self.end_time is None:
-            return None
-        return (self.end_time - self.start_time).total_seconds()
+        """计算会话时长（秒）
+
+        会话未结束时返回从 start_time 到现在的时长。
+        """
+        end = self.end_time
+        if end is None:
+            end = datetime.now()
+        return (end - self.start_time).total_seconds()
 
 
 @dataclass

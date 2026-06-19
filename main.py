@@ -169,6 +169,8 @@ class EyeFocusApp:
         self._auto_paused_for_face_loss: bool = False
         # v4.13: 历史校准加载状态
         self._calib_loaded: bool = False
+        # v4.33: 报告 HTML 时间缓存（5 分钟 TTL，检测中重复打开免重生成）
+        self._report_html_cache: "Dict[str, tuple]" = {}  # {cache_key: (html, timestamp)}
 
         # 子组件（保持与测试兼容的属性名）
         self._camera_manager: Optional[CameraManager] = None
@@ -639,6 +641,9 @@ class EyeFocusApp:
         self._calibrating = True
 
         self._qt_window.set_paused(True)
+        # v4.31: 暂停主循环定时器，避免校准期间空转（每 33ms 无意义唤醒）
+        if hasattr(self, '_qt_timer') and self._qt_timer is not None:
+            self._qt_timer.stop()
         try:
             self._camera_manager.release()
             import time as _wt; _wt.sleep(2.0)
@@ -656,6 +661,9 @@ class EyeFocusApp:
         finally:
             self._calibrating = False
             self._qt_window.set_paused(False)
+            # 恢复主循环定时器
+            if hasattr(self, '_qt_timer') and self._qt_timer is not None:
+                self._qt_timer.start(33)
 
     def _qt_process_frame(self) -> None:
         """Qt 定时器回调: 处理一帧"""
@@ -752,22 +760,8 @@ class EyeFocusApp:
                     self._qt_window.set_face_lost_warning(False)
                     logger.info("人脸恢复 → 自动继续监测")
 
-            # v4.10: 疲劳通知 (仅当启用托盘且非免打扰)
-            if (hasattr(self, '_qt_window') and self._qt_window is not None
-                    and getattr(self, '_frame_processor', None) is not None):
-                fa = self._frame_processor.latest_fatigue_result
-                if fa is not None:
-                    level = fa.fatigue_level
-                    level_str = level.value.upper() if hasattr(level, 'value') else str(level)
-                    if level_str == 'HIGH':
-                        # 每 60s 最多提醒一次，避免刷屏
-                        now = time.time()
-                        last = getattr(self, '_last_fatigue_notify_time', 0)
-                        if now - last >= 60:
-                            self._last_fatigue_notify_time = now
-                            cumulative = getattr(fa, 'cumulative_fatigue_score', 0)
-                            self._qt_window.show_fatigue_notification(
-                                f"累积疲劳分数 {cumulative:.0f}，建议休息10-15分钟")
+            # v4.30: 疲劳通知已移至 ReminderEngine（合并通知路径 + 指数退避）
+            # v4.10 旧路径移除，避免双通道弹窗
 
             # v4.17: 语音反馈 + 智能提醒 + 波线 + 游戏化
             try:
@@ -1317,6 +1311,8 @@ class EyeFocusApp:
         与 _finalize_session 不同：不设置 end_time/is_active=False。
         用于托盘"打开报告"操作，让用户在不中断监测的前提下查看数据。
 
+        v4.33: 5 分钟时间缓存 — 检测中重复打开免 DB + 图表重生成。
+
         Returns:
             报告文件路径，失败返回 None
         """
@@ -1324,20 +1320,55 @@ class EyeFocusApp:
             logger.warning("generate_report_snapshot: 无活动会话")
             return None
 
+        import os, time as _time
+
+        # v4.33: 检查时间缓存
+        cache_key = f"{self._session_id}_snapshot"
+        if cache_key in self._report_html_cache:
+            cached_html, cached_ts = self._report_html_cache[cache_key]
+            if _time.time() - cached_ts < 300:  # 5 分钟 TTL
+                logger.info("报告缓存命中 (%.0fs 前生成)，跳过重生成", _time.time() - cached_ts)
+                os.makedirs("reports", exist_ok=True)
+                report_path = f"reports/{self._session_id}.html"
+                with open(report_path, "w", encoding="utf-8") as f:
+                    f.write(cached_html)
+                return os.path.abspath(report_path)
+            else:
+                del self._report_html_cache[cache_key]
+
         try:
             from reporter.report_html import create_html_generator
-            import os
 
             generator = create_html_generator(self._db)
-            try:
-                html = generator.generate_report_with_insights(self._session_id)
-            except Exception as e:
-                logger.warning("Insights 快照失败，回退到基础报告: %s", e)
+            today_str = datetime.now().strftime("%Y%m%d")
+            if self._session_id.startswith(today_str):
+                date_str = datetime.now().strftime("%Y-%m-%d")
                 try:
-                    html = generator.generate_report(self._session_id)
-                except Exception as e2:
-                    logger.error("基础报告也失败: %s", e2)
-                    html = self._error_report_html(str(e2))
+                    html = generator.generate_daily_report(date_str)
+                except Exception as e:
+                    logger.warning("日汇总报告失败，回退到会话报告: %s", e)
+                    try:
+                        html = generator.generate_report_with_insights(self._session_id)
+                    except Exception as e2:
+                        logger.error("会话报告也失败: %s", e2)
+                        html = generator._error_html(str(e2))
+            else:
+                try:
+                    html = generator.generate_report_with_insights(self._session_id)
+                except Exception as e:
+                    logger.warning("Insights 快照失败，回退到基础报告: %s", e)
+                    try:
+                        html = generator.generate_report(self._session_id)
+                    except Exception as e2:
+                        logger.error("基础报告也失败: %s", e2)
+                        html = self._error_report_html(str(e2))
+
+            # v4.33: 缓存 HTML（5 分钟 TTL）
+            self._report_html_cache[cache_key] = (html, _time.time())
+            # 限制缓存条目
+            if len(self._report_html_cache) > 3:
+                oldest = next(iter(self._report_html_cache))
+                del self._report_html_cache[oldest]
 
             os.makedirs("reports", exist_ok=True)
             report_path = f"reports/{self._session_id}.html"

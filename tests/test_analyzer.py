@@ -118,12 +118,12 @@ class TestFatigueAnalyzer:
         assert result.fatigue_indicator == FatigueIndicator.ATTENTION
 
     def test_many_prolonged_trigger_tired(self):
-        """v4.6.1: 9 次长闭眼 → TIRED (TIRED≥8)"""
+        """v4.30: 16 次长闭眼 → TIRED (TIRED≥15)"""
         analyzer = FatigueAnalyzer()
         analyzer.start()
         now = time.time()
-        for i in range(9):
-            analyzer._prolonged_events.append(now - i * 15)
+        for i in range(16):
+            analyzer._prolonged_events.append(now - i * 10)
         result = analyzer.analyze(closure_type="open", blink_rate=15.0)
         assert result.fatigue_indicator == FatigueIndicator.TIRED
 

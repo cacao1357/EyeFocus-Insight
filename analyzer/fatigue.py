@@ -7,6 +7,7 @@ v4.6: 从 PERCLOS + LOW/MEDIUM/HIGH 改为 FatigueIndicator 三档。
 """
 
 import logging
+import math
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -38,7 +39,10 @@ FATIGUE_LABELS = {
 
 # 3 分钟窗口阈值 (v4.6.1: 根据 11min 实测调优)
 RESTED_MAX_CLOSURES = 3       # ≤3 次长闭眼 → 清醒
-TIRED_MIN_CLOSURES = 8        # ≥8 次长闭眼 → 需休息
+TIRED_MIN_CLOSURES = 15       # ≥15 次长闭眼 → 需休息 (v4.30: 8→15 降误报)
+
+# EMA 时间常数（秒）— 分数反映分钟级趋势而非秒级波动
+_EMA_TAU = 120.0  # 2 分钟半衰期
 
 
 @dataclass
@@ -106,6 +110,7 @@ class FatigueAnalyzer:
         self._medium_onset_time: Optional[float] = None
         self._high_onset_time: Optional[float] = None
         self._start_time: Optional[float] = None
+        self._last_ema_time: Optional[float] = None  # v4.30: 时间基 EMA 时间戳
 
     def start(self) -> None:
         self._start_time = time.time()
@@ -117,6 +122,7 @@ class FatigueAnalyzer:
         self._prolonged_events.clear()
         self._was_prolonged = False
         self._last_analysis_time = time.time()
+        self._last_ema_time = None
 
     def set_baseline_blink_rate(self, baseline_blink_rate: float) -> None:
         self.baseline_blink_rate = baseline_blink_rate
@@ -163,13 +169,16 @@ class FatigueAnalyzer:
 
         prolonged_count = len(self._prolonged_events)
 
-        # 累积疲劳（保持 EMA 用于统计）
+        # 累积疲劳（v4.30: 时间基 EMA，tau=120s，不受帧率影响）
         indicator = self._indicator_from_count(prolonged_count)
         score = self._indicator_to_score(indicator)
-        if self._fatigue_history:
-            self._cumulative_fatigue = 0.95 * self._cumulative_fatigue + 0.05 * score
+        if self._last_ema_time is not None:
+            dt = max(0.0, current_time - self._last_ema_time)
+            alpha = 1.0 - math.exp(-dt / _EMA_TAU)
+            self._cumulative_fatigue = (1.0 - alpha) * self._cumulative_fatigue + alpha * score
         else:
             self._cumulative_fatigue = score
+        self._last_ema_time = current_time
         self._fatigue_history.append(score)
 
         return FatigueAnalysisResult(
@@ -230,6 +239,7 @@ class FatigueAnalyzer:
         self._high_onset_time = None
         self._start_time = None
         self._last_analysis_time = None
+        self._last_ema_time = None
 
     def get_stats(self) -> dict:
         return {

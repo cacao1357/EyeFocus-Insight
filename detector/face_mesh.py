@@ -142,11 +142,12 @@ class FaceMeshDetector:
             frame: BGR 帧
             timestamp_ms: 时间戳
         """
-        # 缓存 RGB 供 Qt 显示（取最新帧，不等待 MediaPipe 处理完）
+        # 先转 RGB（Qt 显示 + MediaPipe 都需要）
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         self._last_rgb_frame = frame_rgb
         try:
-            self._async_queue.put_nowait((frame, timestamp_ms))
+            # v4.30: 推 RGB 帧进队列，避免 async worker 重复转换
+            self._async_queue.put_nowait((frame_rgb, timestamp_ms))
         except queue.Full:
             pass  # 前帧仍在处理 → 丢弃此帧
 
@@ -162,9 +163,36 @@ class FaceMeshDetector:
                 frame, timestamp_ms = self._async_queue.get(timeout=0.5)
             except queue.Empty:
                 continue
-            result = self._detect_sync(frame, timestamp_ms)
-            with self._async_result_lock:
-                self._async_result = result
+            result = self._detect_async_safe(frame, timestamp_ms)
+            if result is not None:
+                with self._async_result_lock:
+                    self._async_result = result
+
+    def _detect_async_safe(
+        self, frame_rgb: np.ndarray, timestamp_ms: int
+    ) -> Optional[FaceMeshResult]:
+        """异步安全检测：锁争用时跳过此帧，不返回假阴性
+
+        Args:
+            frame_rgb: RGB 帧（已由 push_frame 转换）
+        """
+        if frame_rgb is None or frame_rgb.size == 0 or frame_rgb.ndim < 2:
+            return FaceMeshResult(landmarks=None, face_detected=False, confidence=0.0)
+
+        from mediapipe import Image, ImageFormat
+        mp_image = Image(image_format=ImageFormat.SRGB, data=frame_rgb)
+
+        if not self._lock.acquire(blocking=False):
+            del mp_image
+            return None  # 锁被占用 → 跳过此帧，保留上次结果
+
+        try:
+            result = self._detector.detect_for_video(mp_image, timestamp_ms)
+        finally:
+            self._lock.release()
+            del mp_image
+
+        return self._process_result(result, frame_rgb.shape[1], frame_rgb.shape[0])
 
     def _detect_sync(self, frame: np.ndarray, timestamp_ms: int) -> FaceMeshResult:
         """同步检测（供 async worker 和 backward compat 使用）"""

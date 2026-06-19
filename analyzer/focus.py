@@ -96,8 +96,8 @@ class FocusAnalyzer:
     """
 
     # 头部舒适区（在此角度内不扣分）
-    _COMFORT_YAW = 12.0
-    _COMFORT_PITCH = 15.0
+    _COMFORT_YAW = 18.0
+    _COMFORT_PITCH = 22.0
 
     # v4.13: 混合分权重（头部提升至20%，转头/低头是分心强信号）
     _EYE_BLEND = 0.70
@@ -572,7 +572,7 @@ def compute_distraction_causes(focus_result: FocusResult) -> dict:
         return {}
     # v4.18: None 安全
     fs = focus_result.focus_score or 0.0
-    if fs >= 70:
+    if fs >= 60:
         return {}
 
     eye_s = focus_result.eye_score or 50.0
