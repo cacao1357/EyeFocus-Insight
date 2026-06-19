@@ -442,7 +442,8 @@ class TestV426DropdownWhiteBg:
     def test_tray_and_window_use_ask_pomo_int(self):
         """tray.py / qt_window.py 都不再用 QInputDialog.getInt"""
         import os
-        for path in ["gui/tray.py", "gui/qt_window.py"]:
+        # v4.29: tray 已移除番茄设置入口（移入设置面板），仅 qt_window 保留 ask_pomo_int 引用
+        for path in ["gui/qt_window.py"]:
             with open(os.path.join(
                 os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                 path

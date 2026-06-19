@@ -59,7 +59,7 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         return QIcon(pixmap)
 
     def _create_context_menu(self):
-        """创建右键菜单"""
+        """创建右键菜单（v4.29: 精简分组，合并番茄钟为单按钮，移除重复入口）"""
         menu = QMenu()
         # 防止暗色系统主题导致菜单文字不可见
         menu.setStyleSheet("""
@@ -81,51 +81,43 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             }
         """)
 
-        # 状态标题（不可交互）
+        # ── 状态区 ──
         self._status_action = menu.addAction("专注度: --")
         self._status_action.setEnabled(False)
         menu.addSeparator()
 
-        # 显示/隐藏
+        # ── 控制区 ──
         self._toggle_visibility_action = menu.addAction("显示窗口")
         self._toggle_visibility_action.triggered.connect(self._toggle_visibility)
 
-        # 暂停/继续
-        self._pause_action = menu.addAction("暂停监测")
-        self._pause_action.triggered.connect(self._toggle_pause)
+        self._monitor_action = menu.addAction("▶ 启动监测")
+        self._monitor_action.triggered.connect(self._toggle_pause)
 
         menu.addSeparator()
 
-        # v4.18: 最近会话子菜单
+        # ── 数据区 ──
         self._recent_menu = menu.addMenu("最近会话")
         self._recent_menu.aboutToShow.connect(self._refresh_recent_sessions)
 
-        # 打开报告（自动生成）
         generate_action = menu.addAction("打开报告")
         generate_action.triggered.connect(self._generate_report)
 
-        # v4.26: 移除"生成周报"（与"打开报告"重复）
-
-        # v4.18: 导出数据
         export_action = menu.addAction("导出数据")
         export_action.triggered.connect(self._export_data)
 
-        # v4.18: 番茄工作法（v4.20: 增加暂停/设置）
-        self._pomodoro_action = menu.addAction("开始番茄")
-        self._pomodoro_action.triggered.connect(self._toggle_pomodoro)
-        self._pomodoro_pause_action = menu.addAction("暂停番茄")
-        self._pomodoro_pause_action.setEnabled(False)
-        self._pomodoro_pause_action.triggered.connect(self._pause_pomodoro)
-        pomodoro_set_action = menu.addAction("设置番茄...")
-        pomodoro_set_action.triggered.connect(self._set_pomodoro)
+        menu.addSeparator()
 
-        # 重新校准
-        calibrate_action = menu.addAction("重新校准")
-        calibrate_action.triggered.connect(self._start_calibration)
+        # ── 番茄钟（合并为单按钮，设置项移入设置面板） ──
+        self._pomodoro_action = menu.addAction("🍅 开始番茄")
+        self._pomodoro_action.triggered.connect(self._toggle_pomodoro)
 
         menu.addSeparator()
 
-        # v4.17: 语音反馈开关（默认值从 config.yaml 读取）
+        # ── 工具区 ──
+        calibrate_action = menu.addAction("重新校准")
+        calibrate_action.triggered.connect(self._start_calibration)
+
+        # v4.17: 语音反馈
         voice_enabled = True
         try:
             from config import get_yaml_value
@@ -143,25 +135,21 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         self._dnd_action.setChecked(False)
         self._dnd_action.triggered.connect(self._toggle_dnd)
 
-        # v4.27: AI 对话（打开命令行窗口）
+        menu.addSeparator()
+
+        # ── 配置区 ──
         ai_chat_action = menu.addAction("💬 AI 对话")
         ai_chat_action.triggered.connect(self._launch_ai_cli)
 
-        # v4.27: API 设置
-        api_setup_action = menu.addAction("🔑 API 设置")
-        api_setup_action.triggered.connect(self._show_api_setup)
-
-        # v4.22: 设置面板
         settings_action = menu.addAction("设置...")
         settings_action.triggered.connect(self._show_settings)
 
         menu.addSeparator()
 
-        # v4.26: 重启
+        # ── 系统区 ──
         restart_action = menu.addAction("🔄 重启程序")
         restart_action.triggered.connect(self._restart_app)
 
-        # 退出
         exit_action = menu.addAction("退出 EyeFocus Insight")
         exit_action.triggered.connect(self._exit_app)
 
@@ -203,20 +191,17 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
 
     def set_paused_state(self, paused: bool):
         """同步暂停状态到菜单项"""
-        self._pause_action.setText("继续监测" if paused else "暂停监测")
+        self._monitor_action.setText("▶ 启动监测" if paused else "⏹ 结束监测")
 
     def set_pomodoro_state(self, state: str, count: int = 0):
-        """同步番茄状态到菜单项"""
+        """同步番茄状态到菜单项（单按钮模式）"""
         labels = {
-            "IDLE": "开始番茄",
-            "WORKING": f"🍅 ×{count} 工作中..." if count else "番茄工作中...",
-            "BREAK": "☕ 休息中...",
-            "PAUSED": "⏸ 已暂停",
+            "IDLE": "🍅 开始番茄",
+            "WORKING": f"🍅 结束番茄 ×{count}" if count else "🍅 结束番茄",
+            "BREAK": "🍅 结束休息",
+            "PAUSED": "🍅 继续",
         }
-        self._pomodoro_action.setText(labels.get(state, "开始番茄"))
-        can_pause = state in ("WORKING", "BREAK")
-        self._pomodoro_pause_action.setEnabled(can_pause)
-        self._pomodoro_pause_action.setText("继续番茄" if state == "PAUSED" else "暂停番茄")
+        self._pomodoro_action.setText(labels.get(state, "🍅 开始番茄"))
 
     def set_voice_enabled(self, enabled: bool):
         """同步语音状态到菜单项"""
@@ -423,38 +408,7 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         except Exception as e:
             logger.warning("番茄切换失败: %s", e)
 
-    def _pause_pomodoro(self) -> None:
-        """暂停或继续番茄"""
-        try:
-            pomo = getattr(self._app, '_pomodoro', None)
-            if pomo is None or pomo.state == "IDLE":
-                return
-            if getattr(pomo, '_paused', False):
-                pomo.resume()
-            else:
-                pomo.pause()
-            self.set_pomodoro_state(pomo.state, pomo.count)
-        except Exception as e:
-            logger.warning("番茄暂停失败: %s", e)
-
-    def _set_pomodoro(self) -> None:
-        """设置番茄工作/休息时间（v4.26: 白底 wrapper 替代 QInputDialog.getInt 黑底）"""
-        try:
-            from gui.settings_dialog import ask_pomo_int
-            parent_widget = self._window if self._window is not None else None
-            work = ask_pomo_int(parent_widget, "设置番茄",
-                                 "工作分钟数 (1-120):", value=25, min_val=1, max_val=120)
-            if work is None:
-                return
-            rest = ask_pomo_int(parent_widget, "设置番茄",
-                                 "休息分钟数 (1-60):", value=5, min_val=1, max_val=60)
-            if rest is None:
-                return
-            pomo = getattr(self._app, '_pomodoro', None)
-            if pomo:
-                pomo.set_duration(work, rest)
-        except Exception as e:
-            logger.warning("设置番茄失败: %s", e)
+    # v4.29: 番茄设置移入设置面板，不再在托盘菜单中单独设置
 
     def _start_calibration(self):
         """启动重新校准（v4.16: try/except 保护，防止异常导致程序退出）"""
@@ -485,15 +439,6 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         self._do_not_disturb = checked
         logger.info("免打扰模式: %s", "ON" if checked else "OFF")
 
-    def _show_api_setup(self):
-        """打开 API 设置对话框"""
-        try:
-            from gui.api_dialog import ApiSetupDialog
-            dlg = ApiSetupDialog(self._window)
-            dlg.exec_()
-        except Exception as e:
-            logger.error("API 设置对话框异常: %s", e)
-
     def _show_settings(self):
         """打开设置对话框"""
         try:
@@ -513,41 +458,7 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         except Exception:
             pass
 
-    # ── v4.24: AI 分析 ──
-
-    def _generate_ai_analysis(self):
-        """v4.26: AI 分析功能已合并到 AI 模式开关，此方法保留为空"""
-        pass
-
-    def _test_ai_connection(self):
-        """v4.26: 已移除弹窗，仅日志"""
-        from analyzer.llm_client import create_llm_client
-        from config import get_yaml_value
-        backend = get_yaml_value("ai", "backend", default="template")
-        kwargs = {}
-        if backend == "ollama":
-            kwargs["base_url"] = get_yaml_value("ai", "ollama_url", default="http://127.0.0.1:11434")
-        client = create_llm_client(backend, **kwargs)
-        if client.available:
-            logger.info("AI 后端 %s 可用", client.name)
-        else:
-            logger.info("AI 后端 %s 不可用", client.name)
-
-    def _switch_ai_backend(self, backend: str):
-        """切换 AI 分析后端"""
-        try:
-            from config import set_yaml_value, save_yaml_config
-            set_yaml_value("ai", "backend", value=backend)
-            save_yaml_config()
-            for a in self._ai_backends.actions():
-                a.blockSignals(True)
-                a.setChecked(a.data() == backend)
-                a.blockSignals(False)
-            logger.info("AI 后端已切换: %s", backend)
-        except Exception as e:
-            logger.error("AI 后端切换异常: %s", e)
-
-    # ── v4.27: AI 对话 ──
+    # v4.29: 移除旧的 AI 模式切换/测试方法（功能由设置面板和 AI CLI 替代）
 
     def _launch_ai_cli(self):
         """打开新终端窗口运行 AI 对话 CLI"""

@@ -28,6 +28,7 @@ from PyQt5.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -228,6 +229,11 @@ class SettingsDialog(QDialog):
         self._ai_backend_loaded = get_yaml_value("ai", "backend", default="template")
         self._ai_model_key = get_yaml_value("ai", "model_key", default="qwen2.5:1.5b")
 
+        # v4.29: API 凭证
+        self._api_key = get_yaml_value("ai", "api_key", default="")
+        self._api_url = get_yaml_value("ai", "api_url", default="")
+        self._api_model = get_yaml_value("ai", "api_model", default="")
+
         # 尝试从主程序读取番茄当前设置
         self._try_load_pomodoro_settings()
 
@@ -289,7 +295,7 @@ class SettingsDialog(QDialog):
             QLabel("TTS 基于 pyttsx3 (仅 Windows SAPI5)"))
         layout.addWidget(voice_group)
 
-        # ── AI 分析（仅本地） ──
+        # ── AI 分析 ──
         ai_group = QGroupBox("🤖 AI 分析摘要")
         ai_layout = QFormLayout(ai_group)
         self._ai_backend = QComboBox()
@@ -301,9 +307,86 @@ class SettingsDialog(QDialog):
         self._ai_backend.addItem("Qwen3-1.7B", "local_qwen3")
         self._ai_backend.addItem("Qwen3.5-1.5B", "local_qwen3.5")
         ai_layout.addRow("分析引擎：", self._ai_backend)
-        ai_layout.addRow("", QLabel("API 模式需先在托盘菜单「API 设置」中配置凭证"))
         # 恢复已保存的后端选择
         self._restore_ai_backend()
+
+        # ── API 凭证（仅 API 云端模式使用） ──
+        # v4.29: 从托盘独立弹窗移入设置面板，统一管理
+        self._api_provider = QComboBox()
+        self._api_provider.setStyleSheet(self.INPUT_WIDGET_QSS)
+        _providers = [
+            ("", "手动输入"),
+            ("deepseek", "DeepSeek"),
+            ("qwen", "Qwen（阿里通义）"),
+            ("openai", "OpenAI"),
+            ("moonshot", "Moonshot"),
+            ("siliconflow", "SiliconFlow"),
+            ("zhipu", "智谱 GLM"),
+            ("openrouter", "OpenRouter"),
+            ("groq", "Groq"),
+        ]
+        for key, label in _providers:
+            self._api_provider.addItem(label, key)
+        self._api_provider.currentIndexChanged.connect(self._on_api_provider_change)
+        ai_layout.addRow("提供商：", self._api_provider)
+
+        self._api_url_input = QLineEdit()
+        self._api_url_input.setStyleSheet(self.INPUT_WIDGET_QSS)
+        self._api_url_input.setPlaceholderText("https://api.deepseek.com/v1")
+        self._api_url_input.setText(self._api_url)
+        ai_layout.addRow("API 地址：", self._api_url_input)
+
+        # API Key + 显示/隐藏切换
+        key_row = QHBoxLayout()
+        self._api_key_input = QLineEdit()
+        self._api_key_input.setStyleSheet(self.INPUT_WIDGET_QSS)
+        self._api_key_input.setEchoMode(QLineEdit.Password)
+        self._api_key_input.setPlaceholderText("sk-...")
+        self._api_key_input.setText(self._api_key)
+        key_row.addWidget(self._api_key_input)
+        self._api_key_toggle = QPushButton("显示")
+        self._api_key_toggle.setFixedWidth(50)
+        self._api_key_toggle.setStyleSheet("""
+            QPushButton {
+                background-color: #F0F0F0; color: #1C1C1E;
+                border: 1px solid #D0D0D0; border-radius: 4px;
+                padding: 4px 8px; font-size: 12px;
+            }
+            QPushButton:hover { background-color: #E5E5E5; }
+            QPushButton:pressed { background-color: #D8D8D8; }
+        """)
+        self._api_key_toggle.clicked.connect(self._toggle_api_key_visible)
+        key_row.addWidget(self._api_key_toggle)
+        ai_layout.addRow("API Key：", key_row)
+
+        self._api_model_input = QLineEdit()
+        self._api_model_input.setStyleSheet(self.INPUT_WIDGET_QSS)
+        self._api_model_input.setPlaceholderText("deepseek-chat")
+        self._api_model_input.setText(self._api_model)
+        ai_layout.addRow("模型名：", self._api_model_input)
+
+        # 测试连接
+        test_row = QHBoxLayout()
+        self._api_test_btn = QPushButton("测试连接")
+        self._api_test_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #F0F0F0; color: #1C1C1E;
+                border: 1px solid #D0D0D0; border-radius: 4px;
+                padding: 4px 14px; font-size: 12px;
+            }
+            QPushButton:hover { background-color: #E5E5E5; }
+            QPushButton:disabled { background-color: #F8F6F2; color: #8B8680; }
+        """)
+        self._api_test_btn.clicked.connect(self._test_api_connection)
+        test_row.addWidget(self._api_test_btn)
+        self._api_test_result = QLabel("")
+        test_row.addWidget(self._api_test_result, 1)
+        ai_layout.addRow("", test_row)
+
+        # 根据已保存的 URL 匹配提供商
+        if self._api_url:
+            self._match_api_provider(self._api_url)
+
         layout.addWidget(ai_group)
 
         # ── 番茄工作法 ──
@@ -450,6 +533,10 @@ class SettingsDialog(QDialog):
             set_yaml_value("ai", "model_key", value=LOCAL_MODEL_MAP[raw_backend][1])
         else:
             set_yaml_value("ai", "backend", value=raw_backend)
+        # v4.29: 保存 API 凭证
+        set_yaml_value("ai", "api_key", value=self._api_key_input.text().strip())
+        set_yaml_value("ai", "api_url", value=self._api_url_input.text().strip())
+        set_yaml_value("ai", "api_model", value=self._api_model_input.text().strip())
         set_yaml_value("web", "port", value=web_port)
         set_yaml_value("gamification", "enabled", value=gamify_on)
         set_yaml_value("ui", "auto_start", value=auto_start)
@@ -480,3 +567,106 @@ class SettingsDialog(QDialog):
                 logger.info("番茄时间已应用: 工作%d分, 休息%d分", work, brake)
         except Exception as e:
             logger.warning("番茄设置应用失败: %s", e)
+
+    # ── v4.29: API 凭证辅助方法 ──
+
+    def _toggle_api_key_visible(self) -> None:
+        """切换 API Key 显示/隐藏"""
+        if self._api_key_input.echoMode() == QLineEdit.Password:
+            self._api_key_input.setEchoMode(QLineEdit.Normal)
+            self._api_key_toggle.setText("隐藏")
+        else:
+            self._api_key_input.setEchoMode(QLineEdit.Password)
+            self._api_key_toggle.setText("显示")
+
+    def _on_api_provider_change(self, idx: int) -> None:
+        """选择提供商时自动填入 URL 和模型名"""
+        _api_providers = {
+            "deepseek":   {"base_url": "https://api.deepseek.com/v1",          "model": "deepseek-chat"},
+            "qwen":       {"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "model": "qwen-plus"},
+            "openai":     {"base_url": "https://api.openai.com/v1",            "model": "gpt-4o-mini"},
+            "moonshot":   {"base_url": "https://api.moonshot.cn/v1",           "model": "moonshot-v1-8k"},
+            "siliconflow":{"base_url": "https://api.siliconflow.cn/v1",        "model": "Qwen/Qwen2.5-7B-Instruct"},
+            "zhipu":      {"base_url": "https://open.bigmodel.cn/api/paas/v4", "model": "glm-4-flash"},
+            "openrouter": {"base_url": "https://openrouter.ai/api/v1",         "model": "openai/gpt-4o-mini"},
+            "groq":       {"base_url": "https://api.groq.com/openai/v1",       "model": "llama-3.3-70b-versatile"},
+        }
+        key = self._api_provider.itemData(idx)
+        if not key:
+            return  # 手动输入 — 不清空已填内容
+        cfg = _api_providers.get(key)
+        if cfg:
+            if cfg.get("base_url"):
+                self._api_url_input.setText(cfg["base_url"])
+            if cfg.get("model"):
+                self._api_model_input.setText(cfg["model"])
+
+    def _match_api_provider(self, url: str) -> None:
+        """根据 URL 匹配已保存的提供商"""
+        _api_providers = {
+            "deepseek":   {"base_url": "https://api.deepseek.com/v1"},
+            "qwen":       {"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"},
+            "openai":     {"base_url": "https://api.openai.com/v1"},
+            "moonshot":   {"base_url": "https://api.moonshot.cn/v1"},
+            "siliconflow":{"base_url": "https://api.siliconflow.cn/v1"},
+            "zhipu":      {"base_url": "https://open.bigmodel.cn/api/paas/v4"},
+            "openrouter": {"base_url": "https://openrouter.ai/api/v1"},
+            "groq":       {"base_url": "https://api.groq.com/openai/v1"},
+        }
+        for pk, cfg in _api_providers.items():
+            if cfg["base_url"] == url:
+                for i in range(self._api_provider.count()):
+                    if self._api_provider.itemData(i) == pk:
+                        self._api_provider.setCurrentIndex(i)
+                        return
+
+    def _test_api_connection(self) -> None:
+        """测试 API 连接（异步）"""
+        api_key = self._api_key_input.text().strip()
+        base_url = self._api_url_input.text().strip()
+        model = self._api_model_input.text().strip()
+
+        if not api_key:
+            self._api_test_result.setText("⚠️ 请先输入 API Key")
+            self._api_test_result.setStyleSheet("color: #B55C5C;")
+            return
+        if not base_url:
+            self._api_test_result.setText("⚠️ 请先输入 API 地址")
+            self._api_test_result.setStyleSheet("color: #B55C5C;")
+            return
+
+        self._api_test_btn.setEnabled(False)
+        self._api_test_btn.setText("测试中...")
+        self._api_test_result.setText("⏳ 连接中...")
+        self._api_test_result.setStyleSheet("color: #9E9A96;")
+
+        def _do_test():
+            from analyzer.llm_client import OpenAICompatibleClient
+            client = OpenAICompatibleClient(
+                api_key=api_key, base_url=base_url, model=model or "gpt-4o-mini"
+            )
+            err = client.test_connection()
+            from PyQt5.QtCore import QMetaObject, Qt as _Qt, Q_ARG
+            if err:
+                QMetaObject.invokeMethod(
+                    self._api_test_result, "setText", _Qt.QueuedConnection,
+                    Q_ARG(str, f"❌ {err}"))
+                QMetaObject.invokeMethod(
+                    self._api_test_result, "setStyleSheet", _Qt.QueuedConnection,
+                    Q_ARG(str, "color: #B55C5C;"))
+            else:
+                QMetaObject.invokeMethod(
+                    self._api_test_result, "setText", _Qt.QueuedConnection,
+                    Q_ARG(str, "✅ 连接成功"))
+                QMetaObject.invokeMethod(
+                    self._api_test_result, "setStyleSheet", _Qt.QueuedConnection,
+                    Q_ARG(str, "color: #5A8A6D;"))
+            QMetaObject.invokeMethod(
+                self._api_test_btn, "setEnabled", _Qt.QueuedConnection,
+                Q_ARG(bool, True))
+            QMetaObject.invokeMethod(
+                self._api_test_btn, "setText", _Qt.QueuedConnection,
+                Q_ARG(str, "测试连接"))
+
+        import threading
+        threading.Thread(target=_do_test, daemon=True).start()
