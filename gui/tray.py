@@ -257,37 +257,74 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
     # ── 监测控制（3个独立按钮） ──
 
     def _start_detection(self):
-        """启动/恢复监测 — 显示窗口 + 取消暂停"""
+        """启动/恢复监测 — 新会话 + 摄像头 + 定时器"""
+        app = self._app
+        camera_running = (hasattr(app, '_camera_manager') and
+                          app._camera_manager is not None and
+                          app._camera_manager.is_running)
+
+        if not camera_running:
+            # 完全重启（结束检测后状态）
+            import time as _time
+            try:
+                if hasattr(app, '_db') and app._db is not None:
+                    app._session_id = app._db.create_session()
+                app._session_start_time = _time.time()
+                if hasattr(app, '_camera_manager'):
+                    app._camera_manager.start()
+                if hasattr(app, '_qt_timer'):
+                    app._qt_timer.start(33)
+                if hasattr(app, '_last_face_time'):
+                    app._last_face_time = _time.time()
+                app._auto_paused_for_face_loss = False
+                app._first_frame_logged = False
+            except Exception as e:
+                logger.warning("重启监测失败: %s", e)
+        # 若摄像头仍在运行（仅暂停状态），无需重启
+
+        # 显示窗口
         if not self._window.isVisible():
             self._window.show()
             self._window.raise_()
             self._window.activateWindow()
             self._toggle_visibility_action.setText("隐藏窗口")
+        # 取消暂停
         if self._window.is_paused():
             self._window.set_paused(False)
         logger.info("托盘菜单: 启动监测")
 
     def _pause_detection(self):
-        """暂停监测（保留会话）"""
+        """暂停监测（保留会话+摄像头）"""
         if not self._window.is_paused():
             self._window.set_paused(True)
         logger.info("托盘菜单: 暂停监测")
 
     def _stop_detection(self):
-        """结束检测 — 结束会话 + 关闭窗口，托盘常驻"""
+        """结束检测 — 释放摄像头+停止定时器+结束会话，托盘常驻"""
+        app = self._app
+        # 1. 停止 Qt 定时器
         try:
-            if hasattr(self._app, '_finalize_session'):
-                self._app._finalize_session()
+            if hasattr(app, '_qt_timer') and app._qt_timer is not None:
+                app._qt_timer.stop()
+        except Exception as e:
+            logger.warning("停止定时器失败: %s", e)
+        # 2. 释放摄像头
+        try:
+            if hasattr(app, '_camera_manager') and app._camera_manager is not None:
+                app._camera_manager.release()
+        except Exception as e:
+            logger.warning("释放摄像头失败: %s", e)
+        # 3. 结束会话
+        try:
+            if hasattr(app, '_finalize_session'):
+                app._finalize_session()
         except Exception as e:
             logger.warning("结束会话失败: %s", e)
+        # 4. 隐藏窗口
         if self._window.isVisible():
             self._window.hide()
             self._toggle_visibility_action.setText("显示窗口")
-        try:
-            self._window.set_paused(True)
-        except Exception:
-            pass
-        logger.info("托盘菜单: 结束检测（会话已保存）")
+        logger.info("托盘菜单: 结束检测（资源已释放，托盘常驻）")
 
     def _generate_report(self):
         """生成报告快照（不终止会话）并自动打开
