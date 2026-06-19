@@ -523,77 +523,124 @@ class InsightsEngine:
         session_duration: float,
         focus_records: List[FocusRecord],
     ) -> List[Insight]:
-        """生成综合建议（v4.10: 动态描述）"""
+        """生成综合建议（v4.29: 新增时段/波动/多层级建议）"""
         insights = []
         duration_minutes = session_duration / 60.0
 
-        # 基于时长的建议
+        # ── 1. 工作时长建议 ──
         if duration_minutes > 60:
             remain = duration_minutes - 45
             insights.append(Insight(
                 category='recommendation',
                 severity='info',
                 title='连续工作时长较长',
-                description=f'已连续工作{int(duration_minutes)}分钟，已超过推荐的45分钟高效周期',
-                suggestion=f'建议每45-50分钟休息5-10分钟，当前已超时{int(remain)}分钟，尽快休息',
+                description=f'已连续工作{int(duration_minutes)}分钟，超过推荐高效周期',
+                suggestion=f'建议每45-50分钟休息5-10分钟，超时{int(remain)}分钟，尽快休息',
                 data_evidence={'duration_minutes': duration_minutes},
             ))
 
-        # 疲劳后的恢复建议
+        # ── 2. 疲劳后恢复建议 ──
         if duration_minutes > 90 and avg_focus < self.FOCUS_GOOD:
             insights.append(Insight(
                 category='recommendation',
                 severity='warning',
                 title='长时间工作后专注下降',
-                description=f'已连续工作{int(duration_minutes)}分钟且专注度{avg_focus:.0f}分，'
-                           f'可能已达效率瓶颈',
-                suggestion='建议进行10-15分钟彻底休息（起身走动+远眺），之后效率会明显回升',
+                description=f'连续工作{int(duration_minutes)}分钟且专注度{avg_focus:.0f}分，已达效率瓶颈',
+                suggestion='建议10-15分钟彻底休息（起身走动+远眺+补水），之后效率明显回升',
                 data_evidence={'duration_minutes': duration_minutes, 'avg_focus': avg_focus},
             ))
 
-        # 基于综合专注度的建议
+        # ── 3. 专注度分级建议 ──
         if avg_focus >= self.FOCUS_GOOD:
             insights.append(Insight(
                 category='recommendation',
                 severity='info',
                 title='专注状态良好',
-                description=f'平均专注度{avg_focus:.1f}，整体表现良好',
-                suggestion='继续保持当前工作节奏，注意适时休息以维持高效',
+                description=f'平均专注度{avg_focus:.1f}，整体表现优秀',
+                suggestion='继续保持当前节奏。①每50分钟微休息2分钟远眺；②重要任务优先安排在高效时段',
                 data_evidence={'avg_focus': avg_focus},
             ))
         elif avg_focus >= self.FOCUS_WARNING:
             insights.append(Insight(
                 category='recommendation',
                 severity='info',
-                title='专注度一般',
-                description=f'平均专注度{avg_focus:.1f}（良好线{self.FOCUS_GOOD:.0f}），'
-                           f'尚有提升空间',
-                suggestion='尝试减少多任务并行，使用番茄工作法（25分钟工作+5分钟休息）提升专注',
+                title='专注度一般，有提升空间',
+                description=f'平均专注度{avg_focus:.1f}（良好线{self.FOCUS_GOOD:.0f}），尚有提升空间',
+                suggestion='提升方法：①减少多任务并行；②使用番茄工作法25+5；③清理桌面减少视觉干扰；④关闭非必要通知',
                 data_evidence={'avg_focus': avg_focus},
             ))
         elif avg_focus > 0:
             insights.append(Insight(
                 category='recommendation',
                 severity='warning',
-                title='专注度偏低需关注',
+                title='专注度偏低，需系统改善',
                 description=f'平均专注度{avg_focus:.0f}分，低于警戒线{self.FOCUS_WARNING:.0f}分',
-                suggestion='建议检查当前环境干扰因素，必要时中断工作稍作休整再继续',
+                suggestion='改善路径：①排查睡眠质量（建议7-8小时）；②检查环境干扰（噪音/温度/照明）；'
+                          f'③拆分任务为25分钟小单元；④每完成一个单元奖励短休',
                 data_evidence={'avg_focus': avg_focus},
             ))
 
-        # 眼部健康建议
+        # ── 4. 眼部健康建议 ──
         if avg_blink_rate < self.BLINK_NORMAL * 0.8:
             low_pct = int((self.BLINK_NORMAL - avg_blink_rate) / self.BLINK_NORMAL * 100)
             insights.append(Insight(
                 category='recommendation',
                 severity='warning',
-                title='眨眼频率偏低',
-                description=f'眨眼频率{avg_blink_rate:.1f}次/分，低于正常({self.BLINK_NORMAL:.0f}次/分)约{low_pct}%',
-                suggestion=f'长时间盯着屏幕会减少眨眼次数，建议有意识地多眨眼、使用人工泪液润滑眼睛',
+                title='眨眼频率偏低，注意用眼健康',
+                description=f'眨眼频率{avg_blink_rate:.1f}次/分，低于正常约{low_pct}%',
+                suggestion='护眼建议：①有意识地多眨眼（每20秒眨眼1次）；②20-20-20法则：每20分钟看20英尺外20秒；'
+                          f'③使用人工泪液润滑；④屏幕亮度与环境光协调；⑤保持50-70cm用眼距离',
                 data_evidence={'avg_blink_rate': avg_blink_rate},
             ))
 
+        # ── 5. v4.29: 专注高峰时段分析 ──
+        if len(focus_records) >= 6:
+            third = max(1, len(focus_records) // 3)
+            segs = [
+                ("前期", self._calc_seg_avg(focus_records[:third])),
+                ("中期", self._calc_seg_avg(focus_records[third:2*third]) if len(focus_records) >= 2*third else None),
+                ("后期", self._calc_seg_avg(focus_records[-third:])),
+            ]
+            valid = [(l, v) for l, v in segs if v is not None]
+            if valid:
+                best_label, best_val = max(valid, key=lambda x: x[1])
+                worst_label, worst_val = min(valid, key=lambda x: x[1])
+                if best_val - worst_val > 10:
+                    insights.append(Insight(
+                        category='recommendation',
+                        severity='info',
+                        title='专注高峰时段分析',
+                        description=f'{best_label}专注度{best_val:.0f}分最高，{worst_label}{worst_val:.0f}分最低，差距{best_val-worst_val:.0f}分',
+                        suggestion='建议将高难度创造性工作安排在专注高峰时段，低难度事务性工作安排在低谷时段。'
+                                  f'若{worst_label}专注下降，可提前安排休息或切换简单任务',
+                        data_evidence={'best_segment': best_label, 'best_score': best_val,
+                                      'worst_segment': worst_label, 'worst_score': worst_val},
+                    ))
+
+        # ── 6. v4.29: 波动稳定性评估 ──
+        if len(focus_records) >= 5:
+            scores = [r.focus_score for r in focus_records if r.focus_score is not None]
+            if scores:
+                std = float(np.std(scores))
+                if std > 18:
+                    insights.append(Insight(
+                        category='recommendation',
+                        severity='info',
+                        title='专注度波动较大，建议稳定节奏',
+                        description=f'专注度标准差{std:.1f}分，波动较大（稳定阈值18分）',
+                        suggestion='稳定策略：①固定每日工作时段培养生物钟；②任务前做2分钟正念呼吸平静心态；'
+                                  f'③使用白噪音掩盖环境干扰；④每次只专注一个任务',
+                        data_evidence={'std': std},
+                    ))
+
         return insights
+
+    # ── v4.29: 辅助方法 ──
+
+    def _calc_seg_avg(self, records: List[FocusRecord]) -> float:
+        """计算记录段的平均专注度"""
+        scores = [r.focus_score for r in records if r.focus_score is not None]
+        return float(np.mean(scores)) if scores else 0.0
 
     def generate_summary(self, insights: List[Insight]) -> str:
         """生成建议摘要文本

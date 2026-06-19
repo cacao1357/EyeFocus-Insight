@@ -59,9 +59,9 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         return QIcon(pixmap)
 
     def _create_context_menu(self):
-        """创建右键菜单（v4.29: 精简分组，合并番茄钟为单按钮，移除重复入口）"""
+        """创建右键菜单（v4.29: 3独立监测按钮 + 关闭托盘）"""
         menu = QMenu()
-        # 防止暗色系统主题导致菜单文字不可见
+        # 白底 QSS 不变
         menu.setStyleSheet("""
             QMenu {
                 background-color: #FFFFFF; color: #23201E;
@@ -81,21 +81,30 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             }
         """)
 
-        # ── 状态区 ──
+        # ── 状态 ──
         self._status_action = menu.addAction("专注度: --")
         self._status_action.setEnabled(False)
         menu.addSeparator()
 
-        # ── 控制区 ──
+        # ── 窗口 ──
         self._toggle_visibility_action = menu.addAction("显示窗口")
         self._toggle_visibility_action.triggered.connect(self._toggle_visibility)
 
-        self._monitor_action = menu.addAction("▶ 启动监测")
-        self._monitor_action.triggered.connect(self._toggle_pause)
+        menu.addSeparator()
+
+        # ── 监测控制（3个独立按钮） ──
+        self._start_action = menu.addAction("▶ 启动监测")
+        self._start_action.triggered.connect(self._start_detection)
+
+        self._pause_action = menu.addAction("⏸ 暂停监测")
+        self._pause_action.triggered.connect(self._pause_detection)
+
+        self._stop_action = menu.addAction("⏹ 结束检测")
+        self._stop_action.triggered.connect(self._stop_detection)
 
         menu.addSeparator()
 
-        # ── 数据区 ──
+        # ── 数据 ──
         self._recent_menu = menu.addMenu("最近会话")
         self._recent_menu.aboutToShow.connect(self._refresh_recent_sessions)
 
@@ -107,17 +116,16 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
 
         menu.addSeparator()
 
-        # ── 番茄钟（合并为单按钮，设置项移入设置面板） ──
+        # ── 番茄钟 ──
         self._pomodoro_action = menu.addAction("🍅 开始番茄")
         self._pomodoro_action.triggered.connect(self._toggle_pomodoro)
 
         menu.addSeparator()
 
-        # ── 工具区 ──
+        # ── 工具 ──
         calibrate_action = menu.addAction("重新校准")
         calibrate_action.triggered.connect(self._start_calibration)
 
-        # v4.17: 语音反馈
         voice_enabled = True
         try:
             from config import get_yaml_value
@@ -129,7 +137,6 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         self._voice_action.setChecked(voice_enabled)
         self._voice_action.triggered.connect(self._toggle_voice)
 
-        # 免打扰模式
         self._dnd_action = menu.addAction("免打扰模式")
         self._dnd_action.setCheckable(True)
         self._dnd_action.setChecked(False)
@@ -137,7 +144,7 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
 
         menu.addSeparator()
 
-        # ── 配置区 ──
+        # ── 配置 ──
         ai_chat_action = menu.addAction("💬 AI 对话")
         ai_chat_action.triggered.connect(self._launch_ai_cli)
 
@@ -146,11 +153,11 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
 
         menu.addSeparator()
 
-        # ── 系统区 ──
+        # ── 系统 ──
         restart_action = menu.addAction("🔄 重启程序")
         restart_action.triggered.connect(self._restart_app)
 
-        exit_action = menu.addAction("退出 EyeFocus Insight")
+        exit_action = menu.addAction("关闭托盘")
         exit_action.triggered.connect(self._exit_app)
 
         self.setContextMenu(menu)
@@ -190,8 +197,9 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         self._status_action.setText(f"专注度: {label}")
 
     def set_paused_state(self, paused: bool):
-        """同步暂停状态到菜单项"""
-        self._monitor_action.setText("▶ 启动监测" if paused else "⏹ 结束监测")
+        """同步暂停状态到菜单项（外部调用：人脸丢失自动暂停）"""
+        # v4.29: 3个独立按钮，不再依赖单一切换文本
+        pass
 
     def set_pomodoro_state(self, state: str, count: int = 0):
         """同步番茄状态到菜单项（单按钮模式）"""
@@ -246,11 +254,40 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             self._window.activateWindow()
             self._toggle_visibility_action.setText("隐藏窗口")
 
-    def _toggle_pause(self):
-        """切换暂停/继续"""
-        self._window.toggle_pause()
-        paused = self._window.is_paused()
-        self.set_paused_state(paused)
+    # ── 监测控制（3个独立按钮） ──
+
+    def _start_detection(self):
+        """启动/恢复监测 — 显示窗口 + 取消暂停"""
+        if not self._window.isVisible():
+            self._window.show()
+            self._window.raise_()
+            self._window.activateWindow()
+            self._toggle_visibility_action.setText("隐藏窗口")
+        if self._window.is_paused():
+            self._window.set_paused(False)
+        logger.info("托盘菜单: 启动监测")
+
+    def _pause_detection(self):
+        """暂停监测（保留会话）"""
+        if not self._window.is_paused():
+            self._window.set_paused(True)
+        logger.info("托盘菜单: 暂停监测")
+
+    def _stop_detection(self):
+        """结束检测 — 结束会话 + 关闭窗口，托盘常驻"""
+        try:
+            if hasattr(self._app, '_finalize_session'):
+                self._app._finalize_session()
+        except Exception as e:
+            logger.warning("结束会话失败: %s", e)
+        if self._window.isVisible():
+            self._window.hide()
+            self._toggle_visibility_action.setText("显示窗口")
+        try:
+            self._window.set_paused(True)
+        except Exception:
+            pass
+        logger.info("托盘菜单: 结束检测（会话已保存）")
 
     def _generate_report(self):
         """生成报告快照（不终止会话）并自动打开

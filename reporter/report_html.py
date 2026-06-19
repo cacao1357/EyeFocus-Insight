@@ -76,80 +76,7 @@ class HTMLReportGenerator:
     # Tab 切换 JS
     PLOTLY_JS = '<script src="plotly.min.js"></script>'
 
-    # v4.26: 报告内对话 JS
-    CHAT_JS_SCRIPT = """
-    <script>
-    // ── 对话引擎 ──
-    var __chatData = typeof __focusData !== 'undefined' ? __focusData : {};
-    var __chatLog = [];
-
-    function __addChat(msg, isUser) {
-        var box = document.getElementById('chat-box');
-        if (!box) return;
-        var div = document.createElement('div');
-        div.className = 'chat-msg ' + (isUser ? 'chat-user' : 'chat-ai');
-        div.textContent = msg;
-        box.appendChild(div);
-        box.scrollTop = box.scrollHeight;
-        __chatLog.push({role: isUser ? 'user' : 'ai', text: msg});
-    }
-
-    function __ask() {
-        var input = document.getElementById('chat-input');
-        var q = input.value.trim();
-        if (!q) return;
-        input.value = '';
-        __addChat(q, true);
-        var answer = __answer(q, __chatData);
-        setTimeout(function() { __addChat(answer, false); }, 200);
-    }
-
-    function __answer(q, d) {
-        q = q.toLowerCase();
-        var a = d.answers || {};
-        var ai = d.aiAnalysis || '';
-
-        // Greeting
-        if (/你好|hello|hi|^hey/.test(q)) return '你好！我是你的专注度分析助手。';
-
-        // Show full AI analysis
-        if (/分析|summary|总结|overview|report/.test(q) && ai.length > 5) return ai;
-
-        // Focus overall
-        if (/怎么样|how.*focus|整体|评价|表现|专注度/.test(q)) return a.focus || '暂无分析。';
-
-        // Why low / decline
-        if (/为什么|下降|偏低|drop|why.*low|decline/.test(q)) return a.trend + ' ' + (a.fatigue || '') + (a.suggestion || '');
-
-        // Trend
-        if (/趋势|trend|后半|前半|start|end|变化/.test(q)) return a.trend || '暂无趋势数据。';
-
-        // Fatigue
-        if (/疲劳|累|tired|fatigue/.test(q)) return a.fatigue || '暂无疲劳数据。';
-
-        // Distraction
-        if (/分心|distract|打扰|干扰|走神/.test(q)) return a.distraction || '暂无分心数据。';
-
-        // Duration
-        if (/时长|时间|多久|long|how long/.test(q)) {
-            var dur = d.duration || 0;
-            var h = Math.floor(dur / 60), m = dur % 60;
-            var t = h > 0 ? h + ' 小时 ' + m + ' 分钟' : dur + ' 分钟';
-            return '会话时长 ' + t + (dur >= 90 ? '。连续工作时间较长，注意休息。' : '。');
-        }
-
-        // Suggestion
-        if (/建议|suggest|improve|提升|改进|如何/.test(q)) return a.suggestion || '暂无建议。';
-
-        // Fallback — show AI analysis if available
-        if (ai.length > 5) return ai;
-        return '你可以问我：专注度怎么样、为什么下降、疲劳程度、分心情况、建议等。';
-    }
-
-    function __initChat() { document.getElementById('chat-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') __ask(); }); }
-    if (document.readyState === 'complete') __initChat(); else window.addEventListener('load', __initChat);
-    </script>
-    """
+    # v4.29: 报告内对话已移除（保留模板建议）
 
     @staticmethod
     def _ensure_plotly_asset(report_dir: str) -> None:
@@ -427,40 +354,14 @@ class HTMLReportGenerator:
         # 将原始 chart data 渲染为 HTML
         charts_for_render = {k: v for k, v in charts.items() if k != "insights_charts"}
         charts_html = self._render_charts(charts_for_render)
-        if "insights_charts" in charts:
-            charts_html["insights_charts"] = charts["insights_charts"]
+        # v4.29: 洞察图表并入数据 tab
+        insights_charts_html = charts.get("insights_charts", "")
 
         # 各 tab HTML
         overview_html = self._render_overview_tab(data, charts_html)
-        analysis_html = self._render_analysis_tab(charts_html)
-        suggestions_html = self._render_insights_tab(charts_html, insights)
+        analysis_html = self._render_analysis_tab(charts_html, insights_charts_html)
+        suggestions_html = self._render_insights_tab(insights)
         next_steps_html = self._render_next_steps()
-
-        # v4.26: 对话功能 — 嵌入分析数据 + 预计算回答
-        # v4.26: AI 模式开启时嵌入对话数据
-        chat_embedding = ""
-        chat_script = ""
-        if self._ai_mode_enabled():
-            avg = data.avg_focus or 50
-            fr = data.focus_records or []
-            fatigue_recs = data.fatigue_records or []
-            third = max(1, len(fr) // 3)
-            seg_s = self._calc_avg_focus(fr[:third]) if len(fr) >= third else avg
-            seg_e = self._calc_avg_focus(fr[-third:]) if len(fr) >= third else avg
-            tf = max(len(fatigue_recs), 1)
-            hp = round(sum(1 for r in fatigue_recs if r.fatigue_level.name == "HIGH") / tf * 100, 0)
-            dist_count = len(getattr(data, 'distraction_records', None) or [])
-            dur_min = data.total_duration / 60 if data.total_duration else 0
-            ai_text = self._generate_ai_summary() or "暂无分析数据。"
-            ai_text_escaped = ai_text.replace('"', '\\"').replace('\n', ' ')
-            focus_json = (
-                '{"avgFocus":%.0f,"duration":%.0f,'
-                '"segments":{"start":%.0f,"end":%.0f},'
-                '"fatigue":{"highPct":%.0f},"distractions":%d,'
-                '"aiAnalysis":"%s"}'
-            ) % (avg, dur_min, seg_s, seg_e, hp, dist_count, ai_text_escaped)
-            chat_embedding = f'<script>window.__focusData = {focus_json};</script>'
-            chat_script = self.CHAT_JS_SCRIPT
 
         html = f"""
 <!DOCTYPE html>
@@ -484,7 +385,7 @@ class HTMLReportGenerator:
         <div class="tab-bar">
             <button class="tab-btn active" data-tab="overview" onclick="switchTab('overview')">📊 概览</button>
             <button class="tab-btn" data-tab="analysis" onclick="switchTab('analysis')">📋 数据</button>
-            <button class="tab-btn" data-tab="suggestions" onclick="switchTab('suggestions')">💡 洞察</button>
+            <button class="tab-btn" data-tab="suggestions" onclick="switchTab('suggestions')">💡 建议</button>
         </div>
 
         <div id="tab-overview" class="tab-content active">{overview_html}</div>
@@ -492,12 +393,10 @@ class HTMLReportGenerator:
         <div id="tab-suggestions" class="tab-content">{suggestions_html}{next_steps_html}</div>
 
         <div class="footer">
-            EyeFocus Insight v4.26 | 自动生成专注度分析报告 | 会话 {safe_session_id[:12]}
+            EyeFocus Insight v4.29 | 自动生成专注度分析报告 | 会话 {safe_session_id[:12]}
         </div>
     </div>
-    {chat_embedding}
     {self.JS_SCRIPT}
-    {chat_script}
 </body>
 </html>"""
         return html
@@ -720,8 +619,8 @@ class HTMLReportGenerator:
             {table}
         </div>"""
 
-    def _render_analysis_tab(self, charts: dict) -> str:
-        """v4.26: 数据 Tab — 图表 + 原始数据"""
+    def _render_analysis_tab(self, charts: dict, insights_charts_html: str = "") -> str:
+        """v4.29: 数据 Tab — 图表(标准+洞察) + 原始数据"""
         parts = []
 
         # ── v4.17: 专注日历热力图 ──
@@ -756,6 +655,10 @@ class HTMLReportGenerator:
                 <div class="card-desc">{desc}</div>
                 {chart_html}
             </div>''')
+
+        # v4.29: 洞察图表移入数据 tab
+        if insights_charts_html:
+            parts.append(insights_charts_html)
 
         return "\n".join(parts)
 
@@ -1135,55 +1038,25 @@ class HTMLReportGenerator:
 
         return "。" if not parts else _html.escape("".join(parts))
 
-    def _render_insights_tab(self, charts: dict, insights: List[Insight]) -> str:
-        """v4.26: 洞察 Tab — AI 分析摘要 + 个性化建议 + 下一步"""
+    def _render_insights_tab(self, insights: List[Insight]) -> str:
+        """v4.29: 建议 Tab — 模板个性化建议（已移除 AI 对话/分析摘要/图表）"""
         parts = []
 
-        # ── AI 分析摘要（主位） ──
-        try:
-            summary = self._generate_ai_summary()
-            if summary:
-                parts.append(f'''
-                    <div class="card" style="background:linear-gradient(135deg,#F4F2EE,#FFFFFF);border-left:4px solid #4A3A7A;">
-                        <h2>🤖 AI 分析</h2>
-                        <div class="card-desc" style="font-size:15px;line-height:1.8;color:#23201E;padding:8px 0;">
-                            {summary}
-                        </div>
-                    </div>''')
-        except Exception as e:
-            logger.warning("AI 分析摘要异常: %s", e)
-
-        # ── 个性化建议 ──
+        # ── 个性化建议（模板引擎生成） ──
         insights_html = self._render_insights(insights) if insights else ""
-        insights_charts = charts.get('insights_charts', "")
         if insights_html:
             parts.append(f'''
                 <div class="card">
-                    <h2>个性化建议</h2>
+                    <h2>💡 个性化建议</h2>
+                    <p class="card-desc">基于本会话数据生成的多维分析与改善建议</p>
                     {insights_html}
                 </div>''')
         else:
             parts.append('''
                 <div class="card">
-                    <h2>个性化建议</h2>
-                    <div class="no-data">未检测到明显问题</div>
+                    <h2>💡 个性化建议</h2>
+                    <div class="no-data">本次会话表现良好，未检测到需要调整的问题</div>
                 </div>''')
-        if insights_charts:
-            parts.append(insights_charts)
-
-        # ── v4.26: 对话（AI 模式开启时显示） ──
-        chat_html = ''
-        if self._ai_mode_enabled():
-            chat_html = '''
-        <div class="card" style="border-left:2px solid var(--iris-600);">
-            <h2>💬 问你的数据</h2>
-            <div class="card-desc">试试问：专注度怎么样？为什么下降？疲劳程度？有什么建议？</div>
-            <div id="chat-box" class="chat-box"></div>
-            <div class="chat-input-row">
-                <input id="chat-input" class="chat-input" type="text" placeholder="输入问题...">
-                <button class="chat-send" onclick="__ask()">发送</button>
-            </div>'''
-        parts.append(chat_html)
 
         return "\n".join(parts)
 
