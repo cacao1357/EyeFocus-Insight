@@ -189,6 +189,15 @@ class HTMLReportGenerator:
         # 生成图表
         charts = self._generate_charts(report_data)
 
+        # v4.38: 查询同日其他会话（L2 同日对比）
+        same_day_sessions = []
+        try:
+            today_str = session.start_time.strftime("%Y-%m-%d")
+            same_day_sessions = self.db.get_sessions_by_date_range(
+                today_str, today_str) if self.db else []
+        except Exception:
+            pass
+
         # 生成建议
         insights = self.insights_engine.analyze(
             focus_records=focus_records,
@@ -198,6 +207,8 @@ class HTMLReportGenerator:
             session_duration=total_duration,
             session_id=session.session_id,
             session_start_time=session.start_time.timestamp(),
+            blink_records=blink_records,
+            same_day_sessions=same_day_sessions,
         )
 
         # 渲染 HTML
@@ -277,6 +288,7 @@ class HTMLReportGenerator:
                 is_daily=True,
                 session_count=len(sessions),
                 max_session_duration=max_session_duration,
+                blink_records=data["blink_records"],
             )
             return self._render_daily_html(report_data, charts, insights, len(sessions))
         except Exception as e:
@@ -344,6 +356,7 @@ class HTMLReportGenerator:
             session_duration=total_duration,
             session_id=session.session_id,
             session_start_time=session.start_time.timestamp(),
+            blink_records=blink_records,
         )
 
         # 渲染 HTML
@@ -1348,55 +1361,79 @@ class HTMLReportGenerator:
         """
 
     def _render_insights(self, insights: List[Insight]) -> str:
-        """渲染建议列表"""
+        """v4.38: 渲染建议列表，>5 条时 Top 5 优先展示，其余折叠"""
         if not insights:
             return ""
 
-        # M-18: severity 白名单, 防止恶意 severity 注入 class 属性
         _ALLOWED_SEVERITY = {"info", "warning", "alert"}
-        items = []
-        for insight in insights:
-            severity_class = (
-                insight.severity if insight.severity in _ALLOWED_SEVERITY else "info"
+        folded = len(insights) > 5
+        visible = insights[:5] if folded else insights
+        hidden = insights[5:] if folded else []
+
+        def _render_items(ins_list):
+            items = []
+            for insight in ins_list:
+                severity_class = (
+                    insight.severity if insight.severity in _ALLOWED_SEVERITY else "info"
+                )
+                safe_title = html_escape(insight.title)
+                safe_description = html_escape(insight.description)
+                safe_suggestion = html_escape(insight.suggestion)
+                badge_html = f'<span class="severity-badge {severity_class}">{severity_class.upper()}</span>'
+                items.append(f"""
+                    <li class="insight-item {severity_class}">
+                        <div class="title">{badge_html}{safe_title}</div>
+                        <div class="description">{safe_description}</div>
+                        <div class="suggestion">💡 {safe_suggestion}</div>
+                    </li>
+                """)
+            return "\n".join(items)
+
+        html = f"<ul class='insights-list'>\n{_render_items(visible)}\n</ul>"
+        if hidden:
+            hidden_html = _render_items(hidden)
+            html += (
+                f"\n<details class='insights-fold'>"
+                f"<summary>📋 更多 {len(hidden)} 条建议</summary>"
+                f"<ul class='insights-list'>{hidden_html}</ul>"
+                f"</details>"
             )
-            # M-18: title/description/suggestion 来自数据, 需 escape
-            safe_title = html_escape(insight.title)
-            safe_description = html_escape(insight.description)
-            safe_suggestion = html_escape(insight.suggestion)
-            badge_html = f'<span class="severity-badge {severity_class}">{severity_class.upper()}</span>'
-
-            items.append(f"""
-                <li class="insight-item {severity_class}">
-                    <div class="title">{badge_html}{safe_title}</div>
-                    <div class="description">{safe_description}</div>
-                    <div class="suggestion">💡 {safe_suggestion}</div>
-                </li>
-            """)
-
-        return f"<ul class='insights-list'>\n" + "\n".join(items) + "\n</ul>"
+        return html
 
     def _render_insight_items(self, insights: List[Insight]) -> str:
-        """仅渲染建议列表的 <li> 项（不带 <ul> 包装），用于注入已有章节。"""
+        """v4.38: 渲染建议 <li> 项，>5 条时折叠其余"""
         if not insights:
             return ""
         _ALLOWED_SEVERITY = {"info", "warning", "alert"}
-        items = []
-        for insight in insights:
-            severity_class = (
-                insight.severity if insight.severity in _ALLOWED_SEVERITY else "info"
-            )
-            safe_title = html_escape(insight.title)
-            safe_description = html_escape(insight.description)
-            safe_suggestion = html_escape(insight.suggestion)
-            badge_html = f'<span class="severity-badge {severity_class}">{severity_class.upper()}</span>'
-            items.append(f"""
+        folded = len(insights) > 5
+        visible = insights[:5] if folded else insights
+        hidden = insights[5:] if folded else []
+
+        def _li(items_list):
+            result = []
+            for insight in items_list:
+                severity_class = (
+                    insight.severity if insight.severity in _ALLOWED_SEVERITY else "info"
+                )
+                safe_title = html_escape(insight.title)
+                safe_description = html_escape(insight.description)
+                safe_suggestion = html_escape(insight.suggestion)
+                badge_html = f'<span class="severity-badge {severity_class}">{severity_class.upper()}</span>'
+                result.append(f"""
                 <li class="insight-item {severity_class}">
                     <div class="title">{badge_html}{safe_title}</div>
                     <div class="description">{safe_description}</div>
                     <div class="suggestion">💡 {safe_suggestion}</div>
                 </li>""")
+            return "\n".join(result)
 
-        return "\n".join(items)
+        html = _li(visible)
+        if hidden:
+            html += (f"\n<details class='insights-fold'>"
+                     f"<summary>📋 更多 {len(hidden)} 条建议</summary>"
+                     f"<ul class='insights-list'>{_li(hidden)}</ul>"
+                     f"</details>")
+        return html
 
     def _render_charts(self, charts: dict) -> dict:
         """将图表数据转换为 HTML。
@@ -1689,6 +1726,7 @@ class HTMLReportGenerator:
             session_duration=total_duration,
             session_id=session_id,
             session_start_time=session.start_time.timestamp(),
+            blink_records=blink_records,
         )
         if insights_result.attribution_findings:
             try:
