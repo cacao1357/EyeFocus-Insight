@@ -71,11 +71,67 @@ class InsightsEngine:
         """初始化建议引擎
 
         Args:
-            db: 可选 DatabaseManager 实例，用于历史对比
+            db: 可选 DatabaseManager 实例，用于历史对比 + 个性化阈值
         """
         self._db = db
         self._focus_trends: List[float] = []
         self._blink_trends: List[float] = []
+
+        # ── v4.35: 用户个性化阈值（从历史加载，初始值为 class 常量） ──
+        self._user_focus_good = self.FOCUS_GOOD     # 默认 70
+        self._user_focus_warning = self.FOCUS_WARNING  # 默认 50
+        self._user_focus_poor = self.FOCUS_POOR       # 默认 30
+        self._user_blink_normal = self.BLINK_NORMAL     # 默认 15
+        self._user_blink_elevated = self.BLINK_ELEVATED # 默认 20
+        self._user_blink_high = self.BLINK_HIGH         # 默认 30
+        self._load_user_thresholds()
+
+    # ── v4.35: 用户个性化阈值 ──
+
+    def _load_user_thresholds(self) -> None:
+        """从用户历史会话分布加载个性化阈值
+
+        用历史中位数替代全局常数。数据不足(<3次)时保持默认。
+        """
+        if not self._db:
+            return
+        try:
+            with self._db.get_cursor() as cur:
+                cur.execute("""
+                    SELECT AVG(f.focus_score) as avg_f,
+                           AVG(f.blink_rate) as avg_b
+                    FROM focus_records f
+                    WHERE f.focus_score IS NOT NULL
+                      AND f.blink_rate IS NOT NULL
+                    GROUP BY f.session_id
+                """)
+                rows = cur.fetchall()
+            if len(rows) < 3:
+                return
+
+            focus_avgs = [r[0] for r in rows if r[0] is not None]
+            blink_avgs = [r[1] for r in rows if r[1] is not None]
+
+            if len(focus_avgs) >= 3:
+                med = float(np.median(focus_avgs))
+                std = float(np.std(focus_avgs))
+                self._user_focus_good = med
+                self._user_focus_warning = max(20.0, med - std)
+                self._user_focus_poor = max(10.0, med - 2 * std)
+
+            if len(blink_avgs) >= 3:
+                med = float(np.median(blink_avgs))
+                std = float(np.std(blink_avgs))
+                self._user_blink_normal = med
+                self._user_blink_elevated = med + std
+                self._user_blink_high = med + 2 * std
+
+            logger.info(
+                "用户个性化阈值已加载: focus_good=%.0f, focus_warning=%.0f (n=%d)",
+                self._user_focus_good, self._user_focus_warning, len(focus_avgs),
+            )
+        except Exception as e:
+            logger.debug("加载用户阈值失败, 使用默认值: %s", e)
 
     def analyze(
         self,
@@ -249,7 +305,7 @@ class InsightsEngine:
         overall_avg = np.mean([r.focus_score for r in focus_records])
 
         # 如果最近专注度明显下降
-        if recent_avg < overall_avg * 0.8 and recent_avg < self.FOCUS_WARNING:
+        if recent_avg < overall_avg * 0.8 and recent_avg < self._user_focus_warning:
             return Insight(
                 category='focus',
                 severity='alert',
@@ -323,23 +379,23 @@ class InsightsEngine:
         """分析眨眼频率（v4.10: 百分比对比）"""
         insights = []
 
-        if avg_blink_rate > self.BLINK_HIGH:
-            over_pct = int((avg_blink_rate - self.BLINK_NORMAL) / self.BLINK_NORMAL * 100)
+        if avg_blink_rate > self._user_blink_high:
+            over_pct = int((avg_blink_rate - self._user_blink_normal) / self._user_blink_normal * 100)
             insights.append(Insight(
                 category='fatigue',
                 severity='warning',
                 title='眨眼频率偏高',
-                description=f'平均眨眼频率{avg_blink_rate:.1f}次/分，高于正常范围({self.BLINK_NORMAL:.0f}次/分)约{over_pct}%',
+                description=f'平均眨眼频率{avg_blink_rate:.1f}次/分，高于正常范围({self._user_blink_normal:.0f}次/分)约{over_pct}%',
                 suggestion='眨眼频率过高可能是疲劳信号，建议闭目休息片刻或使用人工泪液',
                 data_evidence={'avg_blink_rate': avg_blink_rate},
             ))
-        elif avg_blink_rate > self.BLINK_ELEVATED:
-            over_pct = int((avg_blink_rate - self.BLINK_NORMAL) / self.BLINK_NORMAL * 100)
+        elif avg_blink_rate > self._user_blink_elevated:
+            over_pct = int((avg_blink_rate - self._user_blink_normal) / self._user_blink_normal * 100)
             insights.append(Insight(
                 category='behavior',
                 severity='info',
                 title='眨眼频率略高',
-                description=f'平均眨眼频率{avg_blink_rate:.1f}次/分，略高于{self.BLINK_NORMAL:.0f}次/分（+{over_pct}%）',
+                description=f'平均眨眼频率{avg_blink_rate:.1f}次/分，略高于{self._user_blink_normal:.0f}次/分（+{over_pct}%）',
                 suggestion='注意用眼卫生，保持屏幕距离适中，定时远眺',
                 data_evidence={'avg_blink_rate': avg_blink_rate},
             ))
@@ -425,7 +481,7 @@ class InsightsEngine:
             return None
 
         try:
-            with self._db._get_cursor() as cur:
+            with self._db.get_cursor() as cur:
                 # 查询历史平均专注度（排除当前会话）
                 cur.execute("""
                     SELECT AVG(focus_score) FROM focus_records
@@ -540,7 +596,7 @@ class InsightsEngine:
             ))
 
         # ── 2. 疲劳后恢复建议 ──
-        if duration_minutes > 90 and avg_focus < self.FOCUS_GOOD:
+        if duration_minutes > 90 and avg_focus < self._user_focus_good:
             insights.append(Insight(
                 category='recommendation',
                 severity='warning',
@@ -551,7 +607,7 @@ class InsightsEngine:
             ))
 
         # ── 3. 专注度分级建议 ──
-        if avg_focus >= self.FOCUS_GOOD:
+        if avg_focus >= self._user_focus_good:
             insights.append(Insight(
                 category='recommendation',
                 severity='info',
@@ -560,12 +616,12 @@ class InsightsEngine:
                 suggestion='继续保持当前节奏。①每50分钟微休息2分钟远眺；②重要任务优先安排在高效时段',
                 data_evidence={'avg_focus': avg_focus},
             ))
-        elif avg_focus >= self.FOCUS_WARNING:
+        elif avg_focus >= self._user_focus_warning:
             insights.append(Insight(
                 category='recommendation',
                 severity='info',
                 title='专注度一般，有提升空间',
-                description=f'平均专注度{avg_focus:.1f}（良好线{self.FOCUS_GOOD:.0f}），尚有提升空间',
+                description=f'平均专注度{avg_focus:.1f}（良好线{self._user_focus_good:.0f}），尚有提升空间',
                 suggestion='提升方法：①减少多任务并行；②使用番茄工作法25+5；③清理桌面减少视觉干扰；④关闭非必要通知',
                 data_evidence={'avg_focus': avg_focus},
             ))
@@ -574,15 +630,15 @@ class InsightsEngine:
                 category='recommendation',
                 severity='warning',
                 title='专注度偏低，需系统改善',
-                description=f'平均专注度{avg_focus:.0f}分，低于警戒线{self.FOCUS_WARNING:.0f}分',
+                description=f'平均专注度{avg_focus:.0f}分，低于警戒线{self._user_focus_warning:.0f}分',
                 suggestion='改善路径：①排查睡眠质量（建议7-8小时）；②检查环境干扰（噪音/温度/照明）；'
                           f'③拆分任务为25分钟小单元；④每完成一个单元奖励短休',
                 data_evidence={'avg_focus': avg_focus},
             ))
 
         # ── 4. 眼部健康建议 ──
-        if avg_blink_rate < self.BLINK_NORMAL * 0.8:
-            low_pct = int((self.BLINK_NORMAL - avg_blink_rate) / self.BLINK_NORMAL * 100)
+        if avg_blink_rate < self._user_blink_normal * 0.8:
+            low_pct = int((self._user_blink_normal - avg_blink_rate) / self._user_blink_normal * 100)
             insights.append(Insight(
                 category='recommendation',
                 severity='warning',

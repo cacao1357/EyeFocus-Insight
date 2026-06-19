@@ -291,7 +291,7 @@ class DatabaseManager:
                 logger.info("数据库连接已关闭")
 
     @contextmanager
-    def _get_cursor(self):
+    def get_cursor(self):
         """获取数据库游标的上下文管理器
 
         v4.3 CRIT-01 修复: 持 self._lock 以兑现 docstring 承诺的线程安全。
@@ -329,7 +329,7 @@ class DatabaseManager:
         for _ in range(5):
             session_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:12]}"
             try:
-                with self._get_cursor() as cursor:
+                with self.get_cursor() as cursor:
                     cursor.execute(
                         """
                         INSERT INTO sessions (session_id, start_time, is_active)
@@ -398,7 +398,7 @@ class DatabaseManager:
 
         params.append(session_id)
 
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute(
                 f"UPDATE sessions SET {', '.join(updates)} WHERE session_id = ?",
                 params,
@@ -406,7 +406,7 @@ class DatabaseManager:
 
     def get_session(self, session_id: str) -> Optional[Session]:
         """获取会话信息"""
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute(
                 "SELECT * FROM sessions WHERE session_id = ?",
                 (session_id,),
@@ -425,7 +425,7 @@ class DatabaseManager:
             baseline_pitch_std=row["baseline_pitch_std"],
             cqs_score=row["cqs_score"],
             baseline_blink_rate=row["baseline_blink_rate"],
-            glasses_mode=GlassesMode(row["glasses_mode"]),
+            glasses_mode=GlassesMode(row["glasses_mode"]) if row["glasses_mode"] is not None else GlassesMode.UNKNOWN,
             is_calibrated=bool(row["is_calibrated"]),
             is_active=bool(row["is_active"]),
         )
@@ -437,7 +437,7 @@ class DatabaseManager:
             query += " WHERE is_active = 1"
         query += " ORDER BY start_time DESC"
 
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute(query)
             rows = cursor.fetchall()
 
@@ -451,7 +451,7 @@ class DatabaseManager:
                 baseline_pitch_std=row["baseline_pitch_std"],
                 cqs_score=row["cqs_score"],
                 baseline_blink_rate=row["baseline_blink_rate"],
-                glasses_mode=GlassesMode(row["glasses_mode"]),
+                glasses_mode=GlassesMode(row["glasses_mode"]) if row["glasses_mode"] is not None else GlassesMode.UNKNOWN,
                 is_calibrated=bool(row["is_calibrated"]),
                 is_active=bool(row["is_active"]),
             )
@@ -466,7 +466,7 @@ class DatabaseManager:
         if frame.blendshapes:
             blendshapes_json = json.dumps(frame.blendshapes)
 
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute(
                 """
                 INSERT INTO frame_records
@@ -517,7 +517,7 @@ class DatabaseManager:
 
         query += " ORDER BY timestamp"
 
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute(query, params)
             rows = cursor.fetchall()
 
@@ -577,7 +577,7 @@ class DatabaseManager:
 
         v4.31: 全天 6h=648K 行 → SQL 层采样后返回 ~500 行，I/O 降低 99.9%。
         """
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute(
                 "SELECT COUNT(*) FROM frame_records WHERE session_id = ?",
                 (session_id,),
@@ -588,7 +588,7 @@ class DatabaseManager:
             return self.get_frame_records(session_id)
 
         step = total // max_samples
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute("""
                 SELECT * FROM (
                     SELECT *, ROW_NUMBER() OVER (ORDER BY timestamp) AS _rn
@@ -609,7 +609,7 @@ class DatabaseManager:
 
     def write_focus_record(self, session_id: str, record: FocusRecord) -> None:
         """写入专注度记录"""
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute(
                 """
                 INSERT INTO focus_records
@@ -634,7 +634,7 @@ class DatabaseManager:
 
     def get_focus_records(self, session_id: str) -> List[FocusRecord]:
         """获取专注度记录"""
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute(
                 "SELECT * FROM focus_records WHERE session_id = ? ORDER BY window_start",
                 (session_id,),
@@ -670,7 +670,7 @@ class DatabaseManager:
         from collections import defaultdict
 
         placeholders = ','.join('?' * len(session_ids))
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute(f"""
                 SELECT * FROM focus_records
                 WHERE session_id IN ({placeholders})
@@ -699,7 +699,7 @@ class DatabaseManager:
 
     def write_fatigue_record(self, session_id: str, record: FatigueRecord) -> None:
         """写入疲劳记录"""
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute(
                 """
                 INSERT INTO fatigue_records
@@ -720,7 +720,7 @@ class DatabaseManager:
 
     def get_fatigue_records(self, session_id: str) -> List[FatigueRecord]:
         """获取疲劳记录"""
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute(
                 "SELECT * FROM fatigue_records WHERE session_id = ? ORDER BY timestamp",
                 (session_id,),
@@ -744,7 +744,7 @@ class DatabaseManager:
 
     def write_blink_event(self, session_id: str, event: BlinkRecord) -> None:
         """写入眨眼事件"""
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute(
                 """
                 INSERT INTO blink_events
@@ -762,7 +762,7 @@ class DatabaseManager:
 
     def get_blink_events(self, session_id: str) -> List[BlinkRecord]:
         """获取眨眼事件"""
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute(
                 "SELECT * FROM blink_events WHERE session_id = ? ORDER BY start_timestamp",
                 (session_id,),
@@ -794,7 +794,7 @@ class DatabaseManager:
         yaw_left, yaw_right = signal.yaw_range if signal.yaw_range else (0.0, 0.0)
         pitch_up, pitch_down = signal.pitch_range if signal.pitch_range else (0.0, 0.0)
 
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute(
                 """
                 UPDATE calibration SET
@@ -841,7 +841,7 @@ class DatabaseManager:
     def save_blink_calibration_round(self, calibration_id: int,
                                       round_data: 'BlinkCalibrationRound') -> None:
         """保存单轮眨眼校准数据"""
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute(
                 """
                 INSERT INTO blink_calibration_round
@@ -865,7 +865,7 @@ class DatabaseManager:
 
     def create_calibration(self, session_id: str) -> int:
         """创建校准记录"""
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute(
                 """
                 INSERT INTO calibration (session_id, timestamp)
@@ -881,7 +881,7 @@ class DatabaseManager:
         """获取会话统计信息"""
         stats = {}
 
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             # 帧记录统计
             cursor.execute(
                 """
@@ -1065,7 +1065,7 @@ class DatabaseManager:
 
     def save_daily_stats(self, stats) -> None:
         """保存或更新每日统计"""
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute("""
                 INSERT INTO daily_stats (date, total_focus_minutes, session_count,
                     avg_focus_score, best_focus_score, longest_session_minutes)
@@ -1084,7 +1084,7 @@ class DatabaseManager:
     def get_daily_stats(self, date: str):
         """获取指定日期的统计"""
         from storage.models import DailyStats
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute("SELECT * FROM daily_stats WHERE date = ?", (date,))
             row = cursor.fetchone()
         if not row:
@@ -1101,7 +1101,7 @@ class DatabaseManager:
     def get_all_daily_stats(self):
         """获取所有日统计（用于日历热力图）"""
         from storage.models import DailyStats
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute("SELECT * FROM daily_stats ORDER BY date")
             rows = cursor.fetchall()
         return [
@@ -1143,7 +1143,7 @@ class DatabaseManager:
         placeholders = ','.join('?' * len(session_ids))
 
         # 专注度 — 单次批量查询
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute(f"""
                 SELECT * FROM focus_records
                 WHERE session_id IN ({placeholders})
@@ -1168,7 +1168,7 @@ class DatabaseManager:
         ]
 
         # 疲劳 — 单次批量查询
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute(f"""
                 SELECT * FROM fatigue_records
                 WHERE session_id IN ({placeholders})
@@ -1189,7 +1189,7 @@ class DatabaseManager:
         ]
 
         # 眨眼 — 单次批量查询
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute(f"""
                 SELECT * FROM blink_events
                 WHERE session_id IN ({placeholders})
@@ -1230,7 +1230,7 @@ class DatabaseManager:
 
     def get_sessions_by_date_range(self, start_date: str, end_date: str):
         """按日期范围查询会话"""
-        with self._get_cursor() as cursor:
+        with self.get_cursor() as cursor:
             cursor.execute("""
                 SELECT * FROM sessions
                 WHERE date(start_time) >= ? AND date(start_time) <= ?
@@ -1254,7 +1254,7 @@ class DatabaseManager:
                     baseline_pitch_std=row["baseline_pitch_std"],
                     cqs_score=row["cqs_score"],
                     baseline_blink_rate=row["baseline_blink_rate"],
-                    glasses_mode=GlassesMode(row["glasses_mode"]),
+                    glasses_mode=GlassesMode(row["glasses_mode"]) if row["glasses_mode"] is not None else GlassesMode.UNKNOWN,
                     is_calibrated=bool(row["is_calibrated"]),
                     is_active=bool(row["is_active"]),
                 ))

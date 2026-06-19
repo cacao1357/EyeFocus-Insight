@@ -110,8 +110,8 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         generate_action = menu.addAction("打开报告")
         generate_action.triggered.connect(self._generate_report)
 
-        export_action = menu.addAction("导出数据")
-        export_action.triggered.connect(self._export_data)
+        report_dir_action = menu.addAction("📂 打开报告位置")
+        report_dir_action.triggered.connect(self._open_report_folder)
 
         menu.addSeparator()
 
@@ -383,7 +383,7 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
 
         self._report_generating = True
         try:
-            report_path = self._app.generate_report_snapshot()
+            report_path = self._app.generate_report_snapshot(force=True)  # v4.34: 跳过缓存强刷新
             if report_path and os.path.exists(report_path):
                 try:
                     os.startfile(report_path)
@@ -491,27 +491,41 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         except Exception as e:
             logger.warning("重新生成报告失败: %s", e)
 
-    # ── v4.18: 导出数据 ──
+    # ── v4.35: 打开报告文件夹（自动清理无效占位文件） ──
 
-    def _export_data(self) -> None:
-        """导出当前会话数据为 CSV"""
+    def _open_report_folder(self) -> None:
+        """在资源管理器中打开 reports/ 目录
+
+        打开前扫描并清理无效占位文件（数据不足页 / 错误页），
+        移入 _drafts/ 子目录确保用户只看有效报告。
+        不影响后续生成（活跃会话的报告会被覆盖，已结束会话的占位永远无效）。
+        """
+        import os as _os
+        folder = _os.path.abspath("reports")
+        if not _os.path.exists(folder):
+            _os.makedirs(folder, exist_ok=True)
+
+        # 扫描 .html 文件，检测占位/错误页标志 → 移入 _drafts/
+        draft_dir = _os.path.join(folder, "_drafts")
+        for fname in _os.listdir(folder):
+            if not fname.endswith(".html"):
+                continue
+            fpath = _os.path.join(folder, fname)
+            try:
+                with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                    header = f.read(512)
+                if "数据收集中" in header or "生成报告时出错" in header:
+                    _os.makedirs(draft_dir, exist_ok=True)
+                    _os.rename(fpath, _os.path.join(draft_dir, fname))
+                    logger.info("占位报告移入 _drafts: %s", fname)
+            except (OSError, PermissionError):
+                continue
+
         try:
-            sid = getattr(self._app, '_session_id', None)
-            if not sid:
-                return
-            import os
-            out_dir = os.path.abspath("reports/exports")
-            self._app._db.export_csv(sid, out_dir)
-            # v4.22: 移除导出成功通知（正常操作不弹窗）
-            logger.info("CSV 导出完成: %s", out_dir)
+            _os.startfile(folder)
+            logger.info("已打开报告文件夹: %s", folder)
         except Exception as e:
-            logger.warning("导出数据失败: %s", e)
-            self.showMessage(
-                "EyeFocus Insight - 导出失败",
-                str(e),
-                QSystemTrayIcon.Critical,
-                3000,
-            )
+            logger.warning("打开报告文件夹失败: %s", e)
 
     # ── v4.18: 番茄工作法 ──
 
@@ -589,8 +603,9 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             py = _sys.executable
             cmd = f'"{py}" -X utf8 -m analyzer.ai_cli'
             if _sys.platform == "win32":
-                # Windows: 开新 cmd 窗口
-                _sp.Popen(f'start "EyeFocus AI" cmd /k {cmd}', shell=True)
+                # Windows: CREATE_NEW_CONSOLE 开新窗口（避免 shell=True 注入风险）
+                _sp.Popen([py, '-X', 'utf8', '-m', 'analyzer.ai_cli'],
+                          creationflags=_sp.CREATE_NEW_CONSOLE)
             else:
                 # Linux/Mac: 开新终端
                 _sp.Popen(['x-terminal-emulator', '-e', cmd])

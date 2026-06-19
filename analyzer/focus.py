@@ -128,6 +128,11 @@ class FocusAnalyzer:
     _DECAY_RATE_PER_MINUTE = 0.00167
     _DECAY_FLOOR = 0.85
 
+    # ── v4.35: 动态权重场景阈值 ──
+    _BRIGHT_LOW = 80.0        # 低于此认为低光
+    _YAW_EXTREME = 25.0       # 超过此认为极端角度
+    _PITCH_EXTREME = 30.0
+
     def __init__(
         self,
         baseline_ear: float = 0.25,
@@ -139,12 +144,14 @@ class FocusAnalyzer:
         window_size: float = 15.0,       # v4.13: 15s 窗口
         fps: float = 30.0,
         enable_kalman: bool = False,
+        adjustment_factor: float = 1.0,  # v4.35: 校准调整因子
     ):
         self.baseline_ear = baseline_ear
         self.baseline_yaw_std = baseline_yaw_std
         self.baseline_pitch_std = baseline_pitch_std
         self.window_size = window_size
         self.fps = fps
+        self._adjustment_factor: float = adjustment_factor
 
         self._max_samples = int(window_size)
         self._window_samples: Deque[float] = deque(maxlen=self._max_samples)
@@ -244,7 +251,8 @@ class FocusAnalyzer:
             openness = 0.5
 
         # ── 稳定性 + FocusLevel ──
-        stability, level = self._compute_window_level()
+        stability, level = self._compute_window_level(
+            yaw=yaw, pitch=pitch, gaze_score=gaze_score)
         self._current_level = level
 
         # ── v4.14: EAR 自动基线采集 ──
@@ -272,11 +280,12 @@ class FocusAnalyzer:
         )
         head_score = round(100.0 * (1.0 - head_penalty), 1)
 
-        # ── 混合连续分 (v4.13: 眼70% + 头20% + 视线10%) ──
+        # ── v4.35: 动态权重混合（基于光照/姿态置信度） ──
+        eye_w, head_w, gaze_w = self._compute_dynamic_weights(brightness, yaw, pitch)
         raw_focus = round(
-            eye_score * self._EYE_BLEND
-            + head_score * self._HEAD_BLEND
-            + gaze_score * self._GAZE_BLEND,
+            eye_score * eye_w
+            + head_score * head_w
+            + gaze_score * gaze_w,
             1,
         )
 
@@ -321,19 +330,66 @@ class FocusAnalyzer:
     # 内部方法
     # ═══════════════════════════════════════════════════
 
-    def _compute_window_level(self) -> tuple[float, FocusLevel]:
-        """v4.13: 15s 窗口统计（FOCUSED≤3, DISTRACTED≥8）"""
+    def set_adjustment_factor(self, factor: float) -> None:
+        """v4.35: 设置校准调整因子，影响偏差检测灵敏度"""
+        self._adjustment_factor = max(0.7, min(1.3, float(factor)))
+
+    # ── v4.35: 动态权重 ──
+
+    def _compute_dynamic_weights(self, brightness: float,
+                                 yaw: float, pitch: float) -> tuple[float, float, float]:
+        """根据环境/姿态置信度动态调整 eye/head/gaze 混合权重
+
+        正常:        eye=0.70  head=0.20  gaze=0.10
+        低光照:      eye-0.20  head+0.15  gaze+0.05
+        极端角度:    eye+0.10  head-0.15  gaze+0.05
+        低光+极端:   eye-0.10  head+0.00  gaze+0.10
+
+        Returns:
+            (eye_w, head_w, gaze_w) 总和为 1.0
+        """
+        ew, hw, gw = self._EYE_BLEND, self._HEAD_BLEND, self._GAZE_BLEND
+
+        low_light = brightness < self._BRIGHT_LOW
+        extreme_angle = abs(yaw) > self._YAW_EXTREME or abs(pitch) > self._PITCH_EXTREME
+
+        if low_light and extreme_angle:
+            ew, hw, gw = 0.60, 0.20, 0.20
+        elif low_light:
+            ew, hw, gw = 0.50, 0.35, 0.15
+        elif extreme_angle:
+            ew, hw, gw = 0.80, 0.05, 0.15
+        # else keep defaults
+
+        # 硬边界
+        ew = max(0.30, min(0.85, ew))
+        hw = max(0.05, min(0.50, hw))
+        gw = max(0.05, min(0.30, gw))
+        total = ew + hw + gw
+        return (ew / total, hw / total, gw / total)
+
+    def _compute_window_level(self, yaw: float = 0.0, pitch: float = 0.0,
+                              gaze_score: float = 100.0) -> tuple[float, FocusLevel]:
+        """v4.13: 15s 窗口统计（FOCUSED≤3, DISTRACTED≥8）
+
+        v4.34: 多信号门控 — EAR 偏离≥8s 时，若视线+头部均正常则降为 NORMAL。
+        仅眨眼频繁但注视屏幕 + 头姿稳定 ≠ 分心。
+        v4.35: 偏差阈值受 adjustment_factor 调控 — factor<1.0 时更宽容（检测器过敏感）。
+        """
         if len(self._window_samples) < 3:
             return 1.0, FocusLevel.NORMAL
 
         if self.baseline_ear <= 0:
             return 0.5, FocusLevel.NORMAL
 
+        # v4.35: 偏差阈值 = 0.15 / adjustment_factor, clamp [0.10, 0.25]
+        dev_threshold = max(0.10, min(0.25, 0.15 / max(0.7, self._adjustment_factor)))
+
         deviated = 0
         for ear_val in self._window_samples:
-            # 只惩罚闭眼（EAR 低于基线 15% 以上）
+            # 只惩罚闭眼（EAR 低于基线一定比例）
             deviation = max(0, self.baseline_ear - ear_val) / self.baseline_ear
-            if deviation > 0.15:
+            if deviation > dev_threshold:
                 deviated += 1
 
         total = len(self._window_samples)
@@ -342,7 +398,17 @@ class FocusAnalyzer:
         if deviated <= FOCUSED_MAX_DEVIATION_SECS:
             level = FocusLevel.FOCUSED
         elif deviated >= DISTRACTED_MIN_DEVIATION_SECS:
-            level = FocusLevel.DISTRACTED
+            # v4.34: 多信号门控 — 视线注视 + 头部稳定时，高频眨眼不视为分心
+            yaw_excess = max(0.0, abs(yaw) - self._COMFORT_YAW)
+            pitch_excess = max(0.0, abs(pitch) - self._COMFORT_PITCH)
+            head_penalty = min(1.0, max(
+                yaw_excess / self._YAW_SCALE, pitch_excess / self._PITCH_SCALE))
+            head_ok = (100.0 * (1.0 - head_penalty)) >= 50
+            gaze_ok = gaze_score >= 50
+            if gaze_ok and head_ok:
+                level = FocusLevel.NORMAL
+            else:
+                level = FocusLevel.DISTRACTED
         else:
             level = FocusLevel.NORMAL
 
@@ -559,10 +625,14 @@ class FocusAnalyzer:
 # ── v4.17: 分心原因分解 ──
 
 def compute_distraction_causes(focus_result: FocusResult) -> dict:
-    """分解专注度下降源
+    """分解专注度下降源。
 
     从 FocusResult 的 eye_score/head_score/gaze_score 推算
     各因素在总分下降中的贡献占比。
+
+    v4.34: FocusLevel 由 _compute_window_level() 多信号门控决定 —
+    EAR 偏离是主要触发源，但仅当视线或头姿也指示不专注时才判 DISTRACTED。
+    本函数按比例报告三个子分数，无论哪个信号触发了等级变化。
 
     Returns:
         {"眨眼异常": float%, "头部偏移": float%, "视线偏离": float%}
@@ -575,9 +645,9 @@ def compute_distraction_causes(focus_result: FocusResult) -> dict:
     if fs >= 60:
         return {}
 
-    eye_s = focus_result.eye_score or 50.0
-    head_s = focus_result.head_score or 50.0
-    gaze_s = focus_result.gaze_score or 50.0
+    eye_s = focus_result.eye_score if focus_result.eye_score is not None else 50.0
+    head_s = focus_result.head_score if focus_result.head_score is not None else 50.0
+    gaze_s = focus_result.gaze_score if focus_result.gaze_score is not None else 50.0
 
     # 期望值：正常专注时眼≈90, 头≈100, 视线≈100
     eye_drop = max(0.0, 90.0 - eye_s)

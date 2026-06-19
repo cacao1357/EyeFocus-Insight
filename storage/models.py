@@ -155,7 +155,10 @@ class SystemStatus:
 
 @dataclass
 class CalibrationSignal:
-    """单信号采集结果"""
+    """单信号采集结果（v4.33: 统一为 calibration/result.py 的再导出）
+
+    规范定义位于 calibration/result.py。此处保持向后兼容的别名。
+    """
     ear_mean: float = 0.0           # EAR 均值（睁眼基线）
     ear_min: float = 0.0           # EAR 最小值（闭眼阈值参考）
     ear_mid: float = 0.0           # EAR 中间值（眯眼阈值参考）
@@ -181,7 +184,12 @@ class BlinkCalibrationRound:
 
 @dataclass
 class CalibrationResult:
-    """完整校准结果"""
+    """完整校准结果（v4.33: calibration/result.py 是 v4.2 路径的规范定义）
+
+    此版本保持非冻结 + 全默认值以兼容 v3.x 路径（analyzer/user_calibration.py）。
+    v4.2 路径使用 calibration.result.CalibrationResult（冻结字段）。
+    两套字段已对齐：cqs 字段在两个版本中均存在。
+    """
     session_id: str = ""
     timestamp: datetime = field(default_factory=datetime.now)
     signal: CalibrationSignal = field(default_factory=CalibrationSignal)
@@ -190,6 +198,7 @@ class CalibrationResult:
     final_blink_threshold: float = 0.26  # 调整后的眨眼阈值
     final_squint_threshold: float = 0.20  # 调整后的眯眼阈值
     baseline_blink_rate: Optional[float] = None  # 个人基线眨眼频率 (次/分钟)
+    cqs: float = 0.0              # v4.33: 校准质量分（与 calibration/result.py 对齐）
     is_accepted: bool = True      # 用户是否接受
     notes: str = ""              # 用户备注
 

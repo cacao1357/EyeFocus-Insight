@@ -172,13 +172,9 @@ class LightDetector:
         return max(condition_counts, key=condition_counts.get)
 
     def is_lighting_adequate(self) -> bool:
-        """判断当前光照是否满足检测要求"""
+        """判断当前光照是否满足检测要求（仅 NORMAL 视为充足；与 analyze_frame().is_adequate 对齐）"""
         condition = self.get_smoothed_condition()
-        return (
-            condition == LightCondition.NORMAL
-            or condition == LightCondition.DARK
-            or condition == LightCondition.BRIGHT
-        )
+        return condition == LightCondition.NORMAL
 
     def reset(self) -> None:
         """重置检测器状态"""

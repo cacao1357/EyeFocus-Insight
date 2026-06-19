@@ -209,6 +209,53 @@ class TestChartGenerator:
         assert 'Plotly' in result or 'plotly' in result.lower() or '无数据' in result
 
 
+# ============ v4.34: 零值填充间隙测试 ============
+
+class TestGapBreaks:
+    """验证 _insert_gap_breaks 用零值对取代 None 断点"""
+
+    def test_zero_fill_single_gap(self):
+        """间距 > GAP_THRESHOLD 产生两个零值点，不产生 None"""
+        from reporter.charts import ChartGenerator
+        t0 = 1000.0
+        records = [
+            MagicMock(window_start=t0, timestamp=t0, focus_score=80.0),
+            MagicMock(window_start=t0 + 2000, timestamp=t0 + 2000, focus_score=70.0),
+        ]
+        offsets = [0.0, 2000.0]
+        values = [80.0, 70.0]
+        new_x, new_y = ChartGenerator._insert_gap_breaks(records, offsets, values)
+        assert None not in new_x
+        assert None not in new_y
+        # 4 points: real[0], zero[0], zero[1], real[1]
+        assert len(new_x) == 4
+        assert len(new_y) == 4
+        assert new_y == [80.0, 0, 0, 70.0]
+
+    def test_no_gap_unchanged(self):
+        """间距 < GAP_THRESHOLD 不插入零值点"""
+        from reporter.charts import ChartGenerator
+        t0 = 1000.0
+        records = [
+            MagicMock(window_start=t0, timestamp=t0, focus_score=80.0),
+            MagicMock(window_start=t0 + 60, timestamp=t0 + 60, focus_score=75.0),
+            MagicMock(window_start=t0 + 120, timestamp=t0 + 120, focus_score=70.0),
+        ]
+        offsets = [0.0, 60.0, 120.0]
+        values = [80.0, 75.0, 70.0]
+        new_x, new_y = ChartGenerator._insert_gap_breaks(records, offsets, values)
+        assert new_y == [80.0, 75.0, 70.0]
+
+    def test_single_record_no_change(self):
+        """单条记录不产生零值点"""
+        from reporter.charts import ChartGenerator
+        records = [MagicMock(window_start=1000.0, timestamp=1000.0, focus_score=80.0)]
+        offsets = [0.0]
+        values = [80.0]
+        new_x, new_y = ChartGenerator._insert_gap_breaks(records, offsets, values)
+        assert new_y == [80.0]
+
+
 # ============ InsightsEngine Tests ============
 
 class TestInsightsEngine:

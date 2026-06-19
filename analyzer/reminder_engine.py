@@ -39,7 +39,7 @@ class ReminderEngine:
 
         # 冷却追踪
         self._last_notify_time: float = 0.0
-        self._notify_cooldown: float = 120.0  # 两次提醒最短间隔
+        self._notify_cooldown: float = 180.0  # v4.34: 120→180, 3 分钟基冷
         self._consecutive_high: int = 0  # v4.30: 连续 HIGH 次数（指数退避）
         self._milestones_shown: Set[int] = set()
         self._last_break_suggest: float = 0.0
@@ -49,8 +49,11 @@ class ReminderEngine:
         self._prev_level: Optional[str] = None
         self._distract_count: int = 0
         self._last_distract_time: float = 0.0
-        self._distract_window: float = 300.0  # 5 分钟窗口
+        self._distract_window: float = 600.0  # v4.34: 300→600, 10 分钟窗口
         self._first_distract_time: float = 0.0
+        # v4.34: 分心提醒独立冷却
+        self._last_distraction_notify_time: float = 0.0
+        self._distraction_gap: float = 300.0  # 两次分心提醒最短 5 分钟
 
         # v4.26: snooze
         self._snoozed_until: float = 0.0
@@ -157,11 +160,14 @@ class ReminderEngine:
                              f"已持续工作 {int(session_minutes)} 分钟，专注度下降。建议短暂休息 5-10 分钟。")
                 return
 
-        # 3. 频繁分心（5 分钟内 >= 3 次状态切换为 distracted）
+        # 3. 频繁分心（v4.34: 10 分钟内 >= 4 次, 独立 5 分钟冷却）
         self._track_distraction(focus_level, now)
-        if self._distract_count >= 3:
+        if self._distract_count >= 4:
             elapsed = now - self._first_distract_time
             if elapsed <= self._distract_window:
+                if now - self._last_distraction_notify_time < self._distraction_gap:
+                    return
+                self._last_distraction_notify_time = now
                 self._notify("distraction", "🔄 频繁分心",
                              f"过去 {int(elapsed//60)} 分钟内分心 {self._distract_count} 次，" +
                              "是否需要调整工作环境？")
@@ -215,6 +221,7 @@ class ReminderEngine:
         self._milestones_shown.clear()
         self._distract_count = 0
         self._first_distract_time = 0.0
+        self._last_distraction_notify_time = 0.0  # v4.34
         self._last_notify_time = 0.0
         self._last_break_suggest = 0.0
         self._prev_level = None

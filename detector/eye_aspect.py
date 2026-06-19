@@ -118,6 +118,10 @@ class EyeAspectDetector:
 
         # 眨眼事件记录
         self._blink_events: Deque[BlinkEvent] = deque(maxlen=5000)
+
+        # v4.33: 眨眼频率缓存（避免每帧 O(n) 遍历 5000 事件）
+        self._blink_rate_cache: Optional[Tuple[float, float, int, int]] = None
+        # 缓存格式: (rate, count, event_count, cache_second)
         self._current_blink_start: Optional[int] = None
         self._current_blink_start_time: Optional[float] = None
         self._current_blink_ear_nadir: float = float('inf')
@@ -462,6 +466,8 @@ class EyeAspectDetector:
 
         Returns:
             (blink_rate, blink_count) 元组
+
+        v4.33: 缓存优化 — 仅在新眨眼追加或跨秒时重新计算，避免每帧 O(n) 遍历。
         """
         if not self._blink_events:
             return 0.0, 0
@@ -471,7 +477,15 @@ class EyeAspectDetector:
                 self._blink_events[-1].end_time if self._blink_events else 0.0
             )
 
-        # 筛选窗口内的眨眼（只计入确认的眨眼）
+        # ── 缓存检查：event count 不变 + 同秒 → 直接返回 ──
+        event_count = len(self._blink_events)
+        cache_second = int(current_time)
+        if self._blink_rate_cache is not None:
+            _cached_rate, _cached_count, _cached_ec, _cached_sec = self._blink_rate_cache
+            if _cached_ec == event_count and _cached_sec == cache_second:
+                return _cached_rate, _cached_count
+
+        # ── 实际计算 ──
         window_start = current_time - window_seconds
         recent_blinks = [
             e for e in self._blink_events
@@ -488,6 +502,8 @@ class EyeAspectDetector:
         else:
             blink_rate = 0.0
 
+        # 写缓存
+        self._blink_rate_cache = (blink_rate, blink_count, event_count, cache_second)
         return blink_rate, blink_count
 
     def get_blink_events(

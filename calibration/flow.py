@@ -304,7 +304,9 @@ class CalibrationFlow:
         elif action == UIAction.BACKSPACE and self._input_buffer:
             self._input_buffer = self._input_buffer[:-1]
         elif action == UIAction.SUBMIT and self._input_buffer:
-            assert isinstance(self._current_phase, BlinkCountPhase)
+            if not isinstance(self._current_phase, BlinkCountPhase):  # v4.33: 替换 assert（-O 下不生效）
+                logger.error("blink input 阶段类型不匹配: %s", type(self._current_phase))
+                return
             try:
                 count = int(self._input_buffer)
             except ValueError:

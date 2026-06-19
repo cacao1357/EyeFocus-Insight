@@ -163,7 +163,11 @@ class FaceMeshDetector:
                 frame, timestamp_ms = self._async_queue.get(timeout=0.5)
             except queue.Empty:
                 continue
-            result = self._detect_async_safe(frame, timestamp_ms)
+            result = None
+            try:
+                result = self._detect_async_safe(frame, timestamp_ms)
+            except Exception:
+                logger.error("人脸检测异步worker异常", exc_info=True)
             if result is not None:
                 with self._async_result_lock:
                     self._async_result = result

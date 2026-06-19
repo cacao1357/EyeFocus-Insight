@@ -67,7 +67,7 @@ def _fetch_all_sessions(db: DatabaseManager) -> list:
         list of sqlite3.Row: session_id, start_time, end_time,
         baseline_blink_rate, baseline_ear
     """
-    with db._get_cursor() as cur:
+    with db.get_cursor() as cur:
         cur.execute("""
             SELECT session_id, start_time, end_time,
                    baseline_blink_rate, baseline_ear, cqs_score
@@ -80,7 +80,7 @@ def _fetch_all_sessions(db: DatabaseManager) -> list:
 
 def _fetch_focus_records(db: DatabaseManager, session_id: str) -> List[dict]:
     """读取 session 的 focus_records 聚合数据。"""
-    with db._get_cursor() as cur:
+    with db.get_cursor() as cur:
         cur.execute("""
             SELECT focus_score, blink_rate, avg_ear, avg_yaw, avg_pitch
             FROM focus_records
@@ -92,11 +92,11 @@ def _fetch_focus_records(db: DatabaseManager, session_id: str) -> List[dict]:
 
 def _fetch_frame_summary(db: DatabaseManager, session_id: str) -> dict:
     """读取 session 的帧级汇总统计。"""
-    with db._get_cursor() as cur:
+    with db.get_cursor() as cur:
         cur.execute("""
             SELECT
                 COUNT(*) as total_frames,
-                AVG(CASE WHEN perclos IS NOT NULL THEN perclos ELSE 0 END) as avg_perclos,
+                AVG(perclos) as avg_perclos,
                 AVG(CASE WHEN gaze_status = 'away' THEN 1.0 ELSE 0 END) as gaze_away_ratio,
                 AVG(brightness) as avg_brightness
             FROM frame_records
@@ -117,7 +117,7 @@ def _fetch_frame_summary(db: DatabaseManager, session_id: str) -> dict:
 
 def _fetch_fatigue_summary(db: DatabaseManager, session_id: str) -> dict:
     """读取 session 的疲劳汇总。"""
-    with db._get_cursor() as cur:
+    with db.get_cursor() as cur:
         cur.execute("""
             SELECT
                 COUNT(*) as total,
@@ -142,7 +142,7 @@ def extract_session_features(db: DatabaseManager, session_id: str) -> Optional[S
         SessionFeatures 或 None（数据不足时）
     """
     # 获取 session 元数据
-    with db._get_cursor() as cur:
+    with db.get_cursor() as cur:
         cur.execute("""
             SELECT session_id, start_time, end_time,
                    baseline_blink_rate, baseline_ear

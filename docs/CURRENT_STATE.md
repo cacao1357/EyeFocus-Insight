@@ -14,6 +14,7 @@
 | v4.27 | 06-18 | API 设置对话框 + 前端AI状态轮询 + 多提供商支持 |
 | v4.28 | 06-19 | AI CLI 独立模块 + L3 深度分析 + 12维安全审计 |
 | v4.29 | 06-19 | 托盘精简(3监测按钮+番茄单按钮) / 报告建议重构(去掉对话+图表移入数据tab+建议丰富) / 性能优化(Qt冗余重绘缓存) / Pipeline并行化(face_mesh async) / Web控制扩展(settings端点) / 全局安全审计(36→72分) |
+| v4.35 | 06-19 | 算法精度 v4 — adjustment_factor 接入 FocusAnalyzer / Fatigue 分数连续化 / avg_focus 时间加权 / 动态权重(光照/姿态感知) / 建议阈值用户适配(从历史分布加载) |
 
 ---
 
@@ -24,8 +25,9 @@
 | `main.py` | ~1590 | 稳定 | Qt 主循环，不做大重构 |
 | `detector/` | ~550 | 稳定 | face_mesh 已加 async 并行(producer-consumer) |
 | `app/processor.py` | ~400 | 稳定 | 帧处理编排，已接入 face_mesh async |
-| `analyzer/focus.py` | ~600 | 稳定 | EAR自基线/眨眼基线/EMA平滑/会话衰减全齐 |
-| `analyzer/fatigue.py` | ~250 | 稳定 | 长闭眼计数 + 3min 窗口 + EMA累积 |
+| `analyzer/focus.py` | ~660 | v4.35 增强 | 动态权重 + adjustment_factor 感知 + 时间加权 avg_focus |
+| `analyzer/fatigue.py` | ~260 | v4.35 增强 | 连续分数映射(替代3级跳变) + 时间基 EMA |
+| `reporter/insights.py` | ~900 | v4.35 增强 | 用户个性化阈值(从历史分布加载) |
 | `analyzer/user_calibration.py` | ~650 | 稳定 | v4.2 重设计，真机 CQS=1.0 验收 |
 | `analyzer/llm_client.py` | ~400 | 稳定 | OpenAI 兼容 API 封装，多提供商 |
 | `analyzer/ai_cli/` | ~370 | NEW | 独立命令行 AI 对话模块 |
@@ -78,13 +80,13 @@
 - ✅ 输出：EAR均值/阈值/调整因子/头姿范围/眨眼率基线
 - ✅ 接入：EyeAspectDetector(ear + adjustment_factor) / FocusAnalyzer(ear, yaw_std, pitch_std) / FatigueAnalyzer(blink_rate)
 
-### 4.5 剩余缺口
+### 4.5 已关闭缺口（v4.35）
 
-| # | 问题 | 位置 | 改动量 |
-|---|------|------|--------|
-| 1 | `FatigueAnalyzer.cumulative_fatigue` 只在 analyze() 调用时 EMA 衰减，无时间基衰减 | `analyzer/fatigue.py` | ~5行 |
-| 2 | 权重固定不随场景变（光照/人脸角度） | `analyzer/focus.py:103-105` | ~20行 |
-| 3 | `adjustment_factor` 已接入 `EyeAspectDetector`，但 `FocusAnalyzer` 没有用它 | `analyzer/focus.py` (analyze 方法) | ~10行 |
+| # | 问题 | 修复版本 | 改动 |
+|---|------|---------|------|
+| 1 | `FatigueAnalyzer.cumulative_fatigue` 3 级跳变 | v4.35 | 连续锚点插值映射，疲劳曲线平滑 |
+| 2 | 权重固定不随场景变 | v4.35 | `_compute_dynamic_weights()` 光照/姿态感知 |
+| 3 | `adjustment_factor` 未接入 FocusAnalyzer | v4.35 | 偏差阈值 `0.15/adj_factor` + `set_adjustment_factor()` |
 
 ---
 

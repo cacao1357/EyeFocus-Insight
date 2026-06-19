@@ -107,13 +107,16 @@ class ChartGenerator:
         t0 = min(ChartGenerator._ts(r) for r in sorted_r)
         return [ChartGenerator._ts(r) - t0 for r in sorted_r]
 
-    GAP_THRESHOLD = 1800  # 30 分钟 — 相邻记录间隔超过此值视为检测中断
+    GAP_THRESHOLD = 300   # v4.34: 5 分钟 — 采集中断 >5min 视为间隙，填充零值
 
     @classmethod
     def _insert_gap_breaks(cls, records, offsets, values):
-        """在数据间隔处插入 (None, None)，Plotly 自动断开线条。
+        """间隙处插入零值对，线条下降→贴零轴→恢复。
 
-        Returns (offsets_with_nan, values_with_nan)
+        v4.34: 用 (gap_start, 0) + (gap_end, 0) 替代 (None, None)。
+        与 connectgaps=True 配合，线条在采集中断期间沿 y=0 走直线。
+
+        Returns (offsets_with_zeros, values_with_zeros)
         """
         if len(records) < 2:
             return list(offsets), list(values)
@@ -123,8 +126,10 @@ class ChartGenerator:
             if i > 0:
                 dt = cls._ts(records[i]) - cls._ts(records[i - 1])
                 if dt > cls.GAP_THRESHOLD:
-                    new_offsets.append(None)
-                    new_vals.append(None)
+                    new_offsets.append(offsets[i - 1])
+                    new_vals.append(0)
+                    new_offsets.append(offsets[i])
+                    new_vals.append(0)
             new_offsets.append(offsets[i])
             new_vals.append(values[i])
         return new_offsets, new_vals
@@ -283,7 +288,7 @@ class ChartGenerator:
             text=line_text,
             name='专注度',
             hovertemplate='%{y:.0f} 分<br>%{text}<extra></extra>',
-            connectgaps=False,
+            connectgaps=True,   # v4.34: 零值填充替代断线
         ))
 
         # 标记点 — 单 trace + 间隙感知降采样
@@ -395,7 +400,7 @@ class ChartGenerator:
             text=line_text,
             name='疲劳分',
             hovertemplate='%{y:.0f} 分<br>%{text}<extra></extra>',
-            connectgaps=False,
+            connectgaps=True,   # v4.34: 零值填充替代断线
         ))
         fig.add_hline(y=60, line_dash="dash", line_color=C_LINE, line_width=1,
                       annotation_text="严重疲劳 60", annotation_position="left",
@@ -470,20 +475,26 @@ class ChartGenerator:
             devs.append(np.sqrt(r.yaw**2 + r.pitch**2))
             times.append(max(0, r.timestamp - t0))
 
-        step = max(1, len(times) // 200)
-        times, devs = times[::step], devs[::step]
-        hover_labels = [self._fmt_offset(t) for t in times]
+        # v4.34: 间隙零值填充（与专注度/疲劳图表一致）
+        line_x, line_y = self._insert_gap_breaks(sorted_frames, times, devs)
 
-        in_zone = sum(1 for d in devs if d <= 20)
-        pct = in_zone / len(devs) * 100
+        # 降采样（保留间隙边界零值点）
+        step = max(1, len(line_x) // 200)
+        line_x, line_y = line_x[::step], line_y[::step]
+        hover_labels = [self._fmt_offset(t) for t in line_x]
+
+        in_zone = sum(1 for d in line_y if d <= 20 and d > 0)  # 排除零值
+        n_real = sum(1 for d in line_y if d > 0)
+        pct = in_zone / n_real * 100 if n_real > 0 else 0
 
         fig = go.Figure()
         fig.add_trace(go.Scatter(
-            x=times, y=devs, mode='lines',
+            x=line_x, y=line_y, mode='lines',
             line=dict(width=1.5, color=C_IRIS),
             text=hover_labels,
             name='偏移角',
             hovertemplate='%{y:.1f}°<br>%{text}<extra></extra>',
+            connectgaps=True,   # v4.34: 零值填充替代断线
         ))
         # v4.25: annotation_position="right" 避免与数据点重叠
         fig.add_hline(y=20, line_dash="dash", line_color=C_SAGE, line_width=1,
@@ -491,12 +502,12 @@ class ChartGenerator:
                       annotation_font_size=10, annotation_font_color=C_SAGE)
 
         # 规整时间刻度
-        t_max = times[-1] if times else 0
+        t_max = line_x[-1] if line_x else 0
         tick_vals, tick_texts = self._regular_ticks(t_max)
 
         fig.update_layout(**_LAYOUT_BASE)
         fig.update_layout(
-            yaxis=dict(**_LAYOUT_BASE["yaxis"], title="偏移度 (°)", range=[0, max(devs)*1.15]),
+            yaxis=dict(**_LAYOUT_BASE["yaxis"], title="偏移度 (°)", range=[0, max(line_y)*1.15]),
             xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间",
                        tickvals=tick_vals, ticktext=tick_texts),
             showlegend=False,

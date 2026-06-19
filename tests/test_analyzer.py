@@ -182,6 +182,41 @@ class TestFatigueAnalyzer:
         assert record is not None
 
 
+class TestMultiSignalFocusLevel:
+    """v4.34: 多信号门控 — 高频眨眼 + 视线注视 ≠ 分心"""
+
+    def test_high_blink_with_gaze_head_stays_normal(self):
+        """EAR 偏离 8s+ 但视线注视 + 头部稳定 → NORMAL"""
+        from analyzer.focus import FocusLevel
+        analyzer = FocusAnalyzer(baseline_ear=0.25)
+        # 8 个偏离样本 (> DISTRACTED_MIN_DEVIATION_SECS)
+        analyzer._window_samples.extend([0.15] * 8)
+        analyzer._window_samples.extend([0.25] * 7)
+        result = analyzer.analyze(ear=0.15, yaw=0.0, pitch=0.0,
+                                  gaze_score=90.0, face_detected=True)
+        assert result.focus_level == FocusLevel.NORMAL
+
+    def test_high_blink_with_low_gaze_stays_distracted(self):
+        """EAR 偏离 8s+ + 视线偏离 → 仍是 DISTRACTED"""
+        from analyzer.focus import FocusLevel
+        analyzer = FocusAnalyzer(baseline_ear=0.25)
+        analyzer._window_samples.extend([0.15] * 8)
+        analyzer._window_samples.extend([0.25] * 7)
+        result = analyzer.analyze(ear=0.15, yaw=0.0, pitch=0.0,
+                                  gaze_score=20.0, face_detected=True)
+        assert result.focus_level == FocusLevel.DISTRACTED
+
+    def test_high_blink_with_head_turned_stays_distracted(self):
+        """EAR 偏离 8s+ + 头部偏转 → 仍是 DISTRACTED"""
+        from analyzer.focus import FocusLevel
+        analyzer = FocusAnalyzer(baseline_ear=0.25)
+        analyzer._window_samples.extend([0.15] * 8)
+        analyzer._window_samples.extend([0.25] * 7)
+        result = analyzer.analyze(ear=0.15, yaw=35.0, pitch=0.0,
+                                  gaze_score=90.0, face_detected=True)
+        assert result.focus_level == FocusLevel.DISTRACTED
+
+
 class TestFocusAnalyzerBaselineZero:
     """v4.6: baseline_ear=0 不崩溃"""
 

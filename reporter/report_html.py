@@ -76,27 +76,24 @@ class HTMLReportGenerator:
     # CSS 样式 (v4.26: 从 style.css 文件加载)
     CSS_STYLE = _CSS_TAG
 
-    # Tab 切换 JS
-    PLOTLY_JS = '<script src="plotly.min.js"></script>'
+    # Plotly JS — v4.36: 内联以确保离线可用，回退到外部引用
+    PLOTLY_JS = '<script src="plotly.min.js"></script>'  # 默认值，模块加载后内联覆盖
 
     # v4.29: 报告内对话已移除（保留模板建议）
 
     @staticmethod
-    def _ensure_plotly_asset(report_dir: str) -> None:
-        """v4.16: 复制 plotly.min.js 到报告目录（确保离线可用）"""
+    def _load_plotly_js() -> str:
+        """v4.36: 加载 plotly.min.js 为内联 <script> 标签"""
         import os as _os
-        import shutil
         import plotly as _plotly
         src = _os.path.join(_os.path.dirname(_plotly.__file__), 'package_data', 'plotly.min.js')
-        # v4.30: 基于 reporter 所在目录解析，避免 CWD 漂移
-        base = _os.path.dirname(_os.path.abspath(__file__))
-        dst = _os.path.join(base, report_dir, 'plotly.min.js')
-        if not _os.path.exists(dst) and _os.path.exists(src):
-            try:
-                shutil.copy2(src, dst)
-                logger.debug("plotly.min.js 已复制到报告目录")
-            except Exception as e:
-                logger.warning("复制 plotly.min.js 失败: %s", e)
+        if _os.path.exists(src):
+            with open(src, 'r', encoding='utf-8') as _f:
+                content = _f.read()
+            logger.debug("plotly.min.js 已内联 (%.1f KB)", len(content) / 1024)
+            return f'<script>{content}</script>'
+        logger.warning("plotly.min.js 未找到，回退到外部引用")
+        return '<script src="plotly.min.js"></script>'
 
     JS_SCRIPT = """
         <script>
@@ -148,7 +145,7 @@ class HTMLReportGenerator:
             HTML 字符串
         """
         # v4.16: 确保 plotly.min.js 本地资产可用
-        self._ensure_plotly_asset("reports")
+        # v4.36: plotly.min.js 已内联，无需复制外部文件
 
         if not self.db:
             return self._error_html("数据库管理器未初始化")
@@ -304,7 +301,7 @@ class HTMLReportGenerator:
             fatigue_records: 疲劳记录列表
             blink_records: 眨眼事件列表
         """
-        self._ensure_plotly_asset("reports")
+        # v4.36: plotly.min.js 已内联，无需复制外部文件
 
         # 计算统计信息
         avg_focus = self._calc_avg_focus(focus_records)
@@ -532,7 +529,7 @@ class HTMLReportGenerator:
                     exclude_where = "AND s.session_id != ?"
                     exclude_val = sid
 
-                with self.db._get_cursor() as cur:
+                with self.db.get_cursor() as cur:
                     cur.execute(f"""
                         SELECT AVG(session_avg) FROM (
                             SELECT AVG(f.focus_score) AS session_avg
@@ -835,7 +832,7 @@ class HTMLReportGenerator:
         hist_avg = None
         if self.db and data.session:
             try:
-                with self.db._get_cursor() as cur:
+                with self.db.get_cursor() as cur:
                     cur.execute("""
                         SELECT AVG(focus_score) FROM focus_records
                         WHERE session_id != ? AND focus_score IS NOT NULL
@@ -937,7 +934,7 @@ class HTMLReportGenerator:
         if not self.db or not session:
             return "无历史数据"
         try:
-            with self.db._get_cursor() as cur:
+            with self.db.get_cursor() as cur:
                 cur.execute("""
                     SELECT avg_focus, duration_seconds, fatigue_level,
                            start_time FROM sessions
@@ -1405,13 +1402,24 @@ class HTMLReportGenerator:
         return base64.b64encode(data).decode('utf-8')
 
     def _calc_avg_focus(self, focus_records: List[FocusRecord]) -> float:
-        """计算平均专注度（过滤 None 值）"""
+        """v4.35: 时间加权平均专注度（非简单记录数平均）
+
+        每个记录的权重 = window_end - window_start（秒）。
+        采样不均匀时（人脸丢失恢复/间隙），长窗口段自然占更大权重。
+        均匀采样下等价于简单平均。
+        """
         if not focus_records:
             return 0.0
-        scores = [r.focus_score for r in focus_records if r.focus_score is not None]
-        if not scores:
+        total_weight = 0.0
+        weighted_sum = 0.0
+        for r in focus_records:
+            if r.focus_score is not None:
+                dt = max(1.0, (r.window_end or 0) - (r.window_start or 0))
+                weighted_sum += r.focus_score * dt
+                total_weight += dt
+        if total_weight <= 0:
             return 0.0
-        return sum(scores) / len(scores)
+        return weighted_sum / total_weight
 
     def _calc_avg_blink_rate(self, focus_records: List[FocusRecord]) -> float:
         """计算平均眨眼频率（过滤 None 值）"""
@@ -1574,7 +1582,7 @@ class HTMLReportGenerator:
         Returns:
             HTML 字符串
         """
-        self._ensure_plotly_asset("reports")
+        # v4.36: plotly.min.js 已内联，无需复制外部文件
         if not HAS_INSIGHTS:
             return self.generate_report(session_id)
         if not self.db:
@@ -1929,7 +1937,8 @@ class HTMLReportGenerator:
 </html>"""
 
     def _error_html(self, message: str) -> str:
-        """错误页面 HTML"""
+        """错误页面 HTML（message 经过 HTML 转义防 XSS）"""
+        from html import escape as _html_escape
         return f"""
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -1944,10 +1953,17 @@ class HTMLReportGenerator:
 </head>
 <body>
     <div class="error">⚠ 生成报告时出错</div>
-    <div class="message">{message}</div>
+    <div class="message">{_html_escape(message)}</div>
 </body>
 </html>
 """
+
+
+# v4.36: 类定义后内联 plotly.min.js，使报告 100% 离线可用
+try:
+    HTMLReportGenerator.PLOTLY_JS = HTMLReportGenerator._load_plotly_js()
+except Exception as _e:
+    logger.warning("plotly.min.js 内联失败，使用外部引用: %s", _e)
 
 
 def create_html_generator(

@@ -210,6 +210,7 @@ class FrameProcessor:
                 self._saved_adjustment_factor = self._eye_detector._adjustment_factor
                 adj = max(0.7, self._saved_adjustment_factor * 0.9)
                 self._eye_detector.set_adjustment_factor(adj)
+                self._focus_analyzer.set_adjustment_factor(adj)
                 logger.info("低光照模式激活: adjustment_factor %.3f → %.3f",
                             self._saved_adjustment_factor, adj)
         else:
@@ -217,6 +218,7 @@ class FrameProcessor:
                 self._low_light_active = False
                 saved = getattr(self, '_saved_adjustment_factor', 1.0)
                 self._eye_detector.set_adjustment_factor(saved)
+                self._focus_analyzer.set_adjustment_factor(saved)
                 logger.info("低光照模式解除: adjustment_factor 恢复 %.3f", saved)
 
         # 眼镜检测

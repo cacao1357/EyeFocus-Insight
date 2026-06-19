@@ -41,18 +41,31 @@ COLOR_TEXT_DIM: Tuple[int, int, int] = (100, 100, 100)    # 弱化文字
 COLOR_AMBER: Tuple[int, int, int] = (255, 200, 0)         # 琥珀 (输入提示)
 COLOR_RESULT_TEXT: Tuple[int, int, int] = (150, 150, 150) # 结果页脚
 
-# 默认中文字体路径（Windows 系统字体）
-DEFAULT_FONT_PATH = "C:/Windows/Fonts/simhei.ttf"
-# 尝试加载中文字体
-try:
-    _chinese_font = ImageFont.truetype(DEFAULT_FONT_PATH, 20)
-    _chinese_font_small = ImageFont.truetype(DEFAULT_FONT_PATH, 16)
-    _chinese_font_large = ImageFont.truetype(DEFAULT_FONT_PATH, 28)
-except Exception:
-    _chinese_font = None
-    _chinese_font_small = None
-    _chinese_font_large = None
-    logger.warning("无法加载中文字体，中文可能显示为方块")
+# v4.36: 中文字体打包到 assets/fonts/，跨平台可用
+import os as _os
+_FONT_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', 'assets', 'fonts')
+_FONT_CANDIDATES = [
+    _os.path.join(_FONT_DIR, 'simhei.ttf'),           # 1. 项目打包字体
+    "C:/Windows/Fonts/simhei.ttf",                     # 2. Windows 系统字体
+    "C:/Windows/Fonts/msyh.ttc",                       # 3. Windows 备选
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",  # 4. Linux
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",    # 5. Linux 文泉驿
+]
+_chinese_font = None
+_chinese_font_small = None
+_chinese_font_large = None
+for _fp in _FONT_CANDIDATES:
+    if _os.path.exists(_fp):
+        try:
+            _chinese_font = ImageFont.truetype(_fp, 20)
+            _chinese_font_small = ImageFont.truetype(_fp, 16)
+            _chinese_font_large = ImageFont.truetype(_fp, 28)
+            logger.info("中文字体已加载: %s", _fp)
+            break
+        except Exception:
+            continue
+if _chinese_font is None:
+    logger.error("无法加载任何中文字体，中文将无法显示。已尝试: %s", _FONT_CANDIDATES)
 
 
 def put_chinese_text(img: np.ndarray, text: str, position: Tuple[int, int],
@@ -430,7 +443,7 @@ class FocusOverlay:
     ) -> np.ndarray:
         """极简模式: 居中大号专注度数字 + 底部疲劳条 + 右下状态"""
         h, w = frame.shape[:2]
-        result = frame.copy()
+        result = frame  # v4.33: 直接绘制，省去每帧 921KB copy（极简模式不做 addWeighted 混合）
 
         # 居中大号专注度数字
         if focus_score is not None:

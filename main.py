@@ -24,7 +24,7 @@ import os
 
 # 必须先于其他 import 设置环境变量
 os.environ.setdefault("GLOG_logtostderr", "0")
-os.environ.setdefault("MEDIAPIPE_DISABLE_GPU", "1")
+os.environ.setdefault("MEDIAPIPE_DISABLE_GPU", "0")  # v4.33: 默认启用 GPU；出问题时设 =1 回退 CPU
 os.environ.setdefault("ABSL_CPP_MIN_LOG_LEVEL", "3")
 # v4.4: PyQt5 平台插件路径 (pip 安装后 Qt 目录 vs Qt5 目录不一致)
 _qt_pp = os.path.abspath(os.path.join(os.path.dirname(__file__),
@@ -554,8 +554,9 @@ class EyeFocusApp:
         self._qt_timer.timeout.connect(self._qt_process_frame)
         self._qt_timer.start(33)  # ~30fps
 
-        # 校准取消消息
+        # v4.36: 校准取消/跳过 → Qt Toast 持续显示，直到用户完成校准
         if self._calib_cancelled_msg:
+            self._qt_window.set_uncalibrated_warning(True, self._calib_cancelled_msg)
             self._calib_cancelled_msg = None
 
         # 显示窗口并启动事件循环
@@ -577,7 +578,7 @@ class EyeFocusApp:
         if self._db is None:
             return
         try:
-            with self._db._get_cursor() as cur:
+            with self._db.get_cursor() as cur:
                 cur.execute(
                     "SELECT baseline_ear, baseline_yaw_std, baseline_pitch_std "
                     "FROM sessions WHERE is_calibrated=1 AND baseline_ear IS NOT NULL "
@@ -1305,13 +1306,14 @@ class EyeFocusApp:
         except Exception as e:
             logger.warning("生成周报失败: %s", e)
 
-    def generate_report_snapshot(self) -> Optional[str]:
+    def generate_report_snapshot(self, force: bool = False) -> Optional[str]:
         """生成当前会话的报告快照（不终止会话）
 
         与 _finalize_session 不同：不设置 end_time/is_active=False。
-        用于托盘"打开报告"操作，让用户在不中断监测的前提下查看数据。
+        用于托盘"打开报告"操作。
 
-        v4.33: 5 分钟时间缓存 — 检测中重复打开免 DB + 图表重生成。
+        v4.33: 5 分钟时间缓存 — 检测中重复打开免重生成。
+        v4.34: force=True 跳过缓存强制重生成（托盘主动请求时用）。
 
         Returns:
             报告文件路径，失败返回 None
@@ -1322,9 +1324,9 @@ class EyeFocusApp:
 
         import os, time as _time
 
-        # v4.33: 检查时间缓存
+        # v4.33: 检查时间缓存（仅检测中定时刷新用；手动请求走 force 跳过缓存）
         cache_key = f"{self._session_id}_snapshot"
-        if cache_key in self._report_html_cache:
+        if not force and cache_key in self._report_html_cache:
             cached_html, cached_ts = self._report_html_cache[cache_key]
             if _time.time() - cached_ts < 300:  # 5 分钟 TTL
                 logger.info("报告缓存命中 (%.0fs 前生成)，跳过重生成", _time.time() - cached_ts)
@@ -1520,7 +1522,14 @@ class EyeFocusApp:
             CalibrationResult: 校准成功且用户在总结页确认
             None: 用户取消、阶段失败放弃、模块崩溃
         """
-        logger.info("v4.2 校准模块启动 - 释放主程序摄像头")
+        logger.info("v4.2 校准模块启动 - 释放主程序摄像头 + 暂停人脸检测")
+        # v4.33: 先停止主检测器异步 worker，避免校准期间两个 FaceLandmarker 双倍显存
+        _fd = getattr(self, '_face_detector', None)
+        if _fd is not None:
+            try:
+                _fd.stop_async()
+            except Exception:
+                pass
         # 释放主程序摄像头 → 新模块独占
         if self._camera_manager is not None and self._camera_manager.is_running:
             self._camera_manager.release()
@@ -1568,7 +1577,8 @@ class EyeFocusApp:
             return None
         finally:
             # 重新获取主程序摄像头
-            logger.info("v4.2 校准结束 - 重新启动主程序摄像头")
+            logger.info("v4.2 校准结束 - 重新启动主程序摄像头 + 恢复人脸检测")
+            # v4.33: 先重启摄像头，再恢复人脸检测异步 worker
             if self._camera_manager is not None and not self._camera_manager.is_running:
                 # H-12: 包 try/except 防止 finally 抛异常替换 try 块原始异常
                 # 同时检查 start() 返回值
@@ -1583,6 +1593,13 @@ class EyeFocusApp:
                     logger.exception(
                         "v4.2 校准后重启主程序摄像头异常: %s", restart_err
                     )
+            # v4.33: 摄像头重启后恢复人脸检测异步 worker
+            _fd = getattr(self, '_face_detector', None)
+            if _fd is not None:
+                try:
+                    _fd.start_async()
+                except Exception:
+                    pass
 
     def _apply_v4_2_calibration_result(self, result: CalibrationResult) -> None:
         """应用 v4.2 校准结果到各 detector。"""
@@ -1591,6 +1608,8 @@ class EyeFocusApp:
             # P0: 接通 final_adjustment_factor (基于眨眼计数校准的检测误差补偿)
             if hasattr(self._eye_detector, 'set_adjustment_factor'):
                 self._eye_detector.set_adjustment_factor(result.final_adjustment_factor)
+            if hasattr(self._focus_analyzer, 'set_adjustment_factor'):
+                self._focus_analyzer.set_adjustment_factor(result.final_adjustment_factor)
 
         # P1: 头部姿态参数接通 — 让 focus_analyzer 的 head_score 反映用户的真实头动范围
         if (hasattr(self, '_focus_analyzer') and self._focus_analyzer is not None
@@ -1737,7 +1756,7 @@ def main() -> None:
     # v4.0.2 修复 B4+B6: 屏蔽 MediaPipe Google telemetry 上报 + 统一 absl 日志风格
     # 1) 禁用 mediapipe 上报 (clearcut_uploader)
     os.environ.setdefault("GLOG_logtostderr", "0")
-    os.environ.setdefault("MEDIAPIPE_DISABLE_GPU", "1")
+    os.environ.setdefault("MEDIAPIPE_DISABLE_GPU", "0")  # v4.33: 默认启用 GPU；出问题时设 =1 回退 CPU
     os.environ.setdefault("ABSL_CPP_MIN_LOG_LEVEL", "3")  # 只显示 ERROR
     # 2) 屏蔽 mediapipe python 日志
     logging.getLogger("mediapipe").setLevel(logging.ERROR)

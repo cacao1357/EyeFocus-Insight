@@ -10,7 +10,7 @@ import sys
 
 # 同 main.py：屏蔽 MediaPipe telemetry
 os.environ.setdefault("GLOG_logtostderr", "0")
-os.environ.setdefault("MEDIAPIPE_DISABLE_GPU", "1")
+os.environ.setdefault("MEDIAPIPE_DISABLE_GPU", "0")  # v4.33: 默认启用 GPU
 os.environ.setdefault("ABSL_CPP_MIN_LOG_LEVEL", "3")
 
 logging.basicConfig(level=logging.INFO,

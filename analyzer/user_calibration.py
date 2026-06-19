@@ -106,10 +106,10 @@ class SignalCollector:
     yaws: List[float] = field(default_factory=list)
     pitches: List[float] = field(default_factory=list)
     ear_min: float = 999.0
-    yaw_left_max: float = -math.inf
-    yaw_right_max: float = math.inf
-    pitch_up_max: float = -math.inf
-    pitch_down_max: float = math.inf
+    yaw_left_max: float = -math.inf   # 左=正yaw, 跟踪最大值 (>)
+    yaw_right_max: float = math.inf   # 右=负yaw, 跟踪最小值 (<)
+    pitch_up_max: float = math.inf    # v4.36: 仰=负pitch, 跟踪最小值 (<)
+    pitch_down_max: float = -math.inf  # v4.36: 俯=正pitch, 跟踪最大值 (>)
 
 
 class BlinkRoundCollector:
@@ -455,13 +455,13 @@ class UserCalibrationManager:
         elif self._state == CalibrationState.HEAD_LEFT:
             if self._get_head_pose_callback:
                 yaw, _ = self._get_head_pose_callback()
-                if yaw < self._signal_collector.yaw_left_max:
+                if yaw > self._signal_collector.yaw_left_max:  # v4.36: 左=正, 跟踪最大正yaw
                     self._signal_collector.yaw_left_max = yaw
 
         elif self._state == CalibrationState.HEAD_RIGHT:
             if self._get_head_pose_callback:
                 yaw, _ = self._get_head_pose_callback()
-                if yaw > self._signal_collector.yaw_right_max:
+                if yaw < self._signal_collector.yaw_right_max:  # v4.36: 右=负, 跟踪最小/最负yaw
                     self._signal_collector.yaw_right_max = yaw
 
         elif self._state == CalibrationState.BLINK_COUNTING:

@@ -268,9 +268,9 @@ class TestDatabaseManager:
 
     # ========== v4.3 漏洞修复回归测试 ==========
 
-    def test_get_cursor_holds_lock_for_thread_safety_CRIT01(self):
-        """CRIT-01: _get_cursor 必须持锁, 否则共享连接事务可被其他线程 rollback 撤销
-        docstring 承诺线程安全, 但 _get_cursor 实现没 acquire self._lock
+    def testget_cursor_holds_lock_for_thread_safety_CRIT01(self):
+        """CRIT-01: get_cursor 必须持锁, 否则共享连接事务可被其他线程 rollback 撤销
+        docstring 承诺线程安全, 但 get_cursor 实现没 acquire self._lock
         """
         import threading
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -281,11 +281,11 @@ class TestDatabaseManager:
             try:
                 session_id = db.create_session()
 
-                # 验证 _get_cursor 函数体内有 with self._lock:
+                # 验证 get_cursor 函数体内有 with self._lock:
                 import inspect
-                src = inspect.getsource(db._get_cursor)
+                src = inspect.getsource(db.get_cursor)
                 assert "self._lock" in src, (
-                    f"_get_cursor 必须使用 self._lock 以兑现 docstring 的线程安全承诺. 实际源码:\n{src}"
+                    f"get_cursor 必须使用 self._lock 以兑现 docstring 的线程安全承诺. 实际源码:\n{src}"
                 )
 
                 # 进一步: 并发调用 write_frame 验证互斥 (不要求快, 要求成功)
@@ -399,7 +399,7 @@ class TestDatabaseManager:
             db.initialize()
             try:
                 # 1) PRAGMA foreign_keys 必须返回 1
-                with db._get_cursor() as cursor:
+                with db.get_cursor() as cursor:
                     cursor.execute("PRAGMA foreign_keys")
                     fk_state = cursor.fetchone()[0]
                 assert fk_state == 1, f"PRAGMA foreign_keys 应为 1 (ON), 实际 {fk_state}"
@@ -444,7 +444,7 @@ class TestDatabaseManager:
                 db.write_frame(session_id, good)
 
                 # 直接用 SQL 注入 1 条坏数据 (blendshapes_json = 非法 JSON 字符串)
-                with db._get_cursor() as cursor:
+                with db.get_cursor() as cursor:
                     cursor.execute(
                         """INSERT INTO frame_records
                            (session_id, timestamp, ear_avg, face_detected, blendshapes_json)

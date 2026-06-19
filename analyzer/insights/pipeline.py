@@ -94,7 +94,7 @@ class InsightsPipeline:
         Returns:
             InsightsResult
         """
-        return self._run(session_ids=None)
+        return self._run(session_ids=[session_id])
 
     def run_all(self) -> InsightsResult:
         """运行完整 pipeline（分析所有历史 session）。"""
@@ -168,7 +168,7 @@ class InsightsPipeline:
                 latest_sid = all_sids[-1] if all_sids else None
                 if latest_sid:
                     from analyzer.insights.changepoint import FocusTimeSeries
-                    with self.db._get_cursor() as cur:
+                    with self.db.get_cursor() as cur:
                         cur.execute("""
                             SELECT window_start, focus_score
                             FROM focus_records

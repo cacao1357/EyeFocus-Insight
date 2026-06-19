@@ -64,7 +64,7 @@ def _fetch_frame_data(db, session_id: str) -> List[Tuple[float, float, bool]]:
     Returns:
         [(timestamp, gaze_score, face_detected), ...] 按时间升序
     """
-    with db._get_cursor() as cur:
+    with db.get_cursor() as cur:
         cur.execute("""
             SELECT timestamp, gaze_score, face_detected
             FROM frame_records

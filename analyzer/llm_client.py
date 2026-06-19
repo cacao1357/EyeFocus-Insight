@@ -327,7 +327,8 @@ class OpenAICompatibleClient(LLMClient):
                 result = _json.loads(resp.read())
                 return result["choices"][0]["message"]["content"]
         except Exception as e:
-            raise RuntimeError(self._sanitize_err(str(e)))
+            logger.error("LLM analyze 请求失败: %s", self._sanitize_err(str(e)))
+            return ""  # v4.33: 失败返回空串，不抛异常（符合"失败返回 Optional"规则）
 
     def deep_analyze(self, data: Dict[str, Any]) -> str:
         """L3 级深度分析（使用 DEEP_ANALYSIS 系列提示模板 + 时序数据）"""
@@ -370,7 +371,8 @@ class OpenAICompatibleClient(LLMClient):
                 result = _json.loads(resp.read())
                 return result["choices"][0]["message"]["content"].strip()
         except Exception as e:
-            raise RuntimeError(self._sanitize_err(str(e)))
+            logger.error("LLM deep_analyze 请求失败: %s", self._sanitize_err(str(e)))
+            return ""  # v4.33: 失败返回空串，不抛异常
 
     def chat(self, messages: list, max_tokens: int = 500) -> str:
         """OpenAI 格式对话（供 server.py _llm_chat 调用）"""
@@ -397,7 +399,8 @@ class OpenAICompatibleClient(LLMClient):
                 result = _json.loads(resp.read())
                 return result["choices"][0]["message"]["content"]
         except Exception as e:
-            raise RuntimeError(self._sanitize_err(str(e)))
+            logger.error("LLM chat 请求失败: %s", self._sanitize_err(str(e)))
+            return ""  # v4.33: 失败返回空串，不抛异常
 
 
 # ── Ollama 本地版 ──

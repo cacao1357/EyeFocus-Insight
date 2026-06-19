@@ -13,6 +13,7 @@ analyzer/predictor.py — 专注度趋势预测 (v4.24)
 """
 
 import logging
+import threading
 import time
 from collections import deque
 from typing import Deque, List, Optional
@@ -29,8 +30,9 @@ _WINDOW_SIZE = 300  # 5 分钟 @ 1 Hz
 _FORECAST_STEPS = 60  # 预测未来 1 分钟
 # 趋势判定阈值（百分点）
 _TREND_THRESHOLD = 3.0
-# 建议休息的专注度阈值
-_BREAK_THRESHOLD = 50.0
+# v4.36: z-score 阈值（_detrend 返回 z-score，范围约 [-3, 3]）
+# 预测值跌破 -1.0σ 时建议休息
+_BREAK_THRESHOLD = -1.0
 
 
 class FocusPredictor:
@@ -79,7 +81,22 @@ class FocusPredictor:
             series = self._detrend(series)
 
             model = ARIMA(series, order=_ARIMA_ORDER)
-            fitted = model.fit(method_kwargs={"disp": False})
+            # v4.36: 线程超时防护，statsmodels ARIMA 在特定数据上可能无限挂起
+            fit_result = []
+            def _fit_arima():
+                fit_result.append(model.fit(method_kwargs={"disp": False}))
+            t = threading.Thread(target=_fit_arima, daemon=True)
+            t.start()
+            t.join(timeout=3.0)
+            if t.is_alive():
+                logger.warning("ARIMA 拟合超时 (3s)，跳过本轮预测")
+                self._trend = "stable"
+                return
+            if not fit_result:
+                logger.warning("ARIMA 拟合未返回结果")
+                self._trend = "stable"
+                return
+            fitted = fit_result[0]
             forecast = fitted.forecast(steps=_FORECAST_STEPS)
 
             self._last_forecast = [float(v) for v in forecast]

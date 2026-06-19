@@ -169,9 +169,9 @@ class FatigueAnalyzer:
 
         prolonged_count = len(self._prolonged_events)
 
-        # 累积疲劳（v4.30: 时间基 EMA，tau=120s，不受帧率影响）
+        # 累积疲劳（v4.35: 连续分数映射 + 时间基 EMA）
         indicator = self._indicator_from_count(prolonged_count)
-        score = self._indicator_to_score(indicator)
+        score = self._indicator_to_score(indicator, prolonged_count)
         if self._last_ema_time is not None:
             dt = max(0.0, current_time - self._last_ema_time)
             alpha = 1.0 - math.exp(-dt / _EMA_TAU)
@@ -205,8 +205,26 @@ class FatigueAnalyzer:
             return FatigueIndicator.ATTENTION
 
     @staticmethod
-    def _indicator_to_score(indicator: FatigueIndicator) -> float:
-        return {FatigueIndicator.RESTED: 10.0, FatigueIndicator.ATTENTION: 40.0, FatigueIndicator.TIRED: 80.0}.get(indicator, 20.0)
+    def _indicator_to_score(indicator: FatigueIndicator, count: int = 0) -> float:
+        """v4.35: 连续分数映射（替代 3 级跳变）
+
+        锚点: (0次→5分) (3→20) (8→40) (15→70) (25→95)
+        中间值线性插值，疲劳曲线不再阶梯状。
+        """
+        if count <= 0:
+            bases = {FatigueIndicator.RESTED: 10.0, FatigueIndicator.ATTENTION: 40.0, FatigueIndicator.TIRED: 80.0}
+            return bases.get(indicator, 20.0)
+
+        anchors = [(0, 5.0), (3, 20.0), (8, 40.0), (15, 70.0), (25, 95.0)]
+        if count >= anchors[-1][0]:
+            return anchors[-1][1]
+        for i in range(len(anchors) - 1):
+            lo_c, lo_s = anchors[i]
+            hi_c, hi_s = anchors[i + 1]
+            if lo_c <= count < hi_c:
+                ratio = (count - lo_c) / (hi_c - lo_c) if hi_c != lo_c else 0.0
+                return round(lo_s + ratio * (hi_s - lo_s), 1)
+        return 5.0
 
     @staticmethod
     def _indicator_to_legacy_level(indicator: FatigueIndicator) -> FatigueLevel:

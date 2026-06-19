@@ -632,6 +632,13 @@ class EyeFocusWindow(QMainWindow):
             # 不直接隐藏，让 update_data 或调用者决定下一个 toast
             self._show_toast()
 
+    def set_uncalibrated_warning(self, visible: bool, message: str = "") -> None:
+        """v4.36: 显示/隐藏未校准警告（持续显示直到校准完成）"""
+        if visible and message:
+            self._show_toast(f"⚠ {message}", "warn")
+        elif not visible:
+            self._show_toast()
+
     def set_calibration_prompt(self, visible: bool) -> None:
         """v4.13: 设置校准提示可见性（footer 小字）"""
         if hasattr(self, '_calib_prompt'):

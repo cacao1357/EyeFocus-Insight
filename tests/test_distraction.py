@@ -174,7 +174,7 @@ class TestAnalyzeDistraction:
         db = MagicMock()
         cursor = MagicMock()
         cursor.fetchall.return_value = frames_data
-        db._get_cursor.return_value.__enter__.return_value = cursor
+        db.get_cursor.return_value.__enter__.return_value = cursor
         return db
 
     def test_no_data(self):

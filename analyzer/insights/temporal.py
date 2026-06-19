@@ -55,7 +55,7 @@ def _build_hourly_series(db, session_ids: List[str]) -> Optional[pd.Series]:
     """
     all_data = []
     for sid in session_ids:
-        with db._get_cursor() as cur:
+        with db.get_cursor() as cur:
             cur.execute("""
                 SELECT window_start, focus_score
                 FROM focus_records
