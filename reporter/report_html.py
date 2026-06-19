@@ -50,7 +50,7 @@ logger = logging.getLogger("eyefocus.reporter")
 
 @dataclass
 class ReportData:
-    """报告数据容器 (v4.13: +frame_records)"""
+    """报告数据容器 (v4.39: +distraction_records)"""
     session: Session
     focus_records: List[FocusRecord]
     fatigue_records: List[FatigueRecord]
@@ -60,6 +60,7 @@ class ReportData:
     avg_blink_rate: float
     total_duration: float
     fatigue_level: FatigueLevel
+    distraction_records: List = None  # v4.39: 分心事件列表（有默认值，放最后）
 
 
 # v4.32: 模块级图表缓存 — 同一天内重复打开报告免重新生成 Plotly
@@ -833,19 +834,18 @@ class HTMLReportGenerator:
         fatigue_mid_pct = round(mid_cnt / total_f * 100, 0)
         fatigue_low_pct = round(low_cnt / total_f * 100, 0)
 
-        # 分心统计
-        dist_count = len(getattr(data, 'distraction_records', None) or [])
-        # 近似分心原因分解（从 FocusRecord 的 eye/head/gaze score 估算）
+        # v4.39: 分心统计 — 从低专注记录直接计数（不再依赖缺失的 distraction_records）
+        low_focus = [r for r in fr if r.focus_score is not None and r.focus_score < 60]
+        dist_count = len(low_focus)
+        # 分心原因分解（从 FocusRecord 的 eye/head/gaze score 估算）
         head_pct = gaze_pct = 0
-        if dist_count > 0 and fr:
-            low_focus = [r for r in fr if r.focus_score is not None and r.focus_score < 60]
-            if low_focus:
-                avg_head = sum(r.head_score or 0 for r in low_focus) / len(low_focus)
-                avg_gaze = sum(r.gaze_score or 0 for r in low_focus) / len(low_focus)
-                total_hg = avg_head + avg_gaze
-                if total_hg > 0:
-                    head_pct = round(avg_head / total_hg * 100)
-                    gaze_pct = 100 - head_pct
+        if dist_count > 0:
+            avg_head = sum(r.head_score or 0 for r in low_focus) / len(low_focus)
+            avg_gaze = sum(r.gaze_score or 0 for r in low_focus) / len(low_focus)
+            total_hg = avg_head + avg_gaze
+            if total_hg > 0:
+                head_pct = round(avg_head / total_hg * 100)
+                gaze_pct = 100 - head_pct
 
         # 疲劳等级
         fl = getattr(data, 'fatigue_level', None)
@@ -928,17 +928,16 @@ class HTMLReportGenerator:
                 fatigue_steps.append(f"第{offset}分 {level}")
                 last_level = level
 
-        # 3. 分心分布
+        # 3. 分心分布（v4.39: 使用相对偏移）
         dist_count = base.get("distractions", 0)
         if dist_count > 0 and dur > 0:
-            # 从 low_focus records 估算分心时间分布
-            low_scores = [(r.window_start, r.focus_score) for r in fr
-                          if r.focus_score is not None and r.focus_score < 60]
             half = dur / 2
-            first_half = sum(1 for t, _ in low_scores if t <= half)
-            second_half = len(low_scores) - first_half
+            first_half = sum(1 for r in fr
+                          if r.focus_score is not None and r.focus_score < 60
+                          and (r.window_start - session_start) <= half)
+            second_half = dist_count - first_half
             if second_half > first_half:
-                dist_pattern = f"{dist_count}次分心，后段集中（{second_half}/{len(low_scores)}次低分）"
+                dist_pattern = f"{dist_count}次分心，后段集中（{second_half}/{dist_count}次低分）"
             else:
                 dist_pattern = f"{dist_count}次分心，前后段分布均匀"
         else:
@@ -965,31 +964,45 @@ class HTMLReportGenerator:
         return base
 
     def _get_past_sessions_summary(self, session, current_avg: float) -> str:
-        """查询过去若干次会话的摘要对比"""
+        """v4.39: 查询过去若干次会话的摘要对比（修复不存在的列）"""
         if not self.db or not session:
             return "无历史数据"
         try:
             with self.db.get_cursor() as cur:
+                # sessions 表无 avg_focus/duration_seconds，需 JOIN focus_records
                 cur.execute("""
-                    SELECT avg_focus, duration_seconds, fatigue_level,
-                           start_time FROM sessions
-                    WHERE session_id != ? AND start_time IS NOT NULL
-                    ORDER BY start_time DESC LIMIT 5
+                    SELECT s.session_id, s.start_time, s.end_time,
+                           AVG(f.focus_score) as avg_focus
+                    FROM sessions s
+                    LEFT JOIN focus_records f ON s.session_id = f.session_id
+                    WHERE s.session_id != ? AND s.end_time IS NOT NULL
+                    GROUP BY s.session_id
+                    ORDER BY s.start_time DESC LIMIT 5
                 """, (session.session_id,))
                 rows = cur.fetchall()
                 if not rows:
                     return "无历史数据"
 
+            from datetime import datetime
             lines = [f"近 {len(rows)} 次会话数据："]
+            past_avgs = []
             for row in rows:
-                avg_s, dur_s, fl, st = row
+                sid, st_str, et_str, avg_s = row
                 if avg_s is None:
                     continue
-                lines.append(f"- 专注度 {avg_s:.0f}/100，时长 {int((dur_s or 0)/60)}分钟")
+                past_avgs.append(avg_s)
+                dur_min = 0
+                try:
+                    st = datetime.fromisoformat(st_str) if st_str else None
+                    et = datetime.fromisoformat(et_str) if et_str else None
+                    if st and et:
+                        dur_min = int((et - st).total_seconds() / 60)
+                except Exception:
+                    pass
+                lines.append(f"- 专注度 {avg_s:.0f}/100，时长 {dur_min}分钟")
 
-            past_avg = [r[0] for r in rows if r[0] is not None]
-            if past_avg:
-                mean_past = sum(past_avg) / len(past_avg)
+            if past_avgs:
+                mean_past = sum(past_avgs) / len(past_avgs)
                 diff = current_avg - mean_past
                 if abs(diff) > 3:
                     direction = "↑ 高于" if diff > 0 else "↓ 低于"
@@ -1719,6 +1732,15 @@ class HTMLReportGenerator:
             distraction_html=distraction_html,
         )
 
+        # v4.39: 查询同日其他会话
+        same_day_sessions = []
+        try:
+            today_str = session.start_time.strftime("%Y-%m-%d")
+            same_day_sessions = self.db.get_sessions_by_date_range(
+                today_str, today_str) if self.db else []
+        except Exception:
+            pass
+
         # 6. 规则引擎建议 + attribution 发现
         rule_insights = self.insights_engine.analyze(
             focus_records=focus_records, fatigue_records=fatigue_records,
@@ -1727,6 +1749,7 @@ class HTMLReportGenerator:
             session_id=session_id,
             session_start_time=session.start_time.timestamp(),
             blink_records=blink_records,
+            same_day_sessions=same_day_sessions,
         )
         if insights_result.attribution_findings:
             try:

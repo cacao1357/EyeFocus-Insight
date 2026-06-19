@@ -108,6 +108,10 @@ class FocusAnalyzer:
     _YAW_SCALE = 20.0
     _PITCH_SCALE = 25.0
 
+    # v4.39: 最小舒适角（避免 baseline_std 太小导致过度敏感）
+    _MIN_COMFORT_YAW = 8.0
+    _MIN_COMFORT_PITCH = 10.0
+
     # v4.13: EMA 平滑系数
     _EMA_FAST = 0.40   # 下降快（分心时迅速反应）
     _EMA_SLOW = 0.20   # v4.14: 0.15→0.20 恢复稍快
@@ -221,6 +225,28 @@ class FocusAnalyzer:
         self._ear_auto_samples.clear()
         logger.info("专注度基线已更新: EAR=%.4f", ear)
 
+    def _get_head_comfort(self):
+        """v4.39: 基于用户校准基线计算个性化头部舒适区。
+
+        舒适角 = 默认值 × (用户std / 3.0)，clamp 到最小值防止过度敏感。
+        无校准数据时回退到类常量。
+        """
+        if self.baseline_yaw_std and self.baseline_yaw_std > 0:
+            comfort_yaw = max(self._MIN_COMFORT_YAW,
+                            self._COMFORT_YAW * self.baseline_yaw_std / 3.0)
+            yaw_scale = max(10.0, self._YAW_SCALE * self.baseline_yaw_std / 3.0)
+        else:
+            comfort_yaw = self._COMFORT_YAW
+            yaw_scale = self._YAW_SCALE
+        if self.baseline_pitch_std and self.baseline_pitch_std > 0:
+            comfort_pitch = max(self._MIN_COMFORT_PITCH,
+                              self._COMFORT_PITCH * self.baseline_pitch_std / 3.0)
+            pitch_scale = max(12.0, self._PITCH_SCALE * self.baseline_pitch_std / 3.0)
+        else:
+            comfort_pitch = self._COMFORT_PITCH
+            pitch_scale = self._PITCH_SCALE
+        return comfort_yaw, comfort_pitch, yaw_scale, pitch_scale
+
     def analyze(
         self,
         ear: float,
@@ -271,12 +297,13 @@ class FocusAnalyzer:
             1,
         )
 
-        # ── 头部分数 (v4.13: 平滑渐变) ──
-        yaw_excess = max(0.0, abs(yaw) - self._COMFORT_YAW)
-        pitch_excess = max(0.0, abs(pitch) - self._COMFORT_PITCH)
+        # ── 头部分数 (v4.39: 个性化舒适角) ──
+        comfort_yaw, comfort_pitch, yaw_scale, pitch_scale = self._get_head_comfort()
+        yaw_excess = max(0.0, abs(yaw) - comfort_yaw)
+        pitch_excess = max(0.0, abs(pitch) - comfort_pitch)
         head_penalty = min(
             1.0,
-            max(yaw_excess / self._YAW_SCALE, pitch_excess / self._PITCH_SCALE),
+            max(yaw_excess / yaw_scale, pitch_excess / pitch_scale),
         )
         head_score = round(100.0 * (1.0 - head_penalty), 1)
 
@@ -399,10 +426,11 @@ class FocusAnalyzer:
             level = FocusLevel.FOCUSED
         elif deviated >= DISTRACTED_MIN_DEVIATION_SECS:
             # v4.34: 多信号门控 — 视线注视 + 头部稳定时，高频眨眼不视为分心
-            yaw_excess = max(0.0, abs(yaw) - self._COMFORT_YAW)
-            pitch_excess = max(0.0, abs(pitch) - self._COMFORT_PITCH)
+            comfort_yaw, comfort_pitch, yaw_scale, pitch_scale = self._get_head_comfort()
+            yaw_excess = max(0.0, abs(yaw) - comfort_yaw)
+            pitch_excess = max(0.0, abs(pitch) - comfort_pitch)
             head_penalty = min(1.0, max(
-                yaw_excess / self._YAW_SCALE, pitch_excess / self._PITCH_SCALE))
+                yaw_excess / yaw_scale, pitch_excess / pitch_scale))
             head_ok = (100.0 * (1.0 - head_penalty)) >= 50
             gaze_ok = gaze_score >= 50
             if gaze_ok and head_ok:

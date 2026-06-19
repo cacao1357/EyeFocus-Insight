@@ -580,7 +580,8 @@ class EyeFocusApp:
         try:
             with self._db.get_cursor() as cur:
                 cur.execute(
-                    "SELECT baseline_ear, baseline_yaw_std, baseline_pitch_std "
+                    "SELECT baseline_ear, baseline_yaw_std, baseline_pitch_std, "
+                    "baseline_blink_rate "
                     "FROM sessions WHERE is_calibrated=1 AND baseline_ear IS NOT NULL "
                     "ORDER BY start_time DESC LIMIT 1"
                 )
@@ -589,12 +590,16 @@ class EyeFocusApp:
                     ear = float(row[0])
                     yaw_std = float(row[1]) if row[1] else None
                     pitch_std = float(row[2]) if row[2] else None
+                    blink_rate = float(row[3]) if len(row) > 3 and row[3] else None
                     if self._focus_analyzer is not None:
                         self._focus_analyzer.set_baseline(ear, yaw_std, pitch_std)
                     if self._eye_detector is not None:
                         self._eye_detector.set_baseline(ear)
+                    if blink_rate and self._fatigue_analyzer is not None:
+                        self._fatigue_analyzer.set_baseline_blink_rate(blink_rate)
                     self._calib_loaded = True
-                    logger.info("已加载历史校准: EAR=%.4f", ear)
+                    logger.info("已加载历史校准: EAR=%.4f, blink=%.1f", ear,
+                                blink_rate or 0)
                     return
         except Exception as e:
             logger.debug("加载历史校准失败（可能无历史数据）: %s", e)
@@ -610,19 +615,25 @@ class EyeFocusApp:
             self._eye_detector.set_baseline(baseline_ear)
             logger.info("Qt 校准 EAR 基线已应用: %.4f", baseline_ear)
 
+        yaw_std_qt = head_yaw / 2.0 if head_yaw > 0 else None
+        pitch_std_qt = head_pitch / 2.0 if head_pitch > 0 else None
+
         if self._focus_analyzer is not None:
             self._focus_analyzer.set_baseline(
                 ear=baseline_ear,
-                yaw_std=head_yaw / 2.0 if head_yaw > 0 else None,
-                pitch_std=head_pitch / 2.0 if head_pitch > 0 else None,
+                yaw_std=yaw_std_qt,
+                pitch_std=pitch_std_qt,
             )
             logger.info("Qt 校准专注度基线已应用: EAR=%.4f, yaw=%.1f, pitch=%.1f",
                         baseline_ear, head_yaw, head_pitch)
 
+        # v4.39: 补存 yaw_std/pitch_std（Qt 校准无 blink_rate/cqs）
         if self._db and self._session_id:
             self._db.update_session(
                 self._session_id,
                 baseline_ear=baseline_ear,
+                baseline_yaw_std=yaw_std_qt,
+                baseline_pitch_std=pitch_std_qt,
                 is_calibrated=True,
             )
 
@@ -1612,6 +1623,7 @@ class EyeFocusApp:
                 self._focus_analyzer.set_adjustment_factor(result.final_adjustment_factor)
 
         # P1: 头部姿态参数接通 — 让 focus_analyzer 的 head_score 反映用户的真实头动范围
+        yaw_std = pitch_std = None
         if (hasattr(self, '_focus_analyzer') and self._focus_analyzer is not None
                 and hasattr(self._focus_analyzer, 'set_baseline')):
             from calibration.result import signal_to_head_pose_std
@@ -1626,11 +1638,16 @@ class EyeFocusApp:
             self._fatigue_analyzer.set_baseline_blink_rate(result.baseline_blink_rate)
             logger.info("疲劳基线已应用: %.1f 次/分钟", result.baseline_blink_rate)
 
+        # v4.39: 完整持久化校准数据（yaw_std/pitch_std/cqs/glasses_mode）
         if self._db and self._session_id:
             self._db.update_session(
                 self._session_id,
                 baseline_ear=result.signal.ear_mean,
                 baseline_blink_rate=result.baseline_blink_rate,
+                baseline_yaw_std=yaw_std,
+                baseline_pitch_std=pitch_std,
+                cqs_score=result.cqs,
+                glasses_mode="with_glasses" if result.signal.glasses_mode else "without_glasses",
                 is_calibrated=True,
             )
 
