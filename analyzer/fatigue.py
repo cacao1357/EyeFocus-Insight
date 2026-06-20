@@ -113,6 +113,10 @@ class FatigueAnalyzer:
         self._start_time: Optional[float] = None
         self._last_ema_time: Optional[float] = None  # v4.30: 时间基 EMA 时间戳
 
+        # v4.47: 信号驱动恢复 — 持续睁眼加速疲劳衰减
+        self._consecutive_open_seconds: float = 0.0
+        self._last_open_check_time: Optional[float] = None
+
     def start(self) -> None:
         self._start_time = time.time()
         self._cumulative_fatigue = 0.0
@@ -124,6 +128,8 @@ class FatigueAnalyzer:
         self._was_prolonged = False
         self._last_analysis_time = time.time()
         self._last_ema_time = None
+        self._consecutive_open_seconds = 0.0
+        self._last_open_check_time = None
 
     def set_baseline_blink_rate(self, baseline_blink_rate: float) -> None:
         self.baseline_blink_rate = baseline_blink_rate
@@ -192,10 +198,29 @@ class FatigueAnalyzer:
         # 等级判定 (v4.44: 基于综合分数而非纯次数)
         indicator = self._indicator_from_score(score)
 
-        # 累积疲劳（EMA 平滑）
+        # v4.47: 信号驱动 EMA — 持续睁眼加速疲劳衰减
+        if self._last_open_check_time is not None:
+            dt_open = max(0.0, current_time - self._last_open_check_time)
+        else:
+            dt_open = 0.0
+
+        if closure_type == "prolonged":
+            self._consecutive_open_seconds = 0.0   # 闭眼→重置
+        else:
+            self._consecutive_open_seconds += dt_open  # 睁眼→累积
+        self._last_open_check_time = current_time
+
+        # 根据持续睁眼时长选择恢复速度
+        if self._consecutive_open_seconds >= 10.0:
+            effective_tau = _EMA_TAU / 4.0          # 10s睁眼→4倍速（30s τ）
+        elif self._consecutive_open_seconds >= 5.0:
+            effective_tau = _EMA_TAU / 2.0          # 5s睁眼→2倍速（60s τ）
+        else:
+            effective_tau = _EMA_TAU                # 默认慢速（120s τ）
+
         if self._last_ema_time is not None:
             dt = max(0.0, current_time - self._last_ema_time)
-            alpha = 1.0 - math.exp(-dt / _EMA_TAU)
+            alpha = 1.0 - math.exp(-dt / effective_tau)
             self._cumulative_fatigue = (1.0 - alpha) * self._cumulative_fatigue + alpha * score
         else:
             self._cumulative_fatigue = score
@@ -282,6 +307,8 @@ class FatigueAnalyzer:
         self._start_time = None
         self._last_analysis_time = None
         self._last_ema_time = None
+        self._consecutive_open_seconds = 0.0
+        self._last_open_check_time = None
 
     def get_stats(self) -> dict:
         return {

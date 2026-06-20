@@ -941,7 +941,7 @@ class InsightsEngine:
         total = len(low_focus)
         eye_low = sum(1 for r in low_focus if (r.eye_score or 0) < 60)
         head_low = sum(1 for r in low_focus if (r.head_score or 0) < 60)
-        gaze_low = sum(1 for r in low_focus if (r.gaze_score or 0) < 60)
+        gaze_low = sum(1 for r in low_focus if (r.gaze_score or 0) < 36)  # v4.47: 新满分60的60%
         # 归一化（可能重叠，取最大比例项）
         if total == 0:
             return None

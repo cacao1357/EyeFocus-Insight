@@ -79,10 +79,10 @@ class EarVarianceConfig:
 
 @dataclass(frozen=True)
 class FocusLevelConfig:
-    """v4.34: 专注度等级判定与分心提醒的可调阈值"""
-    focused_max_deviation_secs: int = 3       # ≤3s EAR 偏离 → FOCUSED
-    distracted_min_deviation_secs: int = 8    # ≥8s EAR 偏离 → 候选 DISTRACTED
-    gaze_ok_threshold: float = 50.0            # gaze_score≥此值 → 视线在屏幕
+    """v4.47: 专注度等级判定与分心提醒的可调阈值"""
+    focused_max_deviation_secs: int = 6       # v4.47: 30s窗口，≤6次偏离 → FOCUSED
+    distracted_min_deviation_secs: int = 16   # v4.47: 30s窗口，≥16次偏离 → 候选 DISTRACTED
+    gaze_ok_threshold: float = 30.0            # v4.47: gaze_score(0-60)≥30 → 视线在屏幕
     head_ok_threshold: float = 50.0            # head_score≥此值 → 头部稳定
     distract_count_threshold: int = 4          # ≥N 次切为分心 → 触发提醒
     distract_window: float = 600.0             # 分心统计窗口 (秒)

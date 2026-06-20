@@ -83,7 +83,7 @@ class FrameProcessor:
         # 最新分析结果（用于渲染）
         self._latest_focus_result = None
         self._latest_fatigue_result = None
-        self._latest_gaze_score = 100.0
+        self._latest_gaze_score = 0.0   # v4.47: 闭眼/虹膜丢失时视线分=0
         self._latest_light_result = None
         self._latest_glasses_result = None
         self._latest_yaw: float = 0.0
@@ -117,7 +117,7 @@ class FrameProcessor:
         self._latest_face_detected = face_result.face_detected
 
         if not face_result.face_detected:
-            # v4.46: 人脸丢失时仍运行疲劳分析（闭眼可能导致丢脸，闭眼状态需继续累积）
+            # v4.47: 区分闭眼丢脸 vs 真离开
             closure_type, closure_duration = self._eye_detector.get_closure_info()
             fatigue_result = self._fatigue_analyzer.analyze(
                 closure_type=closure_type,
@@ -126,12 +126,24 @@ class FrameProcessor:
             )
             self._latest_fatigue_result = fatigue_result
             if self._focus_analyzer is not None:
-                frozen = self._focus_analyzer.analyze(
-                    ear=0.0, yaw=0.0, pitch=0.0,
-                    gaze_score=self._latest_gaze_score,
-                    face_detected=False,
-                    fatigue_score=fatigue_result.fatigue_score,
-                )
+                if closure_type == "prolonged":
+                    # 闭眼导致丢脸 → 冻结信号分但应用疲劳惩罚
+                    frozen = self._focus_analyzer.analyze(
+                        ear=0.0, yaw=0.0, pitch=0.0,
+                        gaze_score=0.0,  # v4.47: 闭眼→视线分=0
+                        face_detected=False,
+                        fatigue_score=fatigue_result.fatigue_score,
+                        apply_fatigue_to_frozen=True,
+                    )
+                else:
+                    # 真离开 → 完全冻结
+                    frozen = self._focus_analyzer.analyze(
+                        ear=0.0, yaw=0.0, pitch=0.0,
+                        gaze_score=self._latest_gaze_score,
+                        face_detected=False,
+                        fatigue_score=0.0,
+                        apply_fatigue_to_frozen=False,
+                    )
                 self._latest_focus_result = frozen
             return
 
@@ -243,7 +255,7 @@ class FrameProcessor:
             head_pose_yaw=smoothed_yaw,
             head_pose_pitch=smoothed_pitch,
         )
-        self._latest_gaze_score = gaze_result.gaze_concentration if gaze_result else 100.0
+        self._latest_gaze_score = gaze_result.gaze_concentration if gaze_result else 0.0  # v4.47: 检测失败→视线分=0
 
         # 离屏时跳过专注度/疲劳分析
         if self._is_head_away:

@@ -260,7 +260,7 @@ class TestEyeFocusAppIntegration:
             is_adequate=True,
         )
         app._gaze_detector.detect.return_value = MagicMock(
-            gaze_score=100.0, is_looking_at_screen=True, gaze_offset=(0.0, 0.0)
+            gaze_score=60.0, is_looking_at_screen=True, gaze_offset=(0.0, 0.0)
         )
 
         app._frame_processor.process_frame(frame)
@@ -315,7 +315,7 @@ class TestEyeFocusAppIntegration:
             is_adequate=True,
         )
         app._gaze_detector.detect.return_value = MagicMock(
-            gaze_score=100.0, is_looking_at_screen=True, gaze_offset=(0.0, 0.0)
+            gaze_score=60.0, is_looking_at_screen=True, gaze_offset=(0.0, 0.0)
         )
 
         app._frame_processor.process_frame(frame)
@@ -348,7 +348,7 @@ class TestEyeFocusAppIntegration:
             is_adequate=True,
         )
         app._gaze_detector.detect.return_value = MagicMock(
-            gaze_score=100.0, is_looking_at_screen=True, gaze_offset=(0.0, 0.0)
+            gaze_score=60.0, is_looking_at_screen=True, gaze_offset=(0.0, 0.0)
         )
 
         app._frame_processor.process_frame(frame)
@@ -442,7 +442,7 @@ class TestEyeFocusAppIntegration:
             is_adequate=True,
         )
         app._gaze_detector.detect.return_value = MagicMock(
-            gaze_score=100.0, is_looking_at_screen=True, gaze_offset=(0.0, 0.0)
+            gaze_score=60.0, is_looking_at_screen=True, gaze_offset=(0.0, 0.0)
         )
 
         # Mock 数据库写入
@@ -481,7 +481,7 @@ class TestEyeFocusAppIntegration:
             is_adequate=True,
         )
         app._gaze_detector.detect.return_value = MagicMock(
-            gaze_score=100.0, is_looking_at_screen=True, gaze_offset=(0.0, 0.0)
+            gaze_score=60.0, is_looking_at_screen=True, gaze_offset=(0.0, 0.0)
         )
 
         # 执行帧处理，验证不抛异常
@@ -526,7 +526,7 @@ class TestEyeFocusAppIntegration:
             is_adequate=True,
         )
         app._gaze_detector.detect.return_value = MagicMock(
-            gaze_score=100.0, is_looking_at_screen=True, gaze_offset=(0.0, 0.0)
+            gaze_score=60.0, is_looking_at_screen=True, gaze_offset=(0.0, 0.0)
         )
 
         # 处理 10 帧
