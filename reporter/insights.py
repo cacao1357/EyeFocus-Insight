@@ -97,7 +97,8 @@ class InsightsEngine:
         if not self._db:
             return
         try:
-            with self._db.get_cursor() as cur:
+            # v4.40: readonly 避免与主连接 WAL checkpoint 争用
+            with self._db.get_readonly_cursor() as cur:
                 cur.execute("""
                     SELECT AVG(f.focus_score) as avg_f,
                            AVG(f.blink_rate) as avg_b
@@ -548,8 +549,8 @@ class InsightsEngine:
             return None
 
         try:
-            with self._db.get_cursor() as cur:
-                # 查询历史平均专注度（排除当前会话）
+            with self._db.get_readonly_cursor() as cur:
+                # v4.40: readonly 避免 WAL checkpoint 阻塞
                 cur.execute("""
                     SELECT AVG(focus_score) FROM focus_records
                     WHERE session_id != ? AND focus_score IS NOT NULL
@@ -1117,10 +1118,14 @@ class InsightsEngine:
         """L2: 同日其他会话对比分析
 
         same_day_sessions: 同日已完成会话列表（Session 对象），已排除当前和 <10min 的
+        v4.40: 限制最多 10 个会话，避免逐个查询 statistics 导致大量 SQLite 连接
         """
         insights = []
         valid = [s for s in same_day_sessions
                  if s.session_id != current_session_id and s.end_time]
+        # v4.40: 取最近 10 个，避免逐个 get_session_statistics 打开过多连接
+        if len(valid) > 10:
+            valid = sorted(valid, key=lambda s: s.start_time, reverse=True)[:10]
         if not valid:
             return insights
 
@@ -1134,23 +1139,17 @@ class InsightsEngine:
         if not prior_avgs:
             return insights
 
-        # 加权平均（时长越长约可信）
-        total_w = sum(d for _, d in prior_avgs)
-        weighted_avg = sum(s.avg_focus * d for (s, d) in
-                          zip([s for s in valid if (s.end_time - s.start_time).total_seconds() >= 600],
-                              [d for _, d in prior_avgs])) / max(1, total_w)
-        # 简化：直接用已知数据
+        # 从 session 统计数据查平均专注
         prior_focus_vals = []
         for s in valid:
             dur = (s.end_time - s.start_time).total_seconds()
             if dur < 600:
                 continue
-            # 从 session 统计数据查平均专注
             try:
                 if hasattr(self, '_db') and self._db:
                     stats = self._db.get_session_statistics(s.session_id)
-                    if stats and stats.get('avg_focus'):
-                        prior_focus_vals.append((stats['avg_focus'], dur))
+                    if stats and stats.get('focus') and stats['focus'].get('avg_focus'):
+                        prior_focus_vals.append((stats['focus']['avg_focus'], dur))
             except Exception:
                 pass
 
@@ -1203,8 +1202,8 @@ class InsightsEngine:
                 try:
                     if hasattr(self, '_db') and self._db:
                         stats = self._db.get_session_statistics(s.session_id)
-                        if stats and stats.get('avg_focus'):
-                            session_avgs.append(stats['avg_focus'])
+                        if stats and stats.get('focus') and stats['focus'].get('avg_focus'):
+                            session_avgs.append(stats['focus']['avg_focus'])
                 except Exception:
                     pass
             session_avgs.append(current_avg_focus)

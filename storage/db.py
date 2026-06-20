@@ -292,7 +292,7 @@ class DatabaseManager:
 
     @contextmanager
     def get_cursor(self):
-        """获取数据库游标的上下文管理器
+        """获取数据库游标的上下文管理器（读写）
 
         v4.3 CRIT-01 修复: 持 self._lock 以兑现 docstring 承诺的线程安全。
         共享连接上 commit/rollback 是按连接而非 cursor 维护事务的，
@@ -311,6 +311,22 @@ class DatabaseManager:
                 raise
             finally:
                 cursor.close()
+
+    @contextmanager
+    def get_readonly_cursor(self):
+        """v4.40: 只读游标 — 独立 ro 连接，不持锁不 commit。
+
+        避免报告生成时与主连接争用 WAL checkpoint 导致大 DB 阻塞数秒。
+        """
+        ro_conn = sqlite3.connect(
+            f"file:{self.config.db_path}?mode=ro", uri=True, timeout=10)
+        ro_conn.row_factory = sqlite3.Row
+        try:
+            cursor = ro_conn.cursor()
+            yield cursor
+        finally:
+            cursor.close()
+            ro_conn.close()
 
     # ========== Session 操作 ==========
 
@@ -406,7 +422,7 @@ class DatabaseManager:
 
     def get_session(self, session_id: str) -> Optional[Session]:
         """获取会话信息"""
-        with self.get_cursor() as cursor:
+        with self.get_readonly_cursor() as cursor:
             cursor.execute(
                 "SELECT * FROM sessions WHERE session_id = ?",
                 (session_id,),
@@ -437,7 +453,7 @@ class DatabaseManager:
             query += " WHERE is_active = 1"
         query += " ORDER BY start_time DESC"
 
-        with self.get_cursor() as cursor:
+        with self.get_readonly_cursor() as cursor:
             cursor.execute(query)
             rows = cursor.fetchall()
 
@@ -517,7 +533,7 @@ class DatabaseManager:
 
         query += " ORDER BY timestamp"
 
-        with self.get_cursor() as cursor:
+        with self.get_readonly_cursor() as cursor:
             cursor.execute(query, params)
             rows = cursor.fetchall()
 
@@ -577,7 +593,7 @@ class DatabaseManager:
 
         v4.31: 全天 6h=648K 行 → SQL 层采样后返回 ~500 行，I/O 降低 99.9%。
         """
-        with self.get_cursor() as cursor:
+        with self.get_readonly_cursor() as cursor:
             cursor.execute(
                 "SELECT COUNT(*) FROM frame_records WHERE session_id = ?",
                 (session_id,),
@@ -588,7 +604,7 @@ class DatabaseManager:
             return self.get_frame_records(session_id)
 
         step = total // max_samples
-        with self.get_cursor() as cursor:
+        with self.get_readonly_cursor() as cursor:
             cursor.execute("""
                 SELECT * FROM (
                     SELECT *, ROW_NUMBER() OVER (ORDER BY timestamp) AS _rn
@@ -634,7 +650,7 @@ class DatabaseManager:
 
     def get_focus_records(self, session_id: str) -> List[FocusRecord]:
         """获取专注度记录"""
-        with self.get_cursor() as cursor:
+        with self.get_readonly_cursor() as cursor:
             cursor.execute(
                 "SELECT * FROM focus_records WHERE session_id = ? ORDER BY window_start",
                 (session_id,),
@@ -670,7 +686,7 @@ class DatabaseManager:
         from collections import defaultdict
 
         placeholders = ','.join('?' * len(session_ids))
-        with self.get_cursor() as cursor:
+        with self.get_readonly_cursor() as cursor:
             cursor.execute(f"""
                 SELECT * FROM focus_records
                 WHERE session_id IN ({placeholders})
@@ -720,7 +736,7 @@ class DatabaseManager:
 
     def get_fatigue_records(self, session_id: str) -> List[FatigueRecord]:
         """获取疲劳记录"""
-        with self.get_cursor() as cursor:
+        with self.get_readonly_cursor() as cursor:
             cursor.execute(
                 "SELECT * FROM fatigue_records WHERE session_id = ? ORDER BY timestamp",
                 (session_id,),
@@ -762,7 +778,7 @@ class DatabaseManager:
 
     def get_blink_events(self, session_id: str) -> List[BlinkRecord]:
         """获取眨眼事件"""
-        with self.get_cursor() as cursor:
+        with self.get_readonly_cursor() as cursor:
             cursor.execute(
                 "SELECT * FROM blink_events WHERE session_id = ? ORDER BY start_timestamp",
                 (session_id,),
@@ -881,7 +897,7 @@ class DatabaseManager:
         """获取会话统计信息"""
         stats = {}
 
-        with self.get_cursor() as cursor:
+        with self.get_readonly_cursor() as cursor:
             # 帧记录统计
             cursor.execute(
                 """
@@ -1084,7 +1100,7 @@ class DatabaseManager:
     def get_daily_stats(self, date: str):
         """获取指定日期的统计"""
         from storage.models import DailyStats
-        with self.get_cursor() as cursor:
+        with self.get_readonly_cursor() as cursor:
             cursor.execute("SELECT * FROM daily_stats WHERE date = ?", (date,))
             row = cursor.fetchone()
         if not row:
@@ -1101,7 +1117,7 @@ class DatabaseManager:
     def get_all_daily_stats(self):
         """获取所有日统计（用于日历热力图）"""
         from storage.models import DailyStats
-        with self.get_cursor() as cursor:
+        with self.get_readonly_cursor() as cursor:
             cursor.execute("SELECT * FROM daily_stats ORDER BY date")
             rows = cursor.fetchall()
         return [
@@ -1143,7 +1159,7 @@ class DatabaseManager:
         placeholders = ','.join('?' * len(session_ids))
 
         # 专注度 — 单次批量查询
-        with self.get_cursor() as cursor:
+        with self.get_readonly_cursor() as cursor:
             cursor.execute(f"""
                 SELECT * FROM focus_records
                 WHERE session_id IN ({placeholders})
@@ -1168,7 +1184,7 @@ class DatabaseManager:
         ]
 
         # 疲劳 — 单次批量查询
-        with self.get_cursor() as cursor:
+        with self.get_readonly_cursor() as cursor:
             cursor.execute(f"""
                 SELECT * FROM fatigue_records
                 WHERE session_id IN ({placeholders})
@@ -1189,7 +1205,7 @@ class DatabaseManager:
         ]
 
         # 眨眼 — 单次批量查询
-        with self.get_cursor() as cursor:
+        with self.get_readonly_cursor() as cursor:
             cursor.execute(f"""
                 SELECT * FROM blink_events
                 WHERE session_id IN ({placeholders})
@@ -1230,7 +1246,7 @@ class DatabaseManager:
 
     def get_sessions_by_date_range(self, start_date: str, end_date: str):
         """按日期范围查询会话"""
-        with self.get_cursor() as cursor:
+        with self.get_readonly_cursor() as cursor:
             cursor.execute("""
                 SELECT * FROM sessions
                 WHERE date(start_time) >= ? AND date(start_time) <= ?

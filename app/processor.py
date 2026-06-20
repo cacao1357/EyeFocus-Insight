@@ -337,8 +337,8 @@ class FrameProcessor:
                 gaze_score=fr.gaze_score,
                 blink_rate=fr.blink_rate,
                 avg_ear=self._latest_ear,
-                avg_yaw=0.0,
-                avg_pitch=0.0,
+                avg_yaw=self._latest_yaw,
+                avg_pitch=self._latest_pitch,
             )
             self._db.write_focus_record(self._session_id, focus_record)
             self._last_focus_write_time = current_time

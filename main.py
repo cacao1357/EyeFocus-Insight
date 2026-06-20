@@ -163,10 +163,8 @@ class EyeFocusApp:
         # v4.3 修复: 重新引入 _paused (M-22 误删了字段但 _render_frame 还在引用)
         # P 键切换, 不与窗口拖动混淆 (cv2.waitKey 拖窗口时返回 255 不触发)
         self._paused: bool = False
-        # v4.4: 追踪最后检测到人脸的时间, 用于无脸检测红底白字横条
+        # v4.4: 追踪最后检测到人脸的时间, 用于无脸检测 UI 警告
         self._last_face_time: Optional[float] = None
-        # 人脸丢失自动暂停标志
-        self._auto_paused_for_face_loss: bool = False
         # v4.13: 历史校准加载状态
         self._calib_loaded: bool = False
         # v4.33: 报告 HTML 时间缓存（5 分钟 TTL，检测中重复打开免重生成）
@@ -580,7 +578,8 @@ class EyeFocusApp:
         try:
             with self._db.get_cursor() as cur:
                 cur.execute(
-                    "SELECT baseline_ear, baseline_yaw_std, baseline_pitch_std "
+                    "SELECT baseline_ear, baseline_yaw_std, baseline_pitch_std, "
+                    "baseline_blink_rate "
                     "FROM sessions WHERE is_calibrated=1 AND baseline_ear IS NOT NULL "
                     "ORDER BY start_time DESC LIMIT 1"
                 )
@@ -589,12 +588,16 @@ class EyeFocusApp:
                     ear = float(row[0])
                     yaw_std = float(row[1]) if row[1] else None
                     pitch_std = float(row[2]) if row[2] else None
+                    blink_rate = float(row[3]) if len(row) > 3 and row[3] else None
                     if self._focus_analyzer is not None:
                         self._focus_analyzer.set_baseline(ear, yaw_std, pitch_std)
                     if self._eye_detector is not None:
                         self._eye_detector.set_baseline(ear)
+                    if blink_rate and self._fatigue_analyzer is not None:
+                        self._fatigue_analyzer.set_baseline_blink_rate(blink_rate)
                     self._calib_loaded = True
-                    logger.info("已加载历史校准: EAR=%.4f", ear)
+                    logger.info("已加载历史校准: EAR=%.4f, blink=%.1f", ear,
+                                blink_rate or 0)
                     return
         except Exception as e:
             logger.debug("加载历史校准失败（可能无历史数据）: %s", e)
@@ -610,19 +613,25 @@ class EyeFocusApp:
             self._eye_detector.set_baseline(baseline_ear)
             logger.info("Qt 校准 EAR 基线已应用: %.4f", baseline_ear)
 
+        yaw_std_qt = head_yaw / 2.0 if head_yaw > 0 else None
+        pitch_std_qt = head_pitch / 2.0 if head_pitch > 0 else None
+
         if self._focus_analyzer is not None:
             self._focus_analyzer.set_baseline(
                 ear=baseline_ear,
-                yaw_std=head_yaw / 2.0 if head_yaw > 0 else None,
-                pitch_std=head_pitch / 2.0 if head_pitch > 0 else None,
+                yaw_std=yaw_std_qt,
+                pitch_std=pitch_std_qt,
             )
             logger.info("Qt 校准专注度基线已应用: EAR=%.4f, yaw=%.1f, pitch=%.1f",
                         baseline_ear, head_yaw, head_pitch)
 
+        # v4.39: 补存 yaw_std/pitch_std（Qt 校准无 blink_rate/cqs）
         if self._db and self._session_id:
             self._db.update_session(
                 self._session_id,
                 baseline_ear=baseline_ear,
+                baseline_yaw_std=yaw_std_qt,
+                baseline_pitch_std=pitch_std_qt,
                 is_calibrated=True,
             )
 
@@ -741,25 +750,24 @@ class EyeFocusApp:
             # FPS
             self._update_fps()
 
-            # 追踪最后检测到人脸的时间
+            # v4.41: 追踪最后检测到人脸的时间 + UI 警告（不自动暂停）
             if self._frame_processor.latest_face_detected:
                 self._last_face_time = time.time()
-
-            # 人脸丢失 > 10s 自动暂停
-            if not self._frame_processor.latest_face_detected and self._last_face_time is not None:
+                # 人脸恢复 → 清除警告
+                if hasattr(self, '_qt_window') and self._qt_window is not None:
+                    try:
+                        self._qt_window.set_face_lost_warning(False)
+                    except RuntimeError:
+                        pass
+            elif self._last_face_time is not None:
                 lost_duration = time.time() - self._last_face_time
-                if lost_duration > 10.0 and not self._qt_window.is_paused():
-                    logger.info("人脸丢失 %.1fs → 自动暂停监测", lost_duration)
-                    self._qt_window.set_paused(True)
-                    self._qt_window.set_face_lost_warning(True)
-                    self._auto_paused_for_face_loss = True
-            # 人脸恢复 → 自动继续（仅限因丢失自动暂停的情况）
-            elif self._frame_processor.latest_face_detected:
-                if getattr(self, '_auto_paused_for_face_loss', False):
-                    self._auto_paused_for_face_loss = False
-                    self._qt_window.set_paused(False)
-                    self._qt_window.set_face_lost_warning(False)
-                    logger.info("人脸恢复 → 自动继续监测")
+                if lost_duration > 3.0:
+                    # 人脸丢失 > 3s → 显示 UI 警告，但不暂停检测
+                    if hasattr(self, '_qt_window') and self._qt_window is not None:
+                        try:
+                            self._qt_window.set_face_lost_warning(True)
+                        except RuntimeError:
+                            pass
 
             # v4.30: 疲劳通知已移至 ReminderEngine（合并通知路径 + 指数退避）
             # v4.10 旧路径移除，避免双通道弹窗
@@ -1612,6 +1620,7 @@ class EyeFocusApp:
                 self._focus_analyzer.set_adjustment_factor(result.final_adjustment_factor)
 
         # P1: 头部姿态参数接通 — 让 focus_analyzer 的 head_score 反映用户的真实头动范围
+        yaw_std = pitch_std = None
         if (hasattr(self, '_focus_analyzer') and self._focus_analyzer is not None
                 and hasattr(self._focus_analyzer, 'set_baseline')):
             from calibration.result import signal_to_head_pose_std
@@ -1626,11 +1635,16 @@ class EyeFocusApp:
             self._fatigue_analyzer.set_baseline_blink_rate(result.baseline_blink_rate)
             logger.info("疲劳基线已应用: %.1f 次/分钟", result.baseline_blink_rate)
 
+        # v4.39: 完整持久化校准数据（yaw_std/pitch_std/cqs/glasses_mode）
         if self._db and self._session_id:
             self._db.update_session(
                 self._session_id,
                 baseline_ear=result.signal.ear_mean,
                 baseline_blink_rate=result.baseline_blink_rate,
+                baseline_yaw_std=yaw_std,
+                baseline_pitch_std=pitch_std,
+                cqs_score=result.cqs,
+                glasses_mode="with_glasses" if result.signal.glasses_mode else "without_glasses",
                 is_calibrated=True,
             )
 
