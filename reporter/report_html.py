@@ -783,7 +783,7 @@ class HTMLReportGenerator:
             f'<div style="display:flex;gap:24px;flex-wrap:wrap;padding:12px 0;">'
             f'<div style="text-align:center;flex:1;min-width:80px;">'
             f'<div style="font-family:Georgia,serif;font-size:32px;color:var(--iris);">{stats["total_minutes"]:.0f}</div>'
-            f'<div style="font-size:11px;color:var(--quiet);">总专注(分钟)</div></div>'
+            f'<div style="font-size:11px;color:var(--quiet);">总检测时间（分钟）</div></div>'
             f'<div style="text-align:center;flex:1;min-width:80px;">'
             f'<div style="font-family:Georgia,serif;font-size:32px;color:var(--sage);">{stats["avg_score"]:.0f}</div>'
             f'<div style="font-size:11px;color:var(--quiet);">平均专注度</div></div>'
@@ -1680,7 +1680,7 @@ class HTMLReportGenerator:
     <p class="subtitle">{week_ago} ~ {today_str}</p>
 
     <div class="hero">
-        <div class="hero-item"><div class="num">{total_minutes:.0f}</div><div class="lbl">总专注(分钟)</div></div>
+        <div class="hero-item"><div class="num">{total_minutes:.0f}</div><div class="lbl">总检测时间（分钟）</div></div>
         <div class="hero-item"><div class="num">{avg_score:.0f}</div><div class="lbl">平均专注度</div></div>
         <div class="hero-item"><div class="num">{sum(s["count"] for s in session_list)}</div><div class="lbl">总会话</div></div>
         <div class="hero-item"><div class="num">{days_active}</div><div class="lbl">活跃天数</div></div>
