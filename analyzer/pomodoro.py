@@ -31,10 +31,13 @@ class PomodoroEngine:
     def __init__(self,
                  voice_callback: Optional[Callable[[str], None]] = None,
                  pause_callback: Optional[Callable[[], None]] = None,
-                 resume_callback: Optional[Callable[[], None]] = None):
-        self._voice = voice_callback
+                 resume_callback: Optional[Callable[[], None]] = None,
+                 notify_callback: Optional[Callable[[str, str], None]] = None):
+        # self._voice = voice_callback  # v4.49+: 语音已移除
+        self._voice = None
         self._pause_cb = pause_callback
         self._resume_cb = resume_callback
+        self._notify = notify_callback
 
         self._state = "IDLE"        # IDLE / WORKING / BREAK / PAUSED
         self._paused: bool = False
@@ -57,8 +60,10 @@ class PomodoroEngine:
             self._last_tick = time.time()
             self._started = True
             logger.info("🍅 番茄开始 (%d 分钟)", self._work_minutes)
-            if self._voice:
-                self._voice(f"番茄开始，专注工作{self._work_minutes}分钟")
+            if self._notify:
+                self._notify("🍅 番茄开始", f"专注工作 {self._work_minutes} 分钟")
+            # if self._voice:                        # v4.49+: 语音已移除
+            #     self._voice(f"番茄开始，专注工作{self._work_minutes}分钟")
             if self._resume_cb:
                 self._resume_cb()
 
@@ -67,8 +72,8 @@ class PomodoroEngine:
         if self._state in ("WORKING", "BREAK") and not self._paused:
             self._paused = True
             logger.info("🍅 番茄已暂停")
-            if self._voice:
-                self._voice("番茄已暂停")
+            # if self._voice:                        # v4.49+: 语音已移除
+            #     self._voice("番茄已暂停")
 
     def resume(self) -> None:
         """继续当前番茄"""
@@ -76,9 +81,9 @@ class PomodoroEngine:
             self._paused = False
             self._last_tick = time.time()
             logger.info("🍅 番茄已继续")
-            if self._voice:
-                label = "工作" if self._state == "WORKING" else "休息"
-                self._voice(f"{label}继续")
+            # if self._voice:                        # v4.49+: 语音已移除
+            #     label = "工作" if self._state == "WORKING" else "休息"
+            #     self._voice(f"{label}继续")
 
     def set_duration(self, work_minutes: int, break_minutes: int) -> None:
         """自定义工作/休息时长（运行时立即生效）"""
@@ -105,8 +110,8 @@ class PomodoroEngine:
             self._elapsed = 0.0
             self._started = False
             logger.info("🍅 番茄已停止 (%s)", old)
-            if self._voice:
-                self._voice("番茄已停止")
+            # if self._voice:                        # v4.49+: 语音已移除
+            #     self._voice("番茄已停止")
 
     def tick(self) -> None:
         """每秒调用一次，更新时间并检查状态切换"""
@@ -143,8 +148,10 @@ class PomodoroEngine:
             self._elapsed = 0.0
             self._duration = break_min * 60.0
             logger.info("🍅 番茄完成! 第 %d 个 (休息 %d 分钟)", self._count, break_min)
-            if self._voice:
-                self._voice(f"番茄完成！休息{break_min}分钟")
+            if self._notify:
+                self._notify("🍅 番茄完成", f"休息 {break_min} 分钟")
+            # if self._voice:                        # v4.49+: 语音已移除
+            #     self._voice(f"番茄完成！休息{break_min}分钟")
             if self._pause_cb:
                 self._pause_cb()
         elif self._state == "BREAK":
@@ -154,8 +161,10 @@ class PomodoroEngine:
             self._elapsed = 0.0
             self._duration = self._work_minutes * 60.0
             logger.info("🍅 休息结束，开始第 %d 个番茄", self._count + 1)
-            if self._voice:
-                self._voice("休息结束，开始新的番茄")
+            if self._notify:
+                self._notify("🍅 休息结束", "开始新的番茄")
+            # if self._voice:                        # v4.49+: 语音已移除
+            #     self._voice("休息结束，开始新的番茄")
             if self._resume_cb:
                 self._resume_cb()
 
@@ -194,10 +203,12 @@ class PomodoroEngine:
 
 def create_pomodoro_engine(voice_callback=None,
                            pause_callback=None,
-                           resume_callback=None) -> PomodoroEngine:
+                           resume_callback=None,
+                           notify_callback=None) -> PomodoroEngine:
     """工厂函数"""
     return PomodoroEngine(
         voice_callback=voice_callback,
         pause_callback=pause_callback,
         resume_callback=resume_callback,
+        notify_callback=notify_callback,
     )
