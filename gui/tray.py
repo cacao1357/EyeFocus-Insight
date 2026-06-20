@@ -87,12 +87,7 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         self._status_action.setEnabled(False)
         menu.addSeparator()
 
-        # ── 窗口 ──
-        self._toggle_visibility_action = menu.addAction("显示窗口")
-        self._toggle_visibility_action.triggered.connect(self._toggle_visibility)
-
-        menu.addSeparator()
-
+        # v4.42: 显示/隐藏窗口改为左键单击托盘图标，移除菜单项
         # ── 监测控制（切换式 + 暂停） ──
         self._detection_is_running = False  # 追踪状态
         self._toggle_det_action = menu.addAction("▶ 启动监测")
@@ -238,20 +233,18 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             pass
 
     def _on_activated(self, reason):
-        """处理托盘图标激活事件"""
-        if reason == QSystemTrayIcon.DoubleClick:
+        """v4.42: 左键单击切换窗口显示/隐藏"""
+        if reason == QSystemTrayIcon.Trigger:
             self._toggle_visibility()
 
     def _toggle_visibility(self):
-        """切换窗口显示/隐藏"""
+        """v4.42: 切换窗口显示/隐藏（左键单击触发）"""
         if self._window.isVisible():
             self._window.hide()
-            self._toggle_visibility_action.setText("显示窗口")
         else:
             self._window.show()
             self._window.raise_()
             self._window.activateWindow()
-            self._toggle_visibility_action.setText("隐藏窗口")
 
     # ── 监测控制（切换式 + 暂停） ──
 
@@ -310,7 +303,6 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             self._window.show()
             self._window.raise_()
             self._window.activateWindow()
-            self._toggle_visibility_action.setText("隐藏窗口")
         # 取消暂停
         if self._window.is_paused():
             self._window.set_paused(False)
@@ -360,7 +352,6 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         # 4. 隐藏窗口
         if self._window.isVisible():
             self._window.hide()
-            self._toggle_visibility_action.setText("显示窗口")
         logger.info("托盘菜单: 结束检测（资源已释放，托盘常驻）")
         self._detection_is_running = False
         self._toggle_det_action.setText("▶ 启动监测")

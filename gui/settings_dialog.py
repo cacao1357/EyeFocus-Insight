@@ -217,12 +217,9 @@ class SettingsDialog(QDialog):
 
         self._camera_index = get_yaml_value("camera", "index", default=0)
         self._voice_enabled = get_yaml_value("voice", "enabled", default=True)
-        self._voice_rate = get_yaml_value("voice", "rate", default=160)
         self._pomo_work = 25  # 默认值，与 pomodoro.py 一致
         self._pomo_break = 5
         self._data_dir = get_yaml_value("data", "db_path", default="data/eyefocus.db")
-        self._web_port = get_yaml_value("web", "port", default=8080)
-        self._gamification_enabled = get_yaml_value("gamification", "enabled", default=True)
         self._auto_start = get_yaml_value("ui", "auto_start", default=False)
         self._minimize_on_start = get_yaml_value("ui", "minimize_on_start", default=False)
 
@@ -285,16 +282,7 @@ class SettingsDialog(QDialog):
             QLabel("修改后需重启程序生效"))
         layout.addWidget(cam_group)
 
-        # ── 语音 ──
-        voice_group = QGroupBox("🎤 语音反馈")
-        voice_layout = QVBoxLayout(voice_group)
-        self._voice_check = QCheckBox("启用语音播报")
-        self._voice_check.setChecked(self._voice_enabled)
-        voice_layout.addWidget(self._voice_check)
-        voice_layout.addWidget(
-            QLabel("TTS 基于 pyttsx3 (仅 Windows SAPI5)"))
-        layout.addWidget(voice_group)
-
+        # v4.42: 语音反馈开关移至托盘菜单，设置面板不再暴露
         # ── AI 分析 ──
         ai_group = QGroupBox("🤖 AI 分析摘要")
         ai_layout = QFormLayout(ai_group)
@@ -407,31 +395,8 @@ class SettingsDialog(QDialog):
         pomo_layout.addRow("休息时长：", self._pomo_break_spin)
         layout.addWidget(pomo_group)
 
-        # ── TTS 语音 ──
-        tts_group = QGroupBox("🗣 语音")
-        tts_layout = QFormLayout(tts_group)
-        self._voice_rate_spin = QSpinBox()
-        self._voice_rate_spin.setStyleSheet(self.INPUT_WIDGET_QSS)
-        self._voice_rate_spin.setRange(80, 400)
-        self._voice_rate_spin.setValue(self._voice_rate)
-        self._voice_rate_spin.setSuffix(" wpm")
-        tts_layout.addRow("语速：", self._voice_rate_spin)
-        tts_layout.addRow("",
-            QLabel("默认 160，范围 80~400"))
-        layout.addWidget(tts_group)
-
-        # ── Web 仪表盘 ──
-        web_group = QGroupBox("🌐 Web 仪表盘")
-        web_layout = QFormLayout(web_group)
-        self._web_port_spin = QSpinBox()
-        self._web_port_spin.setStyleSheet(self.INPUT_WIDGET_QSS)
-        self._web_port_spin.setRange(1024, 65535)
-        self._web_port_spin.setValue(self._web_port)
-        web_layout.addRow("端口：", self._web_port_spin)
-        web_layout.addRow("",
-            QLabel("修改后需重启生效"))
-        layout.addWidget(web_group)
-
+        # v4.42: TTS 语速不再暴露于设置面板
+        # v4.42: Web 仪表盘端口不再暴露于设置面板（默认 8080）
         # ── 启动行为 ──
         startup_group = QGroupBox("🚀 启动行为")
         startup_layout = QVBoxLayout(startup_group)
@@ -443,23 +408,7 @@ class SettingsDialog(QDialog):
         startup_layout.addWidget(self._minimize_check)
         layout.addWidget(startup_group)
 
-        # ── 游戏化 ──
-        game_group = QGroupBox("🏆 游戏化")
-        game_layout = QVBoxLayout(game_group)
-        self._gamify_check = QCheckBox("启用游戏化 (连续天数、趋势)")
-        self._gamify_check.setChecked(self._gamification_enabled)
-        game_layout.addWidget(self._gamify_check)
-        layout.addWidget(game_group)
-
-        # ── 数据 ──
-        data_group = QGroupBox("💾 数据")
-        data_layout = QVBoxLayout(data_group)
-        data_layout.addWidget(
-            QLabel(f"数据库：{self._data_dir}"))
-        data_layout.addWidget(
-            QLabel("数据存储在本地 SQLite，0 HTTP 请求"))
-        layout.addWidget(data_group)
-
+        # v4.42: 游戏化和数据路径不再暴露于设置面板
         # ── 按钮 ──
         layout.addStretch()
         btn_layout = QHBoxLayout()
@@ -508,19 +457,13 @@ class SettingsDialog(QDialog):
 
         # 收集值
         camera_idx = self._cam_combo.currentData()
-        voice_on = self._voice_check.isChecked()
-        voice_rate = self._voice_rate_spin.value()
         pomo_work = self._pomo_work_spin.value()
         pomo_break = self._pomo_break_spin.value()
-        web_port = self._web_port_spin.value()
-        gamify_on = self._gamify_check.isChecked()
         auto_start = self._auto_start_check.isChecked()
         minimize = self._minimize_check.isChecked()
 
         # 写入运行时配置
         set_yaml_value("camera", "index", value=camera_idx)
-        set_yaml_value("voice", "enabled", value=voice_on)
-        set_yaml_value("voice", "rate", value=voice_rate)
         raw_backend = self._ai_backend.currentData()
         # 映射 local_* 到 local + model_key
         LOCAL_MODEL_MAP = {
@@ -537,8 +480,6 @@ class SettingsDialog(QDialog):
         set_yaml_value("ai", "api_key", value=self._api_key_input.text().strip())
         set_yaml_value("ai", "api_url", value=self._api_url_input.text().strip())
         set_yaml_value("ai", "api_model", value=self._api_model_input.text().strip())
-        set_yaml_value("web", "port", value=web_port)
-        set_yaml_value("gamification", "enabled", value=gamify_on)
         set_yaml_value("ui", "auto_start", value=auto_start)
         set_yaml_value("ui", "minimize_on_start", value=minimize)
 
@@ -548,8 +489,8 @@ class SettingsDialog(QDialog):
         # 持久化
         ok = save_yaml_config()
         if ok:
-            logger.info("设置已保存: camera=%d, voice=%s(%d), pomo=%d/%d, web=%d",
-                        camera_idx, voice_on, voice_rate, pomo_work, pomo_break, web_port)
+            logger.info("设置已保存: camera=%d, pomo=%d/%d",
+                        camera_idx, pomo_work, pomo_break)
         from PyQt5.QtWidgets import QMessageBox
         if ok:
             QMessageBox.information(self, "设置", "✅ 设置已保存并生效。\n部分设置（摄像头/端口）需重启程序。")

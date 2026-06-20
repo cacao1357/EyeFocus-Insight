@@ -522,8 +522,10 @@ class ChartGenerator:
         # v4.34: 间隙零值填充（与专注度/疲劳图表一致）
         line_x, line_y = self._insert_gap_breaks(sorted_frames, times, devs)
 
-        # 降采样（保留间隙边界零值点）
-        step = max(1, len(line_x) // 200)
+        # v4.42: 动态降采样密度（与其他图表一致）
+        duration = line_x[-1] if line_x else 0
+        _, n_markers = self._dynamic_params(duration)
+        step = max(1, len(line_x) // n_markers)
         line_x, line_y = line_x[::step], line_y[::step]
         hover_labels = [self._fmt_offset(t) for t in line_x]
 
@@ -892,19 +894,28 @@ class ChartGenerator:
 
         result = []
         for i, vals in enumerate(slots):
-            if not vals:
-                continue
             t_sec = i * slot_sec
             h = int(t_sec // 3600)
             m = int((t_sec % 3600) // 60)
-            result.append({
-                'slot_idx': i,
-                'wall_clock': f"{h}:{m:02d}",
-                'avg': sum(vals) / len(vals),
-                'min_val': min(vals),
-                'max_val': max(vals),
-                'count': len(vals),
-            })
+            if vals:
+                result.append({
+                    'slot_idx': i,
+                    'wall_clock': f"{h}:{m:02d}",
+                    'avg': sum(vals) / len(vals),
+                    'min_val': min(vals),
+                    'max_val': max(vals),
+                    'count': len(vals),
+                })
+            else:
+                # v4.42: 空槽也返回（avg=None），由 _fill_empty_slots 后处理
+                result.append({
+                    'slot_idx': i,
+                    'wall_clock': f"{h}:{m:02d}",
+                    'avg': None,
+                    'min_val': None,
+                    'max_val': None,
+                    'count': 0,
+                })
         return result
 
     @staticmethod
@@ -917,18 +928,83 @@ class ChartGenerator:
             tick_texts.append(f"{h}:00")
         return tick_vals, tick_texts
 
+    @staticmethod
+    def _fill_empty_slots(bucketed, max_gap_slots: int = 4):
+        """v4.42: 空槽填充 — 连续空槽 > max_gap_slots(默认4=1h) 填0；
+        连续空槽 ≤ max_gap_slots 用首尾数据点线性插值平滑过渡；
+        首尾无边界的空槽保留 None（不参与连线）。
+
+        Returns 新列表（不修改原列表）。
+        """
+        if not bucketed:
+            return bucketed
+        n = len(bucketed)
+        filled = [dict(b) for b in bucketed]  # 浅拷贝，不修改原数据
+
+        i = 0
+        while i < n:
+            if filled[i]['avg'] is None:
+                gap_start = i
+                while i < n and filled[i]['avg'] is None:
+                    i += 1
+                gap_end = i  # exclusive
+                gap_len = gap_end - gap_start
+
+                before = filled[gap_start - 1]['avg'] if gap_start > 0 else None
+                after = filled[gap_end]['avg'] if gap_end < n else None
+
+                if gap_len > max_gap_slots:
+                    # 长间隙 → 填0贴地
+                    for j in range(gap_start, gap_end):
+                        filled[j]['avg'] = 0.0
+                        filled[j]['min_val'] = 0.0
+                        filled[j]['max_val'] = 0.0
+                elif before is not None and after is not None:
+                    # 短间隙 + 两端有值 → 线性插值平滑过渡
+                    for j in range(gap_start, gap_end):
+                        frac = (j - gap_start + 1) / (gap_len + 1)
+                        v = before + (after - before) * frac
+                        filled[j]['avg'] = v
+                        filled[j]['min_val'] = v
+                        filled[j]['max_val'] = v
+                elif before is not None:
+                    # 仅有前边界 → 延续前值
+                    for j in range(gap_start, gap_end):
+                        filled[j]['avg'] = before
+                        filled[j]['min_val'] = before
+                        filled[j]['max_val'] = before
+                elif after is not None:
+                    # 仅有后边界 → 反向填补
+                    for j in range(gap_start, gap_end):
+                        filled[j]['avg'] = after
+                        filled[j]['min_val'] = after
+                        filled[j]['max_val'] = after
+                # else: 全空 → 保留 None
+            else:
+                i += 1
+        return filled
+
     def generate_focus_trend_24h(self, bucketed, title="专注度趋势（全天）"):
         """v4.41: 24h 墙钟时间专注度趋势图。
 
         折线=真实avg_raw，标记=低于50分的slot放大凸显异常。
+        v4.42: 调用 _fill_empty_slots 填零/插值；hover 用 wall_clock 替代 %{x}。
         """
         if not bucketed:
             return self._empty_html("无数据")
 
-        slots = [b['slot_idx'] for b in bucketed]
-        t_sec = [b['slot_idx'] * 900 for b in bucketed]
-        avgs = [b['avg'] for b in bucketed]
-        counts = [b['count'] for b in bucketed]
+        # v4.42: 空槽填充（>1h填0，≤1h线性插值）
+        bucketed = self._fill_empty_slots(bucketed)
+
+        # 过滤剩余 None 值（首尾无边界的空槽）
+        valid = [b for b in bucketed if b['avg'] is not None]
+        if not valid:
+            return self._empty_html("无数据")
+
+        t_sec = [b['slot_idx'] * 900 for b in valid]
+        wall_clocks = [b['wall_clock'] for b in valid]
+        avgs = [b['avg'] for b in valid]
+        counts = [b['count'] for b in valid]
 
         # 折线颜色基于avg
         colors = [_level_color(a) for a in avgs]
@@ -938,22 +1014,25 @@ class ChartGenerator:
 
         fig = go.Figure()
 
-        # 折线
+        # 折线 (v4.42: 不自动连缺口，text=墙钟时间)
         fig.add_trace(go.Scatter(
             x=t_sec, y=avgs, mode='lines',
             line=dict(width=2.5, color=C_IRIS),
+            text=wall_clocks,
             name='专注度',
-            hovertemplate='%{y:.0f} 分<br>%{x} 时段 (%{customdata}条记录)<extra></extra>',
+            hovertemplate='%{y:.0f} 分<br>%{text} (%{customdata}条记录)<extra></extra>',
             customdata=counts,
+            connectgaps=False,
         ))
 
-        # 标记点 — 异常点加大
+        # 标记点 — 异常点加大 (v4.42: text=墙钟时间)
         fig.add_trace(go.Scatter(
             x=t_sec, y=avgs, mode='markers',
             marker=dict(size=marker_sizes, color=marker_colors,
                        line=dict(width=1, color='white')),
+            text=wall_clocks,
             showlegend=False,
-            hovertemplate='%{y:.0f} 分<br>%{x} 时段<extra></extra>',
+            hovertemplate='%{y:.0f} 分<br>%{text}<extra></extra>',
         ))
 
         # 良好参考线
@@ -964,8 +1043,8 @@ class ChartGenerator:
         # 墙钟时间刻度
         tick_vals, tick_texts = self._wall_clock_ticks_24h(interval_hours=2)
 
-        # 检查是否有异常槽
-        anomaly_count = sum(1 for a in avgs if a < 50)
+        # 检查是否有异常槽（排除零值填充的槽）
+        anomaly_count = sum(1 for a in avgs if 0 < a < 50)
 
         fig.update_layout(**_LAYOUT_BASE)
         fig.update_layout(
@@ -987,12 +1066,20 @@ class ChartGenerator:
 
     def generate_blink_rate_24h(self, bucketed, title="眨眼频率趋势（全天）",
                                 baseline_blink_rate=None):
-        """v4.41: 24h 墙钟时间眨眼频率图"""
+        """v4.41: 24h 墙钟时间眨眼频率图
+        v4.42: 空槽填充 + hover 用 wall_clock。
+        """
         if not bucketed:
             return self._empty_html("无数据")
 
-        t_sec = [b['slot_idx'] * 900 for b in bucketed]
-        avgs = [b['avg'] for b in bucketed]
+        bucketed = self._fill_empty_slots(bucketed)
+        valid = [b for b in bucketed if b['avg'] is not None]
+        if not valid:
+            return self._empty_html("无数据")
+
+        t_sec = [b['slot_idx'] * 900 for b in valid]
+        wall_clocks = [b['wall_clock'] for b in valid]
+        avgs = [b['avg'] for b in valid]
 
         bl = baseline_blink_rate if baseline_blink_rate and baseline_blink_rate > 0 else 15.0
         colors = [C_ROSE if r > bl * 1.5 else C_AMBER if r > bl * 1.2 else C_SAGE for r in avgs]
@@ -1005,8 +1092,9 @@ class ChartGenerator:
             x=t_sec, y=avgs,
             marker_color=colors,
             width=bar_w,
+            text=wall_clocks,
             name='眨眼频率',
-            hovertemplate='%{y:.1f} 次/分<extra></extra>',
+            hovertemplate='%{y:.1f} 次/分<br>%{text}<extra></extra>',
         ))
         fig.add_hline(y=bl, line_dash="dash", line_color=C_SAGE, line_width=1.5,
                       annotation_text=f"基线 {bl:.0f}", annotation_position="left",
@@ -1026,19 +1114,29 @@ class ChartGenerator:
         return self._to_html(fig, height=200)
 
     def generate_fatigue_24h(self, bucketed, title="疲劳趋势（全天）"):
-        """v4.41: 24h 墙钟时间疲劳趋势图"""
+        """v4.41: 24h 墙钟时间疲劳趋势图
+        v4.42: 空槽填充 + hover 用 wall_clock。
+        """
         if not bucketed:
             return self._empty_html("无数据")
 
-        t_sec = [b['slot_idx'] * 900 for b in bucketed]
-        avgs = [b['avg'] for b in bucketed]
+        bucketed = self._fill_empty_slots(bucketed)
+        valid = [b for b in bucketed if b['avg'] is not None]
+        if not valid:
+            return self._empty_html("无数据")
+
+        t_sec = [b['slot_idx'] * 900 for b in valid]
+        wall_clocks = [b['wall_clock'] for b in valid]
+        avgs = [b['avg'] for b in valid]
 
         fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=t_sec, y=avgs, mode='lines',
             line=dict(width=2, color=C_ROSE),
+            text=wall_clocks,
             name='疲劳分',
-            hovertemplate='%{y:.0f} 分<br>%{x} 时段<extra></extra>',
+            hovertemplate='%{y:.0f} 分<br>%{text}<extra></extra>',
+            connectgaps=False,
         ))
         fig.add_hline(y=60, line_dash="dash", line_color=C_LINE, line_width=1,
                       annotation_text="严重疲劳 60", annotation_position="left",
