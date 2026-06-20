@@ -102,6 +102,7 @@ class FatigueAnalyzer:
         self._recent_head_stabilities: Deque[float] = deque(maxlen=window_size)
         self._last_blink_rate: float = 0.0
         self._last_analysis_time: Optional[float] = None
+        self._last_fatigue_score: float = 0.0  # v4.46: 即时疲劳分（供 DB 存储）
 
         # v4.44: 长闭眼事件 (timestamp, duration_seconds) (deque, maxlen=100)
         self._prolonged_events: Deque[Tuple[float, float]] = deque(maxlen=100)
@@ -156,18 +157,23 @@ class FatigueAnalyzer:
         if head_stability is not None:
             self._recent_head_stabilities.append(head_stability)
 
-        # v4.45: 记录长闭眼事件 (timestamp, duration) — 用于窗口清理+PERCLOS
+        # v4.46: 记录/更新长闭眼事件 (timestamp, duration)
         if closure_type == "prolonged" and not self._was_prolonged:
             self._prolonged_events.append((current_time, max(0.8, closure_duration)))
+        elif closure_type == "prolonged" and self._prolonged_events:
+            # 持续闭眼中 → 更新最后一个事件的时长（闭越久值越大）
+            self._prolonged_events[-1] = (self._prolonged_events[-1][0], max(0.8, closure_duration))
         # v4.45: 持续追踪当前闭眼状态（跨帧去重）
         if closure_type == "prolonged":
             self._was_prolonged = True
         else:
             self._was_prolonged = False
 
-        # 清理 3 分钟窗口外的旧事件
+        # 清理 3 分钟窗口外的旧事件（v4.46: 保护当前持续闭眼事件）
         cutoff = current_time - self.perclos_window
         while self._prolonged_events and self._prolonged_events[0][0] < cutoff:
+            if len(self._prolonged_events) == 1 and self._was_prolonged:
+                break  # 唯一事件是当前持续闭眼，不清理
             self._prolonged_events.popleft()
 
         # v4.45: 累计闭眼秒数（PERCLOS 基础分）
@@ -181,6 +187,7 @@ class FatigueAnalyzer:
             boost = 1.0
 
         score = round(min(100.0, perclos_score * boost), 1)
+        self._last_fatigue_score = score  # v4.46: 保存即时疲劳分供 DB 存储
 
         # 等级判定 (v4.44: 基于综合分数而非纯次数)
         indicator = self._indicator_from_score(score)
@@ -257,6 +264,7 @@ class FatigueAnalyzer:
             avg_ear_nadir=float(np.mean(self._recent_ear_nadirs)) if self._recent_ear_nadirs else 0.0,
             head_stability=float(np.mean(self._recent_head_stabilities)) if self._recent_head_stabilities else 100.0,
             cumulative_fatigue_score=self._cumulative_fatigue,
+            fatigue_score=self._last_fatigue_score,
             fatigue_level=self._indicator_to_legacy_level(
                 self._indicator_from_score(self._cumulative_fatigue)),
         )

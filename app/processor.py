@@ -117,12 +117,20 @@ class FrameProcessor:
         self._latest_face_detected = face_result.face_detected
 
         if not face_result.face_detected:
+            # v4.46: 人脸丢失时仍运行疲劳分析（闭眼可能导致丢脸，闭眼状态需继续累积）
+            closure_type, closure_duration = self._eye_detector.get_closure_info()
+            fatigue_result = self._fatigue_analyzer.analyze(
+                closure_type=closure_type,
+                closure_duration=closure_duration,
+                blink_rate=0.0,
+            )
+            self._latest_fatigue_result = fatigue_result
             if self._focus_analyzer is not None:
                 frozen = self._focus_analyzer.analyze(
                     ear=0.0, yaw=0.0, pitch=0.0,
                     gaze_score=self._latest_gaze_score,
                     face_detected=False,
-                    fatigue_score=0.0,
+                    fatigue_score=fatigue_result.fatigue_score,
                 )
                 self._latest_focus_result = frozen
             return
@@ -241,8 +249,8 @@ class FrameProcessor:
         if self._is_head_away:
             return
 
-        # 专注度分析 (v4.44: 传入上一帧累积疲劳分)
-        prev_fatigue = getattr(self._latest_fatigue_result, 'cumulative_fatigue', 0.0) \
+        # 专注度分析 (v4.46: 传入上一帧即时疲劳分，不用EMA平滑值)
+        prev_fatigue = getattr(self._latest_fatigue_result, 'fatigue_score', 0.0) \
             if self._latest_fatigue_result is not None else 0.0
         focus_result = self._focus_analyzer.analyze(
             ear=eye_result.ear_avg,
@@ -345,6 +353,7 @@ class FrameProcessor:
                 avg_ear=self._latest_ear,
                 avg_yaw=self._latest_yaw,
                 avg_pitch=self._latest_pitch,
+                face_detected=self._latest_face_detected,
             )
             self._db.write_focus_record(self._session_id, focus_record)
             self._last_focus_write_time = current_time

@@ -466,7 +466,8 @@ class ChartGenerator:
     # ════════════════════════════════════════════
     # 4. 会话时间色条 — 纯 HTML/CSS (不需要 Plotly)
     # ════════════════════════════════════════════
-    def generate_session_colorbar(self, focus_records, title="会话专注分布"):
+    def generate_session_colorbar(self, focus_records, title="会话专注分布",
+                                   fatigue_records=None):
         if not focus_records:
             return self._empty_html("无数据")
 
@@ -475,7 +476,15 @@ class ChartGenerator:
         if n == 0:
             return self._empty_html("无数据")
 
-        # v4.43: 按时间比例生成色块 — 数据段着色，间隙段灰色
+        # v4.46: 构建疲劳时间→分数映射（用于色条匹配）
+        fat_map = {}
+        if fatigue_records:
+            for f in fatigue_records:
+                ts = getattr(f, 'timestamp', 0) or 0
+                fs = getattr(f, 'fatigue_score', 0) or 0
+                if ts > 0:
+                    fat_map[int(ts)] = fs
+
         first_ts = self._ts(fr[0])
         last_ts = max(self._ts(fr[-1]),
                       getattr(fr[-1], 'window_end', 0) or 0)
@@ -488,8 +497,9 @@ class ChartGenerator:
             t_start = self._ts(r)
             t_end = getattr(r, 'window_end', 0) or t_start
             dur = max(1.0, t_end - t_start)
+            t_mid = (t_start + t_end) / 2
 
-            # 间隙块（仅当间隙超过阈值）
+            # 间隙块（仅当间隙超过阈值）— 无数据=浅灰
             if i > 0:
                 prev_end = getattr(fr[i - 1], 'window_end', 0) or self._ts(fr[i - 1])
                 gap = t_start - prev_end
@@ -501,25 +511,44 @@ class ChartGenerator:
                         f'title="无数据 {gap/60:.0f}分钟"></span>'
                     )
 
-            # 数据块 — v4.43: 白色右边框标记人脸检测时段
+            # v4.46: 5色逻辑 — 疲劳>无人脸>分心>专注
             s = r.focus_score if r.focus_score is not None else 0
-            c = C_SAGE if s >= 70 else C_AMBER if s >= 40 else C_ROSE
+            face = getattr(r, 'face_detected', True)
+
+            # 匹配疲劳分
+            near_fat = 0.0
+            if fat_map:
+                closest_ts = min(fat_map.keys(), key=lambda k: abs(k - int(t_mid)), default=0)
+                near_fat = fat_map.get(closest_ts, 0.0)
+
+            if near_fat > 55:
+                c = C_IRIS      # 紫色=疲劳
+                label = f"疲劳 {near_fat:.0f}分"
+            elif not face:
+                c = "#BDBDBD"   # 灰色=无人脸
+                label = "无人脸"
+            elif s >= 70:
+                c = C_SAGE      # 绿色=专注
+                label = f"专注 {s:.0f}分"
+            else:
+                c = C_ROSE      # 红色=分心
+                label = f"分心 {s:.0f}分"
+
             pct = dur / total_span * 100
             blocks.append(
                 f'<span style="background:{c};width:{pct:.2f}%;'
-                f'height:100%;min-width:2px;flex-shrink:0;'
-                f'border-right:2px solid white" '
-                f'title="✓人脸 {s:.0f}分"></span>'
+                f'height:100%;min-width:2px;flex-shrink:0" '
+                f'title="{label}"></span>'
             )
 
-        # 图例 (v4.43: +无数据 +白色边框=人脸)
+        # 图例 (v4.46: 5项)
         legend = (
-            f'<span style="display:flex;gap:12px;font-size:11px;color:{C_QUIET};margin-top:4px">'
-            f'<span>▐ <span style="color:{C_SAGE}">专注</span></span>'
-            f'<span>▐ <span style="color:{C_AMBER}">一般</span></span>'
-            f'<span>▐ <span style="color:{C_ROSE}">分心</span></span>'
-            f'<span>▐ <span style="color:{C_LINE}">无数据</span></span>'
-            f'<span style="font-size:10px">│白边=有人脸</span>'
+            f'<span style="display:flex;gap:10px;font-size:11px;color:{C_QUIET};margin-top:4px">'
+            f'<span>■ <span style="color:{C_SAGE}">专注</span></span>'
+            f'<span>■ <span style="color:{C_ROSE}">分心</span></span>'
+            f'<span>■ <span style="color:#BDBDBD">无人脸</span></span>'
+            f'<span>■ <span style="color:{C_IRIS}">疲劳</span></span>'
+            f'<span>■ <span style="color:{C_LINE}">无数据</span></span>'
             f'</span>'
         )
         bar = f'<div style="display:flex;height:12px;border-radius:2px;overflow:hidden;background:{C_BG};border:1px solid {C_LINE}">{"".join(blocks)}</div>'

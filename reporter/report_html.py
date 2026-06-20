@@ -429,7 +429,7 @@ class HTMLReportGenerator:
                  lambda: self.chart_gen.generate_fatigue_24h(fatigue_buckets),
                  bool(data.fatigue_records)),
                 ("session_colorbar",
-                 lambda: self.chart_gen.generate_session_colorbar(data.focus_records),
+                 lambda: self.chart_gen.generate_session_colorbar(data.focus_records, fatigue_records=data.fatigue_records),
                  has_focus),
                 ("head_pose_scatter",
                  lambda: self.chart_gen.generate_head_pose_24h(head_pose_buckets),
@@ -450,7 +450,7 @@ class HTMLReportGenerator:
                  lambda: self.chart_gen.generate_fatigue_timeline(data.fatigue_records),
                  bool(data.fatigue_records)),
                 ("session_colorbar",
-                 lambda: self.chart_gen.generate_session_colorbar(data.focus_records),
+                 lambda: self.chart_gen.generate_session_colorbar(data.focus_records, fatigue_records=data.fatigue_records),
                  has_focus),
                 ("head_pose_scatter",
                  lambda: self.chart_gen.generate_head_pose_scatter(data.frame_records),
@@ -660,11 +660,16 @@ class HTMLReportGenerator:
 
         fatigue_map = {"LOW": "低", "MEDIUM": "中", "HIGH": "高"}
         fl = fatigue_map.get(stats["fatigue_level"].name, "--")
+        # v4.46: 合并疲劳分+等级
+        last_fat = data.fatigue_records[-1] if data.fatigue_records else None
+        fat_score = getattr(last_fat, 'fatigue_score', None) or \
+                    getattr(last_fat, 'cumulative_fatigue_score', None) or 0
+        fatigue_label = f"{fat_score:.0f}分 ({fl})"
 
         cards = [
             ("⏱ 监测时长", duration_str, f"{total_records} 条记录"),
             ("👁 眨眼频率", f"{blink_val:.1f}", "次/分钟"),
-            ("😊 疲劳等级", fl, ""),
+            ("😊 疲劳", fatigue_label, ""),
             ("📊 有效专注率", f"{focus_rate:.0f}%", f"{focused_count}/{total_records} 段"),
         ]
 

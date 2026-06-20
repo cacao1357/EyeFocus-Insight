@@ -101,6 +101,7 @@ class FocusRecord:
     avg_ear: float
     avg_yaw: float
     avg_pitch: float
+    face_detected: bool = True  # v4.46: 该记录期间是否检测到人脸
 
 
 @dataclass
@@ -112,7 +113,8 @@ class FatigueRecord:
     blink_rate: float  # 眨眼频率 (次/分钟)
     avg_ear_nadir: float  # 平均眨眼 EAR 谷值
     head_stability: float  # 头部稳定性分数 0-100
-    cumulative_fatigue_score: float  # 累积疲劳分数 0-100
+    cumulative_fatigue_score: float  # 累积疲劳分数 0-100 (EMA平滑)
+    fatigue_score: float = 0.0  # v4.46: 即时疲劳分 (未经EMA平滑)
 
 
 @dataclass

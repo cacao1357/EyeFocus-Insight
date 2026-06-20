@@ -269,6 +269,20 @@ class DatabaseManager:
                 cursor.execute("ALTER TABLE sessions ADD COLUMN baseline_blink_rate REAL")
                 logger.info("v4.0 migration: 已为 sessions 表添加 baseline_blink_rate 列")
 
+            # v4.46 migration: focus_records +face_detected
+            cursor.execute("PRAGMA table_info(focus_records)")
+            fc = [row[1] for row in cursor.fetchall()]
+            if "face_detected" not in fc:
+                cursor.execute("ALTER TABLE focus_records ADD COLUMN face_detected INTEGER DEFAULT 1")
+                logger.info("v4.46 migration: 已为 focus_records 表添加 face_detected 列")
+
+            # v4.46 migration: fatigue_records +fatigue_score
+            cursor.execute("PRAGMA table_info(fatigue_records)")
+            fc2 = [row[1] for row in cursor.fetchall()]
+            if "fatigue_score" not in fc2:
+                cursor.execute("ALTER TABLE fatigue_records ADD COLUMN fatigue_score REAL DEFAULT 0.0")
+                logger.info("v4.46 migration: 已为 fatigue_records 表添加 fatigue_score 列")
+
             self._conn.commit()
             cursor.close()
 
@@ -630,8 +644,9 @@ class DatabaseManager:
                 """
                 INSERT INTO focus_records
                 (session_id, window_start, window_end, focus_score,
-                 eye_score, head_score, gaze_score, blink_rate, avg_ear, avg_yaw, avg_pitch)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 eye_score, head_score, gaze_score, blink_rate, avg_ear, avg_yaw, avg_pitch,
+                 face_detected)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -645,6 +660,7 @@ class DatabaseManager:
                     record.avg_ear,
                     record.avg_yaw,
                     record.avg_pitch,
+                    1 if record.face_detected else 0,
                 ),
             )
 
@@ -670,6 +686,7 @@ class DatabaseManager:
                 avg_ear=row["avg_ear"],
                 avg_yaw=row["avg_yaw"],
                 avg_pitch=row["avg_pitch"],
+                face_detected=bool(row["face_detected"]) if "face_detected" in row.keys() else True,
             )
             for row in rows
         ]
@@ -720,8 +737,9 @@ class DatabaseManager:
                 """
                 INSERT INTO fatigue_records
                 (session_id, timestamp, fatigue_level, blink_rate,
-                 avg_ear_nadir, head_stability, cumulative_fatigue_score)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                 avg_ear_nadir, head_stability, cumulative_fatigue_score,
+                 fatigue_score)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -731,6 +749,7 @@ class DatabaseManager:
                     record.avg_ear_nadir,
                     record.head_stability,
                     record.cumulative_fatigue_score,
+                    record.fatigue_score,
                 ),
             )
 
@@ -752,6 +771,7 @@ class DatabaseManager:
                 avg_ear_nadir=row["avg_ear_nadir"],
                 head_stability=row["head_stability"],
                 cumulative_fatigue_score=row["cumulative_fatigue_score"],
+                fatigue_score=row["fatigue_score"] if "fatigue_score" in row.keys() else 0.0,
             )
             for row in rows
         ]
