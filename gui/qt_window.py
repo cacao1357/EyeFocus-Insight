@@ -560,25 +560,13 @@ class EyeFocusWindow(QMainWindow):
             self.calibrate_requested.emit()
         elif key == Qt.Key_Escape:
             self.hide()
-            self._toggle_visibility_action_text("显示窗口")
         elif key == Qt.Key_Q and (event.modifiers() & Qt.ControlModifier):
             self._force_exit = True
             self.close()
         else:
             super().keyPressEvent(event)
 
-    def _toggle_visibility_action_text(self, text: str):
-        """更新托盘的显示/隐藏菜单文字"""
-        if self._tray_icon:
-            try:
-                acts = self._tray_icon.contextMenu().actions()
-                for a in acts:
-                    if a.text() in ("显示窗口", "隐藏窗口"):
-                        a.setText(text)
-                        break
-            except Exception:
-                pass
-
+    # v4.42: _toggle_visibility_action_text 已移除（菜单项已删除，左键单击切换窗口）
     # ── 公共 API ──
 
     def start(self) -> None:
@@ -831,7 +819,6 @@ class EyeFocusWindow(QMainWindow):
         if self._enable_tray and self._tray_icon and not self._force_exit:
             logger.info("窗口关闭 → 最小化到托盘")
             self.hide()
-            self._toggle_visibility_action_text("显示窗口")
             event.ignore()
         else:
             logger.info("窗口关闭 → 退出程序")
