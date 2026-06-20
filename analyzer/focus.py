@@ -1,11 +1,9 @@
 """
-analyzer/focus.py — 专注度分析器 (v4.48)
+analyzer/focus.py — 专注度分析器 (v4.49)
 
-v4.48: 评分软硬度调整 — 降低下降敏感度 + 加速恢复
-  - 头部权重 20%→5%，舒适区放宽 (yaw 18→25, pitch 22→30)
-  - 下降 α 0.40→0.25，短暂动作不再剧烈扣分
-  - 恢复确认 3s→1.5s，快速恢复 α 0.50→0.60
-  - "信号良好"去掉 head_score 条件
+v4.49: 去长EMA + 放宽openness — 恢复速度由第一层EMA直接输出
+  - 去掉第二层长EMA(τ=15s)，根除30秒恢复滞后
+  - openness门槛 0.7→0.5，高baseline_ear用户不卡恢复
 """
 
 import logging
@@ -116,7 +114,6 @@ class FocusAnalyzer:
     _EMA_FAST = 0.25   # v4.48: 0.40→0.25 下降更缓，过滤短暂动作
     _EMA_SLOW = 0.12   # 间歇好转→慢恢复（避免假恢复）
     _EMA_RECOVER = 0.60  # v4.48: 0.50→0.60 快速恢复更强力
-    _EMA_LONG_TAU = 15.0  # 长窗口平滑
 
     # v4.13: 相对眨眼基线参数
     _BLINK_BASELINE_COLLECT_SECS = 120.0  # 前2分钟收集基线样本
@@ -170,8 +167,6 @@ class FocusAnalyzer:
 
         # v4.13: EMA 平滑
         self._ema_score: Optional[float] = None
-        # v4.44: 长窗口 EMA
-        self._ema_long_score: Optional[float] = None
 
         # v4.47: 信号驱动恢复状态
         self._consecutive_good_seconds: float = 0.0
@@ -218,7 +213,6 @@ class FocusAnalyzer:
         self._last_sample_time = 0.0
         # v4.13: 重置 EMA、眨眼基线、冻结分数
         self._ema_score = None
-        self._ema_long_score = None
         self._blink_baseline = None
         self._blink_baseline_samples.clear()
         self._blink_baseline_ready = False
@@ -342,7 +336,7 @@ class FocusAnalyzer:
             # v4.48: 判断信号是否"良好"（去掉head_score条件，低头不阻挡恢复）
             is_good = (
                 raw_focus >= self._ema_score
-                and openness >= 0.7
+                and openness >= 0.5   # v4.49: 0.7→0.5 更宽松
                 and gaze_score >= 30
             )
             if is_good:
@@ -369,14 +363,8 @@ class FocusAnalyzer:
         decay = self._compute_session_decay()
         smooth_focus = round(smooth_focus * decay, 1)
 
-        # ── v4.47: 15s 长窗口 EMA 二次平滑 ──
-        if self._ema_long_score is None:
-            self._ema_long_score = smooth_focus
-        else:
-            alpha_long = 1.0 - math.exp(-(current_time - getattr(self, '_last_ema_long_time', current_time - 1.0)) / self._EMA_LONG_TAU)
-            self._ema_long_score = (1.0 - alpha_long) * self._ema_long_score + alpha_long * smooth_focus
-        self._last_ema_long_time = current_time
-        smooth_focus = round(self._ema_long_score, 1)
+        # v4.49: 去掉长EMA — 第一层信号驱动EMA已足够平滑
+        # 恢复速度由第一层直接输出，不再被第二层τ=15s拖慢
 
         # ── v4.45: 疲劳→专注二次惩罚曲线（疲劳100→专注归零）──
         fatigue_penalty = max(0.0, 1.0 - fatigue_score * fatigue_score / 10000.0)
@@ -671,7 +659,6 @@ class FocusAnalyzer:
         self._current_level = FocusLevel.NORMAL
         # v4.13: 重置 EMA、眨眼基线、冻结分数
         self._ema_score = None
-        self._ema_long_score = None
         self._blink_baseline = None
         self._blink_baseline_samples.clear()
         self._blink_baseline_ready = False
