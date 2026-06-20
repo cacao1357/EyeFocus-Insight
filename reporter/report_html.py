@@ -406,6 +406,12 @@ class HTMLReportGenerator:
             fatigue_buckets = ChartGenerator._bucket_24h(
                 data.fatigue_records, sod_ts,
                 value_key="cumulative_fatigue_score", time_key="timestamp")
+            # v4.43: 头姿24h分桶 — yaw/pitch → 偏移角
+            import numpy as np
+            head_pose_buckets = ChartGenerator._bucket_24h(
+                data.frame_records, sod_ts,
+                time_key="timestamp", value_fn=lambda r: float(np.sqrt(r.yaw**2 + r.pitch**2))
+            ) if data.frame_records else []
 
         # 定义图表任务 (name, gen_fn, has_data)
         if is_daily:
@@ -426,8 +432,8 @@ class HTMLReportGenerator:
                  lambda: self.chart_gen.generate_session_colorbar(data.focus_records),
                  has_focus),
                 ("head_pose_scatter",
-                 lambda: self.chart_gen.generate_head_pose_scatter(data.frame_records),
-                 bool(data.frame_records)),
+                 lambda: self.chart_gen.generate_head_pose_24h(head_pose_buckets),
+                 bool(head_pose_buckets)),
             ]
         else:
             tasks = [
@@ -807,7 +813,7 @@ class HTMLReportGenerator:
 
         return f"""
         <div class="card" style="border-left:2px solid var(--iris);">
-            <h2>📊 本周统计 <span style="font-size:11px;color:var(--quiet);font-weight:400;">{stats["range"]}</span></h2>
+            <h2>📊 近7天统计 <span style="font-size:11px;color:var(--quiet);font-weight:400;">{stats["range"]}</span></h2>
             {hero}
             {table}
         </div>"""
