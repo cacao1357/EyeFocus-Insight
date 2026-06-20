@@ -453,6 +453,27 @@ class EyeAspectDetector:
         else:
             return "open"  # 0.4~0.8s 灰色地带（眼闭但不触发疲劳）
 
+    def get_closure_info(self) -> Tuple[str, float]:
+        """v4.44: 返回当前眼睛闭合类型和已持续时长。
+
+        Returns:
+            (closure_type, duration_seconds)
+            closure_type: "open" / "blink" / "prolonged"
+            duration_seconds: 当前闭合已持续秒数（睁眼时为 0.0）
+        """
+        if self._current_blink_start_time is None:
+            return ("open", 0.0)
+
+        import time
+        duration = time.time() - self._current_blink_start_time
+
+        if duration >= 0.8:
+            return ("prolonged", duration)
+        elif duration < 0.4:
+            return ("blink", duration)
+        else:
+            return ("open", duration)
+
     def get_blink_rate(
         self,
         window_seconds: float = 60.0,

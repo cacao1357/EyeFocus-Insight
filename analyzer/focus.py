@@ -11,6 +11,7 @@ v4.13: 评分算法重构
 """
 
 import logging
+import math
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -99,10 +100,10 @@ class FocusAnalyzer:
     _COMFORT_YAW = 18.0
     _COMFORT_PITCH = 22.0
 
-    # v4.13: 混合分权重（头部提升至20%，转头/低头是分心强信号）
-    _EYE_BLEND = 0.70
+    # v4.44: 混合分权重（视线提升至20%，区分"看屏幕"和"发呆"）
+    _EYE_BLEND = 0.60
     _HEAD_BLEND = 0.20
-    _GAZE_BLEND = 0.10
+    _GAZE_BLEND = 0.20
 
     # v4.13: 头部惩罚缩放（平滑过渡，舒适区→32°/40°满分惩罚）
     _YAW_SCALE = 20.0
@@ -112,9 +113,10 @@ class FocusAnalyzer:
     _MIN_COMFORT_YAW = 8.0
     _MIN_COMFORT_PITCH = 10.0
 
-    # v4.13: EMA 平滑系数
+    # v4.44: EMA 平滑系数
     _EMA_FAST = 0.40   # 下降快（分心时迅速反应）
-    _EMA_SLOW = 0.20   # v4.14: 0.15→0.20 恢复稍快
+    _EMA_SLOW = 0.12   # v4.44: 0.20→0.12 恢复更慢，避免假恢复
+    _EMA_LONG_TAU = 60.0  # v4.44: 60s 长窗口平滑，过滤短暂波动
 
     # v4.13: 相对眨眼基线参数
     _BLINK_BASELINE_COLLECT_SECS = 120.0  # 前2分钟收集基线样本
@@ -167,6 +169,8 @@ class FocusAnalyzer:
 
         # v4.13: EMA 平滑
         self._ema_score: Optional[float] = None
+        # v4.44: 60s 长窗口 EMA
+        self._ema_long_score: Optional[float] = None
 
         # v4.13: 人脸丢失时保存的最后分数
         self._last_eye_score: float = 50.0
@@ -209,6 +213,7 @@ class FocusAnalyzer:
         self._last_sample_second = -1
         # v4.13: 重置 EMA、眨眼基线、冻结分数
         self._ema_score = None
+        self._ema_long_score = None
         self._blink_baseline = None
         self._blink_baseline_samples.clear()
         self._blink_baseline_ready = False
@@ -255,6 +260,7 @@ class FocusAnalyzer:
         gaze_score: float = 100.0,
         brightness: float = 128.0,
         face_detected: bool = True,
+        fatigue_score: float = 0.0,
     ) -> FocusResult:
         current_time = time.time()
 
@@ -289,11 +295,11 @@ class FocusAnalyzer:
         self._update_blink_baseline(blink_rate)
         blink_score = self._compute_relative_blink_score(blink_rate)
 
-        # v4.14: 眼部得分 = 睁眼度×25% + 稳定性×25% + 相对眨眼×50%
+        # v4.44: 眼部得分 = 睁眼度×32.5% + 稳定性×32.5% + 相对眨眼×35%
         eye_score = round(
-            openness * 0.25 * 100
-            + stability * 0.25 * 100
-            + blink_score * 0.50,
+            openness * 0.325 * 100
+            + stability * 0.325 * 100
+            + blink_score * 0.35,
             1,
         )
 
@@ -331,6 +337,18 @@ class FocusAnalyzer:
         # ── v4.14: 会话衰减 ──
         decay = self._compute_session_decay()
         smooth_focus = round(smooth_focus * decay, 1)
+
+        # ── v4.44: 60s 长窗口 EMA 二次平滑（过滤短暂波动）──
+        if not hasattr(self, '_ema_long_score') or self._ema_long_score is None:
+            self._ema_long_score = smooth_focus
+        else:
+            alpha_long = 1.0 - math.exp(-1.0 / self._EMA_LONG_TAU)
+            self._ema_long_score = (1.0 - alpha_long) * self._ema_long_score + alpha_long * smooth_focus
+        smooth_focus = round(self._ema_long_score, 1)
+
+        # ── v4.44: 疲劳→专注乘法耦合 ──
+        fatigue_penalty = max(0.4, 1.0 - fatigue_score / 300.0)
+        smooth_focus = round(smooth_focus * fatigue_penalty, 1)
 
         # ── 保存最后分数（供人脸丢失冻结用）──
         self._last_eye_score = eye_score
@@ -592,7 +610,7 @@ class FocusAnalyzer:
         blink_rate = self._get_blink_rate()
         blink_score = self._compute_relative_blink_score(blink_rate)
         eye_score = round(
-            openness * 0.25 * 100 + stability * 0.25 * 100 + blink_score * 0.50,
+            openness * 0.325 * 100 + stability * 0.325 * 100 + blink_score * 0.35,
             1,
         )
         focus_score = round(
@@ -622,6 +640,7 @@ class FocusAnalyzer:
         self._current_level = FocusLevel.NORMAL
         # v4.13: 重置 EMA、眨眼基线、冻结分数
         self._ema_score = None
+        self._ema_long_score = None
         self._blink_baseline = None
         self._blink_baseline_samples.clear()
         self._blink_baseline_ready = False

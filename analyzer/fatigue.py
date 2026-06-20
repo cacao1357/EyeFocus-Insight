@@ -103,8 +103,8 @@ class FatigueAnalyzer:
         self._last_blink_rate: float = 0.0
         self._last_analysis_time: Optional[float] = None
 
-        # v4.6: 长闭眼事件时间戳 (deque, maxlen=100)
-        self._prolonged_events: Deque[float] = deque(maxlen=100)
+        # v4.44: 长闭眼事件 (timestamp, duration_seconds) (deque, maxlen=100)
+        self._prolonged_events: Deque[Tuple[float, float]] = deque(maxlen=100)
         self._was_prolonged: bool = False  # 去重：同一事件不重复计数
 
         self._medium_onset_time: Optional[float] = None
@@ -131,16 +131,18 @@ class FatigueAnalyzer:
     def analyze(
         self,
         closure_type: str = "open",
+        closure_duration: float = 0.0,
         blink_rate: float = 0.0,
         ear_nadir: Optional[float] = None,
         head_stability: Optional[float] = None,
         avg_ear: Optional[float] = None,
         blink_flag: bool = False,
     ) -> FatigueAnalysisResult:
-        """分析疲劳等级 (v4.6)
+        """分析疲劳等级 (v4.44: 双因子 = 次数分×0.5 + 时长分×0.5)
 
         Args:
-            closure_type: EyeAspectDetector.get_closure_type() — "open"/"blink"/"prolonged"
+            closure_type: EyeAspectDetector.get_closure_info() — "open"/"blink"/"prolonged"
+            closure_duration: v4.44 当前闭眼已持续秒数（仅 prolonged 时有效）
             blink_rate: 眨眼频率 (次/分钟)
             (其他参数保留用于向后兼容)
         """
@@ -154,24 +156,31 @@ class FatigueAnalyzer:
         if head_stability is not None:
             self._recent_head_stabilities.append(head_stability)
 
-        # v4.6: 只计数长闭眼事件（>0.5s），忽略快眨眼
+        # v4.44: 记录长闭眼事件 (timestamp, duration)
         if closure_type == "prolonged":
             if not self._was_prolonged:
-                self._prolonged_events.append(current_time)
+                self._prolonged_events.append((current_time, max(0.8, closure_duration)))
                 self._was_prolonged = True
         else:
             self._was_prolonged = False
 
         # 清理 3 分钟窗口外的旧事件
         cutoff = current_time - self.perclos_window
-        while self._prolonged_events and self._prolonged_events[0] < cutoff:
+        while self._prolonged_events and self._prolonged_events[0][0] < cutoff:
             self._prolonged_events.popleft()
 
         prolonged_count = len(self._prolonged_events)
 
-        # 累积疲劳（v4.35: 连续分数映射 + 时间基 EMA）
-        indicator = self._indicator_from_count(prolonged_count)
-        score = self._indicator_to_score(indicator, prolonged_count)
+        # v4.44: 双因子公式
+        count_score = self._score_from_count(prolonged_count)
+        max_duration = max((d for _, d in self._prolonged_events), default=0.0)
+        duration_score = self._score_from_duration(max_duration)
+        score = round(count_score * 0.5 + duration_score * 0.5, 1)
+
+        # 等级判定 (v4.44: 基于综合分数而非纯次数)
+        indicator = self._indicator_from_score(score)
+
+        # 累积疲劳（EMA 平滑）
         if self._last_ema_time is not None:
             dt = max(0.0, current_time - self._last_ema_time)
             alpha = 1.0 - math.exp(-dt / _EMA_TAU)
@@ -196,25 +205,23 @@ class FatigueAnalyzer:
         )
 
     @staticmethod
-    def _indicator_from_count(count: int) -> FatigueIndicator:
-        if count <= RESTED_MAX_CLOSURES:
+    def _indicator_from_score(score: float) -> FatigueIndicator:
+        """v4.44: 基于综合分数判定疲劳等级"""
+        if score <= 25:
             return FatigueIndicator.RESTED
-        elif count >= TIRED_MIN_CLOSURES:
-            return FatigueIndicator.TIRED
-        else:
+        elif score <= 55:
             return FatigueIndicator.ATTENTION
+        else:
+            return FatigueIndicator.TIRED
 
     @staticmethod
-    def _indicator_to_score(indicator: FatigueIndicator, count: int = 0) -> float:
-        """v4.35: 连续分数映射（替代 3 级跳变）
+    def _score_from_count(count: int) -> float:
+        """v4.44: 闭眼次数 → 分数（锚点线性插值）
 
-        锚点: (0次→5分) (3→20) (8→40) (15→70) (25→95)
-        中间值线性插值，疲劳曲线不再阶梯状。
+        锚点: (0→5) (3→20) (8→40) (15→70) (25→95)
         """
         if count <= 0:
-            bases = {FatigueIndicator.RESTED: 10.0, FatigueIndicator.ATTENTION: 40.0, FatigueIndicator.TIRED: 80.0}
-            return bases.get(indicator, 20.0)
-
+            return 5.0
         anchors = [(0, 5.0), (3, 20.0), (8, 40.0), (15, 70.0), (25, 95.0)]
         if count >= anchors[-1][0]:
             return anchors[-1][1]
@@ -223,6 +230,25 @@ class FatigueAnalyzer:
             hi_c, hi_s = anchors[i + 1]
             if lo_c <= count < hi_c:
                 ratio = (count - lo_c) / (hi_c - lo_c) if hi_c != lo_c else 0.0
+                return round(lo_s + ratio * (hi_s - lo_s), 1)
+        return 5.0
+
+    @staticmethod
+    def _score_from_duration(max_duration: float) -> float:
+        """v4.44: 最长闭眼时长(秒) → 分数（锚点线性插值）
+
+        锚点: (0.8s→5) (1.5s→25) (2.5s→50) (4s→75) (6s→95)
+        """
+        if max_duration <= 0.0:
+            return 5.0
+        anchors = [(0.8, 5.0), (1.5, 25.0), (2.5, 50.0), (4.0, 75.0), (6.0, 95.0)]
+        if max_duration >= anchors[-1][0]:
+            return anchors[-1][1]
+        for i in range(len(anchors) - 1):
+            lo_d, lo_s = anchors[i]
+            hi_d, hi_s = anchors[i + 1]
+            if lo_d <= max_duration < hi_d:
+                ratio = (max_duration - lo_d) / (hi_d - lo_d) if hi_d != lo_d else 0.0
                 return round(lo_s + ratio * (hi_s - lo_s), 1)
         return 5.0
 
@@ -242,7 +268,8 @@ class FatigueAnalyzer:
             avg_ear_nadir=float(np.mean(self._recent_ear_nadirs)) if self._recent_ear_nadirs else 0.0,
             head_stability=float(np.mean(self._recent_head_stabilities)) if self._recent_head_stabilities else 100.0,
             cumulative_fatigue_score=self._cumulative_fatigue,
-            fatigue_level=self._indicator_to_legacy_level(self._indicator_from_count(len(self._prolonged_events))),
+            fatigue_level=self._indicator_to_legacy_level(
+                self._indicator_from_score(self._cumulative_fatigue)),
         )
 
     def reset(self) -> None:
