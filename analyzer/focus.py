@@ -1,12 +1,11 @@
 """
-analyzer/focus.py — 专注度分析器 (v4.47)
+analyzer/focus.py — 专注度分析器 (v4.48)
 
-v4.47: 信号驱动恢复 + 窗口优化 + 视线分标度适配
-  - B1: 信号驱动 EMA — 持续3秒良好→快速恢复(α=0.50)，否则慢恢复(α=0.12)
-  - B2: 长EMA τ 60s→15s，减少恢复滞后
-  - D1-3: 采样率 1Hz→2Hz，窗口 15s→30s，等级阈值按比例调整
-  - C: 人脸丢失+闭眼→冻结信号分但应用疲劳惩罚
-  - F1: gaze_score 标度 0-100→0-60 适配
+v4.48: 评分软硬度调整 — 降低下降敏感度 + 加速恢复
+  - 头部权重 20%→5%，舒适区放宽 (yaw 18→25, pitch 22→30)
+  - 下降 α 0.40→0.25，短暂动作不再剧烈扣分
+  - 恢复确认 3s→1.5s，快速恢复 α 0.50→0.60
+  - "信号良好"去掉 head_score 条件
 """
 
 import logging
@@ -87,37 +86,37 @@ class KalmanFilter1D:
 
 
 class FocusAnalyzer:
-    """专注度分析器 (v4.47)
+    """专注度分析器 (v4.48)
 
     30s 滑动窗口 @ 2Hz + 相对眨眼评分 + 信号驱动 EMA 恢复。
 
     眼部得分 = 睁眼度×32.5% + 稳定性×32.5% + 相对眨眼×35%
-    综合分   = 眼部×60% + 头部×20% + 视线×20%
+    综合分   = 眼部×70% + 头部×5% + 视线×25%
     疲劳惩罚 = max(0, 1 - fatigue²/10000)
     """
 
-    # 头部舒适区（在此角度内不扣分）
-    _COMFORT_YAW = 18.0
-    _COMFORT_PITCH = 22.0
+    # v4.48: 头部舒适区放宽 — 正常办公姿态不再误扣
+    _COMFORT_YAW = 25.0
+    _COMFORT_PITCH = 30.0
 
-    # v4.44: 混合分权重（视线提升至20%，区分"看屏幕"和"发呆"）
-    _EYE_BLEND = 0.60
-    _HEAD_BLEND = 0.20
-    _GAZE_BLEND = 0.20
+    # v4.48: 混合分权重 — 头部降至5%，避免低头/转头过度敏感
+    _EYE_BLEND = 0.70
+    _HEAD_BLEND = 0.05
+    _GAZE_BLEND = 0.25
 
-    # v4.13: 头部惩罚缩放（平滑过渡，舒适区→32°/40°满分惩罚）
+    # v4.13: 头部惩罚缩放（平滑过渡）
     _YAW_SCALE = 20.0
     _PITCH_SCALE = 25.0
 
-    # v4.39: 最小舒适角（避免 baseline_std 太小导致过度敏感）
-    _MIN_COMFORT_YAW = 8.0
-    _MIN_COMFORT_PITCH = 10.0
+    # v4.48: 最小舒适角放宽
+    _MIN_COMFORT_YAW = 12.0
+    _MIN_COMFORT_PITCH = 15.0
 
-    # v4.47: EMA 平滑系数 — 信号驱动恢复
-    _EMA_FAST = 0.40   # 下降快（分心时迅速反应）
+    # v4.48: EMA 平滑系数 — 信号驱动恢复
+    _EMA_FAST = 0.25   # v4.48: 0.40→0.25 下降更缓，过滤短暂动作
     _EMA_SLOW = 0.12   # 间歇好转→慢恢复（避免假恢复）
-    _EMA_RECOVER = 0.50  # v4.47: 持续3秒良好→快速恢复
-    _EMA_LONG_TAU = 15.0  # v4.47: 60s→15s 长窗口平滑
+    _EMA_RECOVER = 0.60  # v4.48: 0.50→0.60 快速恢复更强力
+    _EMA_LONG_TAU = 15.0  # 长窗口平滑
 
     # v4.13: 相对眨眼基线参数
     _BLINK_BASELINE_COLLECT_SECS = 120.0  # 前2分钟收集基线样本
@@ -340,12 +339,11 @@ class FocusAnalyzer:
         if self._ema_score is None:
             self._ema_score = raw_focus
         else:
-            # 判断信号是否"良好"（持续良好才快速恢复）
+            # v4.48: 判断信号是否"良好"（去掉head_score条件，低头不阻挡恢复）
             is_good = (
                 raw_focus >= self._ema_score
                 and openness >= 0.7
-                and head_score >= 60
-                and gaze_score >= 30  # v4.47: 新满分60的50%
+                and gaze_score >= 30
             )
             if is_good:
                 if self._last_good_check_time > 0:
@@ -359,8 +357,8 @@ class FocusAnalyzer:
 
             if raw_focus < self._ema_score:
                 alpha = self._EMA_FAST        # 下降 → 快速
-            elif self._consecutive_good_seconds >= 3.0:
-                alpha = self._EMA_RECOVER      # v4.47: 持续3秒良好 → 快速恢复
+            elif self._consecutive_good_seconds >= 1.5:
+                alpha = self._EMA_RECOVER      # v4.48: 持续1.5秒良好 → 快速恢复
             else:
                 alpha = self._EMA_SLOW         # 间歇好转 → 慢恢复
             self._ema_score = alpha * raw_focus + (1 - alpha) * self._ema_score
@@ -417,12 +415,12 @@ class FocusAnalyzer:
 
     def _compute_dynamic_weights(self, brightness: float,
                                  yaw: float, pitch: float) -> tuple[float, float, float]:
-        """根据环境/姿态置信度动态调整 eye/head/gaze 混合权重
+        """v4.48: 基于光照/姿态置信度动态调整权重
 
-        正常:        eye=0.70  head=0.20  gaze=0.10
-        低光照:      eye-0.20  head+0.15  gaze+0.05
-        极端角度:    eye+0.10  head-0.15  gaze+0.05
-        低光+极端:   eye-0.10  head+0.00  gaze+0.10
+        正常:        eye=0.70  head=0.05  gaze=0.25
+        低光照:      eye=0.60  head=0.15  gaze=0.25 (头部适度提升)
+        极端角度:    eye=0.85  head=0.05  gaze=0.10
+        低光+极端:   eye=0.70  head=0.10  gaze=0.20
 
         Returns:
             (eye_w, head_w, gaze_w) 总和为 1.0
@@ -433,11 +431,11 @@ class FocusAnalyzer:
         extreme_angle = abs(yaw) > self._YAW_EXTREME or abs(pitch) > self._PITCH_EXTREME
 
         if low_light and extreme_angle:
-            ew, hw, gw = 0.60, 0.20, 0.20
+            ew, hw, gw = 0.70, 0.10, 0.20
         elif low_light:
-            ew, hw, gw = 0.50, 0.35, 0.15
+            ew, hw, gw = 0.60, 0.15, 0.25
         elif extreme_angle:
-            ew, hw, gw = 0.80, 0.05, 0.15
+            ew, hw, gw = 0.85, 0.05, 0.10
         # else keep defaults
 
         # 硬边界

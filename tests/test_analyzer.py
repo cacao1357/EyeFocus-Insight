@@ -208,12 +208,12 @@ class TestMultiSignalFocusLevel:
         assert result.focus_level == FocusLevel.DISTRACTED
 
     def test_high_blink_with_head_turned_stays_distracted(self):
-        """v4.47: EAR 偏离≥16次 + 头部偏转 → DISTRACTED"""
+        """v4.48: EAR 偏离≥16次 + 头部大幅偏转(yaw=40°) → DISTRACTED"""
         from analyzer.focus import FocusLevel
         analyzer = FocusAnalyzer(baseline_ear=0.25)
         analyzer._window_samples.extend([0.15] * 16)
         analyzer._window_samples.extend([0.25] * 44)
-        result = analyzer.analyze(ear=0.15, yaw=35.0, pitch=0.0,
+        result = analyzer.analyze(ear=0.15, yaw=40.0, pitch=0.0,
                                   gaze_score=50.0, face_detected=True)
         assert result.focus_level == FocusLevel.DISTRACTED
 
