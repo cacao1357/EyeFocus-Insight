@@ -368,8 +368,10 @@ class HTMLReportGenerator:
 
         每个图表独立 try/except，失败不互相影响。返回值结构:
             {name: {"data": base64_str | None, "error": str | None}}
+        v4.41: 日汇总报告 (session_id以daily_开头) 使用24h墙钟时间图表。
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
+        from datetime import datetime
 
         # v4.32: 缓存键 = (会话ID, 各表记录数) — 同数据集命中缓存，免 Plotly 重渲染
         sid = data.session.session_id
@@ -386,27 +388,68 @@ class HTMLReportGenerator:
         charts = {}
         has_focus = bool(data.focus_records)
 
+        # v4.41: 日汇总报告使用 24h/96 段墙钟时间
+        is_daily = sid.startswith("daily_")
+        if is_daily:
+            # 计算当天 00:00:00 的 Unix 时间戳
+            st = data.session.start_time
+            if st:
+                midnight = st.replace(hour=0, minute=0, second=0, microsecond=0)
+                sod_ts = midnight.timestamp()
+            else:
+                sod_ts = 0.0
+            # 预计算分桶数据
+            focus_buckets = ChartGenerator._bucket_24h(
+                data.focus_records, sod_ts, value_key="focus_score")
+            blink_buckets = ChartGenerator._bucket_24h(
+                data.focus_records, sod_ts, value_key="blink_rate")
+            fatigue_buckets = ChartGenerator._bucket_24h(
+                data.fatigue_records, sod_ts,
+                value_key="cumulative_fatigue_score", time_key="timestamp")
+
         # 定义图表任务 (name, gen_fn, has_data)
-        tasks = [
-            ("focus_trend",
-             lambda: self.chart_gen.generate_focus_trend_chart(data.focus_records),
-             has_focus),
-            ("blink_rate",
-             lambda: self.chart_gen.generate_blink_rate_chart(
-                 data.focus_records,
-                 baseline_blink_rate=data.session.baseline_blink_rate,
-             ),
-             has_focus),
-            ("fatigue_timeline",
-             lambda: self.chart_gen.generate_fatigue_timeline(data.fatigue_records),
-             bool(data.fatigue_records)),
-            ("session_colorbar",
-             lambda: self.chart_gen.generate_session_colorbar(data.focus_records),
-             has_focus),
-            ("head_pose_scatter",
-             lambda: self.chart_gen.generate_head_pose_scatter(data.frame_records),
-             bool(data.frame_records)),
-        ]
+        if is_daily:
+            tasks = [
+                ("focus_trend",
+                 lambda: self.chart_gen.generate_focus_trend_24h(focus_buckets),
+                 has_focus),
+                ("blink_rate",
+                 lambda: self.chart_gen.generate_blink_rate_24h(
+                     blink_buckets,
+                     baseline_blink_rate=data.session.baseline_blink_rate,
+                 ),
+                 has_focus),
+                ("fatigue_timeline",
+                 lambda: self.chart_gen.generate_fatigue_24h(fatigue_buckets),
+                 bool(data.fatigue_records)),
+                ("session_colorbar",
+                 lambda: self.chart_gen.generate_session_colorbar(data.focus_records),
+                 has_focus),
+                ("head_pose_scatter",
+                 lambda: self.chart_gen.generate_head_pose_scatter(data.frame_records),
+                 bool(data.frame_records)),
+            ]
+        else:
+            tasks = [
+                ("focus_trend",
+                 lambda: self.chart_gen.generate_focus_trend_chart(data.focus_records),
+                 has_focus),
+                ("blink_rate",
+                 lambda: self.chart_gen.generate_blink_rate_chart(
+                     data.focus_records,
+                     baseline_blink_rate=data.session.baseline_blink_rate,
+                 ),
+                 has_focus),
+                ("fatigue_timeline",
+                 lambda: self.chart_gen.generate_fatigue_timeline(data.fatigue_records),
+                 bool(data.fatigue_records)),
+                ("session_colorbar",
+                 lambda: self.chart_gen.generate_session_colorbar(data.focus_records),
+                 has_focus),
+                ("head_pose_scatter",
+                 lambda: self.chart_gen.generate_head_pose_scatter(data.frame_records),
+                 bool(data.frame_records)),
+            ]
 
         # 并行生成 5 个 Plotly 图表（纯 CPU 无 DB I/O）
         with ThreadPoolExecutor(max_workers=6) as executor:

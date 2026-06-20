@@ -233,15 +233,16 @@ class TestGapBreaks:
         assert new_y == [80.0, 0, 0, 70.0]
 
     def test_no_gap_unchanged(self):
-        """间距 < GAP_THRESHOLD 不插入零值点"""
+        """间距 < 动态阈值 不插入零值点 (v4.41: 阈值=min(300, dur/4))"""
         from reporter.charts import ChartGenerator
         t0 = 1000.0
+        # v4.41: 使用 600s 时长（阈值=150s），10s 间隔不会被判为间隙
         records = [
             MagicMock(window_start=t0, timestamp=t0, focus_score=80.0),
-            MagicMock(window_start=t0 + 60, timestamp=t0 + 60, focus_score=75.0),
-            MagicMock(window_start=t0 + 120, timestamp=t0 + 120, focus_score=70.0),
+            MagicMock(window_start=t0 + 10, timestamp=t0 + 10, focus_score=75.0),
+            MagicMock(window_start=t0 + 20, timestamp=t0 + 20, focus_score=70.0),
         ]
-        offsets = [0.0, 60.0, 120.0]
+        offsets = [0.0, 10.0, 20.0]
         values = [80.0, 75.0, 70.0]
         new_x, new_y = ChartGenerator._insert_gap_breaks(records, offsets, values)
         assert new_y == [80.0, 75.0, 70.0]

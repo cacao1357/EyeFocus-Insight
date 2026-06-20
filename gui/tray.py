@@ -104,8 +104,8 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         menu.addSeparator()
 
         # ── 数据 ──
-        self._recent_menu = menu.addMenu("最近会话")
-        self._recent_menu.aboutToShow.connect(self._refresh_recent_sessions)
+        self._recent_menu = menu.addMenu("最近报告")
+        self._recent_menu.aboutToShow.connect(self._refresh_recent_menu)
 
         generate_action = menu.addAction("打开报告")
         generate_action.triggered.connect(self._generate_report)
@@ -300,7 +300,6 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
                     app._qt_timer.start(33)
                 if hasattr(app, '_last_face_time'):
                     app._last_face_time = _time.time()
-                app._auto_paused_for_face_loss = False
                 app._first_frame_logged = False
             except Exception as e:
                 logger.warning("重启监测失败: %s", e)
@@ -403,19 +402,65 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         finally:
             self._report_generating = False
 
-    # ── v4.18: 最近会话 ──
+    # ── v4.41: 最近报告 ──
 
-    def _refresh_recent_sessions(self):
-        """刷新最近会话子菜单（aboutToShow 时调用）"""
+    def _refresh_recent_menu(self):
+        """刷新"最近报告"菜单（aboutToShow 时调用）— v4.41 双入口"""
         self._recent_menu.clear()
         try:
             if not hasattr(self._app, '_db') or self._app._db is None:
                 self._recent_menu.addAction("数据库未就绪").setEnabled(False)
                 return
 
-            sessions = self._app._db.list_sessions()[:10]  # 最近 10 条
+            # ── 日汇总子菜单 ──
+            self._daily_menu = self._recent_menu.addMenu("📅 日汇总")
+            self._refresh_recent_days(self._daily_menu)
+
+            self._recent_menu.addSeparator()
+
+            # ── 按会话查看子菜单 ──
+            self._session_menu = self._recent_menu.addMenu("📋 按会话查看")
+            self._refresh_recent_sessions_menu(self._session_menu)
+
+        except Exception as e:
+            logger.warning("刷新最近报告失败: %s", e)
+            self._recent_menu.addAction("加载失败").setEnabled(False)
+
+    def _refresh_recent_days(self, menu):
+        """刷新日汇总子菜单 — 最近 10 天"""
+        try:
+            stats_list = self._app._db.get_all_daily_stats()
+            if not stats_list:
+                menu.addAction("无历史记录").setEnabled(False)
+                return
+
+            recent = sorted(stats_list, key=lambda s: s.date, reverse=True)[:10]
+            for ds in recent:
+                date_display = ds.date[-5:]  # "MM-DD"
+                minutes = ds.total_focus_minutes or 0
+                avg = ds.avg_focus_score or 0
+                count = ds.session_count or 0
+
+                try:
+                    avg_f = float(avg)
+                    icon = "🟢" if avg_f >= 70 else "🟡" if avg_f >= 40 else "🔴"
+                except (ValueError, TypeError):
+                    icon = "⚪"
+
+                label = f"{icon} {date_display}  {minutes:.0f}分钟  {avg_f:.0f}分  ×{count}"
+                action = menu.addAction(label)
+                action.triggered.connect(
+                    lambda checked, d=ds.date: self._open_daily_report(d))
+        except Exception as e:
+            logger.warning("刷新日汇总失败: %s", e)
+            menu.addAction("加载失败").setEnabled(False)
+
+    def _refresh_recent_sessions_menu(self, menu):
+        """刷新按会话查看子菜单 — 最近 10 条会话（保留原功能）"""
+        try:
+            sessions = self._app._db.list_sessions()[:10]
             if not sessions:
-                self._recent_menu.addAction("无历史记录").setEnabled(False)
+                menu.addAction("无历史记录").setEnabled(False)
                 return
 
             for sess in sessions:
@@ -423,7 +468,6 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
                 dur = sess.duration_seconds()
                 dur_str = f"{int(dur//60)}分钟" if dur else "--"
                 avg = self._get_session_avg(sess.session_id)
-                # 质量图标
                 try:
                     avg_f = float(avg)
                     icon = "🟢" if avg_f >= 70 else "🟡" if avg_f >= 40 else "🔴"
@@ -431,12 +475,12 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
                     icon = "⚪"
                 cal_badge = "✓" if sess.is_calibrated else ""
                 label = f"{icon} {start}  {dur_str}  {avg}分 {cal_badge}"
-                action = self._recent_menu.addAction(label)
+                action = menu.addAction(label)
                 sid = sess.session_id
                 action.triggered.connect(lambda checked, s=sid: self._open_report(s))
         except Exception as e:
-            logger.warning("刷新最近会话失败: %s", e)
-            self._recent_menu.addAction("加载失败").setEnabled(False)
+            logger.warning("刷新按会话查看失败: %s", e)
+            menu.addAction("加载失败").setEnabled(False)
 
     def _get_session_avg(self, session_id: str) -> str:
         """获取会话平均专注度"""
@@ -449,6 +493,39 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             return "--"
         except Exception:
             return "--"
+
+    def _open_daily_report(self, date_str: str) -> None:
+        """打开指定日期的日汇总报告"""
+        try:
+            report_path = os.path.abspath(f"reports/daily_{date_str}.html")
+            if os.path.exists(report_path):
+                os.startfile(report_path)
+                logger.info("已打开日汇总报告: %s", report_path)
+            else:
+                logger.warning("日汇总报告不存在，尝试重新生成: %s", report_path)
+                self._try_regenerate_daily_report(date_str)
+        except Exception as e:
+            logger.warning("打开日汇总报告失败: %s", e)
+
+    def _try_regenerate_daily_report(self, date_str: str) -> None:
+        """尝试为指定日期重新生成日汇总报告"""
+        try:
+            from reporter.report_html import create_html_generator
+            import os
+            if not hasattr(self._app, '_db') or self._app._db is None:
+                logger.warning("无法重新生成日汇总报告: 数据库未就绪")
+                return
+            generator = create_html_generator(self._app._db)
+            html = generator.generate_daily_report(date_str)
+            if html:
+                path = os.path.abspath(f"reports/daily_{date_str}.html")
+                os.makedirs("reports", exist_ok=True)
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(html)
+                os.startfile(path)
+                logger.info("日汇总报告已重新生成并打开: %s", date_str)
+        except Exception as e:
+            logger.warning("重新生成日汇总报告失败: %s", e)
 
     def _open_report(self, session_id: str) -> None:
         """打开指定会话的报告"""

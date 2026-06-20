@@ -163,10 +163,8 @@ class EyeFocusApp:
         # v4.3 修复: 重新引入 _paused (M-22 误删了字段但 _render_frame 还在引用)
         # P 键切换, 不与窗口拖动混淆 (cv2.waitKey 拖窗口时返回 255 不触发)
         self._paused: bool = False
-        # v4.4: 追踪最后检测到人脸的时间, 用于无脸检测红底白字横条
+        # v4.4: 追踪最后检测到人脸的时间, 用于无脸检测 UI 警告
         self._last_face_time: Optional[float] = None
-        # 人脸丢失自动暂停标志
-        self._auto_paused_for_face_loss: bool = False
         # v4.13: 历史校准加载状态
         self._calib_loaded: bool = False
         # v4.33: 报告 HTML 时间缓存（5 分钟 TTL，检测中重复打开免重生成）
@@ -752,25 +750,24 @@ class EyeFocusApp:
             # FPS
             self._update_fps()
 
-            # 追踪最后检测到人脸的时间
+            # v4.41: 追踪最后检测到人脸的时间 + UI 警告（不自动暂停）
             if self._frame_processor.latest_face_detected:
                 self._last_face_time = time.time()
-
-            # 人脸丢失 > 10s 自动暂停
-            if not self._frame_processor.latest_face_detected and self._last_face_time is not None:
+                # 人脸恢复 → 清除警告
+                if hasattr(self, '_qt_window') and self._qt_window is not None:
+                    try:
+                        self._qt_window.set_face_lost_warning(False)
+                    except RuntimeError:
+                        pass
+            elif self._last_face_time is not None:
                 lost_duration = time.time() - self._last_face_time
-                if lost_duration > 10.0 and not self._qt_window.is_paused():
-                    logger.info("人脸丢失 %.1fs → 自动暂停监测", lost_duration)
-                    self._qt_window.set_paused(True)
-                    self._qt_window.set_face_lost_warning(True)
-                    self._auto_paused_for_face_loss = True
-            # 人脸恢复 → 自动继续（仅限因丢失自动暂停的情况）
-            elif self._frame_processor.latest_face_detected:
-                if getattr(self, '_auto_paused_for_face_loss', False):
-                    self._auto_paused_for_face_loss = False
-                    self._qt_window.set_paused(False)
-                    self._qt_window.set_face_lost_warning(False)
-                    logger.info("人脸恢复 → 自动继续监测")
+                if lost_duration > 3.0:
+                    # 人脸丢失 > 3s → 显示 UI 警告，但不暂停检测
+                    if hasattr(self, '_qt_window') and self._qt_window is not None:
+                        try:
+                            self._qt_window.set_face_lost_warning(True)
+                        except RuntimeError:
+                            pass
 
             # v4.30: 疲劳通知已移至 ReminderEngine（合并通知路径 + 指数退避）
             # v4.10 旧路径移除，避免双通道弹窗

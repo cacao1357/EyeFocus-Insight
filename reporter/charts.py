@@ -33,6 +33,7 @@ _LAYOUT_BASE = dict(
     plot_bgcolor=C_BG,
     font=dict(family="Microsoft YaHei, SimHei, sans-serif", size=11, color=C_INK),
     margin=dict(l=40, r=20, t=30, b=40),
+    dragmode=False,  # v4.41: 禁用拖动平移，保留滚轮缩放+悬停
     hovermode="x unified",
     hoverlabel=dict(bgcolor="white", font_size=12, font_family="Microsoft YaHei, SimHei, sans-serif"),
     legend=dict(
@@ -109,15 +110,45 @@ class ChartGenerator:
 
     GAP_THRESHOLD = 300   # v4.34: 5 分钟 — 采集中断 >5min 视为间隙，填充零值
 
+    @staticmethod
+    def _dynamic_params(duration_seconds: float):
+        """v4.41: 根据会话时长动态决定刻度数和采样点数。
+
+        Returns (n_ticks, n_markers)
+        """
+        minutes = duration_seconds / 60.0
+        if minutes < 10:
+            return (5, 10)
+        elif minutes < 30:
+            return (12, 20)
+        elif minutes <= 120:
+            return (24, 30)
+        else:
+            return (24, 40)
+
     @classmethod
-    def _insert_gap_breaks(cls, records, offsets, values):
+    def _effective_gap(cls, duration_seconds: float) -> float:
+        """v4.41: 动态间隙阈值 — 最多 300s，但不超过时长的 1/4"""
+        return min(cls.GAP_THRESHOLD, max(30.0, duration_seconds / 4.0))
+
+    @classmethod
+    def _insert_gap_breaks(cls, records, offsets, values, gap_threshold=None):
         """间隙处插入零值对，线条下降→贴零轴→恢复。
 
         v4.34: 用 (gap_start, 0) + (gap_end, 0) 替代 (None, None)。
         与 connectgaps=True 配合，线条在采集中断期间沿 y=0 走直线。
+        v4.41: gap_threshold=None 时自动计算动态阈值。
 
         Returns (offsets_with_zeros, values_with_zeros)
         """
+        if gap_threshold is None:
+            n = len(records)
+            if n >= 2:
+                dur = cls._ts(records[-1]) - cls._ts(records[0])
+                gap_threshold = cls._effective_gap(dur)
+            else:
+                gap_threshold = cls.GAP_THRESHOLD
+
         if len(records) < 2:
             return list(offsets), list(values)
 
@@ -125,7 +156,7 @@ class ChartGenerator:
         for i in range(len(records)):
             if i > 0:
                 dt = cls._ts(records[i]) - cls._ts(records[i - 1])
-                if dt > cls.GAP_THRESHOLD:
+                if dt > gap_threshold:
                     new_offsets.append(offsets[i - 1])
                     new_vals.append(0)
                     new_offsets.append(offsets[i])
@@ -135,7 +166,7 @@ class ChartGenerator:
         return new_offsets, new_vals
 
     @staticmethod
-    def _downsample_focus(focus_records, target=30):
+    def _downsample_focus(focus_records, target=None):
         """间隙感知降采样 — 仅在有数据的时段内均匀分布标记点。
 
         v4.33:
@@ -144,8 +175,21 @@ class ChartGenerator:
         - 有效时长 = 总时长 - 间隙时长。bucket_dt = 有效时长 / target
         - 每桶 1 个代表点（等级跨越优先，否则中位数）
         - 间隙边界记录始终保留
+        v4.41: target=None 时根据时长自动计算；动态间隙阈值。
         """
         n = len(focus_records)
+        if n == 0:
+            return []
+
+        t0 = ChartGenerator._ts(focus_records[0])
+        tN = ChartGenerator._ts(focus_records[-1])
+        total_dt = max(1.0, tN - t0)
+
+        if target is None:
+            _, target = ChartGenerator._dynamic_params(total_dt)
+
+        effective_gap = ChartGenerator._effective_gap(total_dt)
+
         if n <= target:
             return list(range(n))
 
@@ -155,15 +199,12 @@ class ChartGenerator:
         gaps = []  # [(gap_start_idx, gap_end_idx), ...] — 间隙的记录索引
         for i in range(1, n):
             dt = ChartGenerator._ts(focus_records[i]) - ChartGenerator._ts(focus_records[i - 1])
-            if dt > ChartGenerator.GAP_THRESHOLD:
+            if dt > effective_gap:
                 gaps.append((i - 1, i))
                 kept.add(i - 1)  # 间隙前边界
                 kept.add(i)      # 间隙后边界
 
         # ── 阶段 2: 计算有效时长 ──
-        t0 = ChartGenerator._ts(focus_records[0])
-        tN = ChartGenerator._ts(focus_records[-1])
-        total_dt = max(1.0, tN - t0)
         gap_dt = 0.0
         for ga, gb in gaps:
             gap_dt += ChartGenerator._ts(focus_records[gb]) - ChartGenerator._ts(focus_records[ga])
@@ -240,13 +281,16 @@ class ChartGenerator:
         med = median(scores)
         return min(bucket_items, key=lambda x: abs(x[1] - med))
 
-    def _regular_ticks(self, t_max_seconds: float, n_ticks: int = 24):
+    def _regular_ticks(self, t_max_seconds: float, n_ticks: int = None):
         """生成 N 段均匀时间刻度
 
         v4.31: 固定段数（默认 24 段），确保横坐标简洁、间隔均匀。
         未采集到的时段在图表上自然留空（线条中断）。
+        v4.41: n_ticks=None 时根据时长自动计算。
         """
         t = max(1, int(t_max_seconds))
+        if n_ticks is None:
+            n_ticks, _ = self._dynamic_params(t_max_seconds)
         step = max(1, t // n_ticks)
         tick_vals = list(range(0, t + step, step))
         if len(tick_vals) > n_ticks + 1:
@@ -291,8 +335,8 @@ class ChartGenerator:
             connectgaps=True,   # v4.34: 零值填充替代断线
         ))
 
-        # 标记点 — 单 trace + 间隙感知降采样
-        sampled_idx = self._downsample_focus(fr, target=30)
+        # 标记点 — 单 trace + 间隙感知降采样 (v4.41: 动态target)
+        sampled_idx = self._downsample_focus(fr)
         s_offsets = [offsets[i] for i in sampled_idx]
         s_scores = [scores[i] for i in sampled_idx]
         s_colors = [colors[i] for i in sampled_idx]
@@ -340,8 +384,8 @@ class ChartGenerator:
             bs = [b for b in rates[:bc] if b > 0]
             bl = float(np.median(bs)) if bs else 15.0
 
-        # v4.33: 间隙感知降采样，30 个宽柱
-        sampled_idx = self._downsample_focus(fr, target=30)
+        # v4.33: 间隙感知降采样 (v4.41: 动态target)
+        sampled_idx = self._downsample_focus(fr)
         s_offsets = [all_offsets[i] for i in sampled_idx]
         s_rates = [rates[i] for i in sampled_idx]
         colors = [C_ROSE if r > bl*1.5 else C_AMBER if r > bl*1.2 else C_SAGE for r in s_rates]
@@ -809,6 +853,208 @@ class ChartGenerator:
             showlegend=False,
         )
         return self._to_html(fig, height=180)
+
+    # ════════════════════════════════════════════════
+    # 8. 24h/96 段墙钟时间图表 (v4.41)
+    # ════════════════════════════════════════════════
+
+    @staticmethod
+    def _bucket_24h(records, start_of_day_ts: float, value_key: str = "focus_score",
+                    time_key: str = "window_start", n_slots: int = 96):
+        """v4.41: 将记录分入 24h 的 96 个槽（每槽 15 分钟）。
+
+        Args:
+            records: FocusRecord / FatigueRecord 列表
+            start_of_day_ts: 当天 00:00:00 的 Unix 时间戳
+            value_key: 取值的属性名
+            time_key: 取时间的属性名
+            n_slots: 槽位数（默认 96 = 15分钟/槽）
+
+        Returns:
+            List of dicts: [{slot_idx, wall_clock, avg, min_val, max_val, count}, ...]
+            空槽不返回（图表自然留空）
+        """
+        slot_sec = 86400 / n_slots  # 900s = 15min
+        slots = [[] for _ in range(n_slots)]
+
+        for r in records:
+            t = getattr(r, time_key, None)
+            if t is None:
+                t = getattr(r, 'timestamp', 0.0)
+            if t is None or t <= 0:
+                continue
+            v = getattr(r, value_key, None)
+            if v is None:
+                continue
+            idx = int((t - start_of_day_ts) / slot_sec)
+            if 0 <= idx < n_slots:
+                slots[idx].append(v)
+
+        result = []
+        for i, vals in enumerate(slots):
+            if not vals:
+                continue
+            t_sec = i * slot_sec
+            h = int(t_sec // 3600)
+            m = int((t_sec % 3600) // 60)
+            result.append({
+                'slot_idx': i,
+                'wall_clock': f"{h}:{m:02d}",
+                'avg': sum(vals) / len(vals),
+                'min_val': min(vals),
+                'max_val': max(vals),
+                'count': len(vals),
+            })
+        return result
+
+    @staticmethod
+    def _wall_clock_ticks_24h(interval_hours: int = 1):
+        """v4.41: 生成 24h 墙钟时间刻度 (tick positions in seconds, labels)"""
+        tick_vals = []
+        tick_texts = []
+        for h in range(0, 24, interval_hours):
+            tick_vals.append(h * 3600)
+            tick_texts.append(f"{h}:00")
+        return tick_vals, tick_texts
+
+    def generate_focus_trend_24h(self, bucketed, title="专注度趋势（全天）"):
+        """v4.41: 24h 墙钟时间专注度趋势图。
+
+        折线=真实avg_raw，标记=低于50分的slot放大凸显异常。
+        """
+        if not bucketed:
+            return self._empty_html("无数据")
+
+        slots = [b['slot_idx'] for b in bucketed]
+        t_sec = [b['slot_idx'] * 900 for b in bucketed]
+        avgs = [b['avg'] for b in bucketed]
+        counts = [b['count'] for b in bucketed]
+
+        # 折线颜色基于avg
+        colors = [_level_color(a) for a in avgs]
+        # 异常点标记尺寸: <50 加大
+        marker_sizes = [10 if a < 50 else 6 for a in avgs]
+        marker_colors = [C_ROSE if a < 50 else c for a, c in zip(avgs, colors)]
+
+        fig = go.Figure()
+
+        # 折线
+        fig.add_trace(go.Scatter(
+            x=t_sec, y=avgs, mode='lines',
+            line=dict(width=2.5, color=C_IRIS),
+            name='专注度',
+            hovertemplate='%{y:.0f} 分<br>%{x} 时段 (%{customdata}条记录)<extra></extra>',
+            customdata=counts,
+        ))
+
+        # 标记点 — 异常点加大
+        fig.add_trace(go.Scatter(
+            x=t_sec, y=avgs, mode='markers',
+            marker=dict(size=marker_sizes, color=marker_colors,
+                       line=dict(width=1, color='white')),
+            showlegend=False,
+            hovertemplate='%{y:.0f} 分<br>%{x} 时段<extra></extra>',
+        ))
+
+        # 良好参考线
+        fig.add_hline(y=70, line_dash="dash", line_color=C_LINE, line_width=1,
+                      annotation_text="良好线 70", annotation_position="left",
+                      annotation_font_size=10, annotation_font_color=C_SAGE)
+
+        # 墙钟时间刻度
+        tick_vals, tick_texts = self._wall_clock_ticks_24h(interval_hours=2)
+
+        # 检查是否有异常槽
+        anomaly_count = sum(1 for a in avgs if a < 50)
+
+        fig.update_layout(**_LAYOUT_BASE)
+        fig.update_layout(
+            yaxis=dict(**_LAYOUT_BASE["yaxis"], range=[0, 105], title="专注度"),
+            xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间",
+                       tickvals=tick_vals, ticktext=tick_texts,
+                       range=[-300, 86700]),  # 留一点边距
+            showlegend=False,
+        )
+        if anomaly_count > 0:
+            fig.add_annotation(
+                x=1, y=0.02, xref="paper", yref="paper",
+                xanchor="right", yanchor="bottom",
+                text=f"⚠ {anomaly_count} 个低专注时段（标记加大）",
+                showarrow=False, font=dict(size=9, color=C_ROSE),
+                bgcolor="rgba(254,253,251,0.85)",
+            )
+        return self._to_html(fig, height=240)
+
+    def generate_blink_rate_24h(self, bucketed, title="眨眼频率趋势（全天）",
+                                baseline_blink_rate=None):
+        """v4.41: 24h 墙钟时间眨眼频率图"""
+        if not bucketed:
+            return self._empty_html("无数据")
+
+        t_sec = [b['slot_idx'] * 900 for b in bucketed]
+        avgs = [b['avg'] for b in bucketed]
+
+        bl = baseline_blink_rate if baseline_blink_rate and baseline_blink_rate > 0 else 15.0
+        colors = [C_ROSE if r > bl * 1.5 else C_AMBER if r > bl * 1.2 else C_SAGE for r in avgs]
+
+        # 柱宽
+        bar_w = 800  # ~13min 宽 — 接近 15min 槽宽
+
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=t_sec, y=avgs,
+            marker_color=colors,
+            width=bar_w,
+            name='眨眼频率',
+            hovertemplate='%{y:.1f} 次/分<extra></extra>',
+        ))
+        fig.add_hline(y=bl, line_dash="dash", line_color=C_SAGE, line_width=1.5,
+                      annotation_text=f"基线 {bl:.0f}", annotation_position="left",
+                      annotation_font_size=10, annotation_font_color=C_SAGE)
+
+        tick_vals, tick_texts = self._wall_clock_ticks_24h(interval_hours=2)
+
+        fig.update_layout(**_LAYOUT_BASE)
+        fig.update_layout(
+            yaxis=dict(**_LAYOUT_BASE["yaxis"], title="次/分"),
+            xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间",
+                       tickvals=tick_vals, ticktext=tick_texts,
+                       range=[-300, 86700]),
+            bargap=0.1,
+            showlegend=False,
+        )
+        return self._to_html(fig, height=200)
+
+    def generate_fatigue_24h(self, bucketed, title="疲劳趋势（全天）"):
+        """v4.41: 24h 墙钟时间疲劳趋势图"""
+        if not bucketed:
+            return self._empty_html("无数据")
+
+        t_sec = [b['slot_idx'] * 900 for b in bucketed]
+        avgs = [b['avg'] for b in bucketed]
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=t_sec, y=avgs, mode='lines',
+            line=dict(width=2, color=C_ROSE),
+            name='疲劳分',
+            hovertemplate='%{y:.0f} 分<br>%{x} 时段<extra></extra>',
+        ))
+        fig.add_hline(y=60, line_dash="dash", line_color=C_LINE, line_width=1,
+                      annotation_text="严重疲劳 60", annotation_position="left",
+                      annotation_font_size=10, annotation_font_color=C_ROSE)
+
+        tick_vals, tick_texts = self._wall_clock_ticks_24h(interval_hours=2)
+
+        fig.update_layout(**_LAYOUT_BASE)
+        fig.update_layout(
+            yaxis=dict(**_LAYOUT_BASE["yaxis"], title="疲劳分"),
+            xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间",
+                       tickvals=tick_vals, ticktext=tick_texts,
+                       range=[-300, 86700]),
+            showlegend=False,
+        )
+        return self._to_html(fig, height=220)
 
     def _empty_html(self, message):
         return f'<div style="text-align:center;color:#ccc;padding:32px;font-size:13px">{message}</div>'
