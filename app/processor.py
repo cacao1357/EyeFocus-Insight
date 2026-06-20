@@ -122,6 +122,7 @@ class FrameProcessor:
                     ear=0.0, yaw=0.0, pitch=0.0,
                     gaze_score=self._latest_gaze_score,
                     face_detected=False,
+                    fatigue_score=0.0,
                 )
                 self._latest_focus_result = frozen
             return
@@ -240,7 +241,9 @@ class FrameProcessor:
         if self._is_head_away:
             return
 
-        # 专注度分析
+        # 专注度分析 (v4.44: 传入上一帧累积疲劳分)
+        prev_fatigue = getattr(self._latest_fatigue_result, 'cumulative_fatigue', 0.0) \
+            if self._latest_fatigue_result is not None else 0.0
         focus_result = self._focus_analyzer.analyze(
             ear=eye_result.ear_avg,
             yaw=smoothed_yaw,
@@ -248,10 +251,11 @@ class FrameProcessor:
             gaze_score=self._latest_gaze_score,
             brightness=light_result.brightness,
             face_detected=face_result.face_detected,
+            fatigue_score=prev_fatigue,
         )
         self._latest_focus_result = focus_result
 
-        # 疲劳分析
+        # 疲劳分析 (v4.44: 使用 get_closure_info 获取闭眼时长)
         ear_nadir = None
         recent_blinks = self._eye_detector.get_blink_events(
             since_time=time.time() - 30.0
@@ -259,8 +263,10 @@ class FrameProcessor:
         if recent_blinks:
             ear_nadir = recent_blinks[-1].ear_nadir
 
+        closure_type, closure_duration = self._eye_detector.get_closure_info()
         fatigue_result = self._fatigue_analyzer.analyze(
-            closure_type=self._eye_detector.get_closure_type(),
+            closure_type=closure_type,
+            closure_duration=closure_duration,
             blink_rate=focus_result.blink_rate,
             ear_nadir=ear_nadir,
             head_stability=focus_result.head_score,

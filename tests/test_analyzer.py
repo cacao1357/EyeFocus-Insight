@@ -108,22 +108,22 @@ class TestFatigueAnalyzer:
         assert result.fatigue_indicator == FatigueIndicator.RESTED
 
     def test_prolonged_closures_trigger_attention(self):
-        """v4.6.1: 5 次长闭眼 → ATTENTION (RESTED≤3)"""
+        """v4.44: 10次长闭眼(最长2.0s) → 次数40+时长38 → 疲劳39 → ATTENTION"""
         analyzer = FatigueAnalyzer()
         analyzer.start()
         now = time.time()
-        for i in range(5):
-            analyzer._prolonged_events.append(now - i * 20)
+        for i in range(10):
+            analyzer._prolonged_events.append((now - i * 15, 1.0 + i * 0.1))
         result = analyzer.analyze(closure_type="open", blink_rate=15.0)
         assert result.fatigue_indicator == FatigueIndicator.ATTENTION
 
     def test_many_prolonged_trigger_tired(self):
-        """v4.30: 16 次长闭眼 → TIRED (TIRED≥15)"""
+        """v4.44: 20次长闭眼(最长4.0s) → 次数82+时长75 → 疲劳78.5 → TIRED"""
         analyzer = FatigueAnalyzer()
         analyzer.start()
         now = time.time()
-        for i in range(16):
-            analyzer._prolonged_events.append(now - i * 10)
+        for i in range(20):
+            analyzer._prolonged_events.append((now - i * 8, 0.9 + i * 0.16))
         result = analyzer.analyze(closure_type="open", blink_rate=15.0)
         assert result.fatigue_indicator == FatigueIndicator.TIRED
 

@@ -112,6 +112,7 @@ class TestEyeFocusAppIntegration:
         # 初始化检测器（使用 mock）
         app._face_detector = MagicMock()
         app._eye_detector = MagicMock()
+        app._eye_detector.get_closure_info.return_value = ("open", 0.0)
         app._gaze_detector = MagicMock()
         app._light_detector = MagicMock()
         app._overlay = MagicMock()
@@ -982,11 +983,11 @@ class TestEndToEndScenarios:
         result = analyzer.analyze(closure_type="open", blink_rate=15.0)
         assert result.fatigue_indicator.value == "rested"
 
-        # v4.30: 模拟 3 分钟内 16 次长闭眼 → TIRED (TIRED≥15)
+        # v4.44: 模拟 3 分钟内 20 次长闭眼(最长4.5s) → TIRED
         import time as _time
         now = _time.time()
-        for i in range(16):
-            analyzer._prolonged_events.append(now - i * 10)
+        for i in range(20):
+            analyzer._prolonged_events.append((now - i * 8, 0.9 + i * 0.18))
         result = analyzer.analyze(closure_type="open", blink_rate=15.0)
         assert result.fatigue_indicator.value == "tired", (
-            f"16次长闭眼应判定 TIRED, 实际: {result.fatigue_indicator}")
+            f"20次长闭眼(最长4.5s)应判定 TIRED, 实际: {result.fatigue_indicator}")

@@ -501,23 +501,25 @@ class ChartGenerator:
                         f'title="无数据 {gap/60:.0f}分钟"></span>'
                     )
 
-            # 数据块
+            # 数据块 — v4.43: 白色右边框标记人脸检测时段
             s = r.focus_score if r.focus_score is not None else 0
             c = C_SAGE if s >= 70 else C_AMBER if s >= 40 else C_ROSE
             pct = dur / total_span * 100
             blocks.append(
                 f'<span style="background:{c};width:{pct:.2f}%;'
-                f'height:100%;min-width:2px;flex-shrink:0" '
-                f'title="{s:.0f}分"></span>'
+                f'height:100%;min-width:2px;flex-shrink:0;'
+                f'border-right:2px solid white" '
+                f'title="✓人脸 {s:.0f}分"></span>'
             )
 
-        # 图例 (v4.43: +无数据)
+        # 图例 (v4.43: +无数据 +白色边框=人脸)
         legend = (
             f'<span style="display:flex;gap:12px;font-size:11px;color:{C_QUIET};margin-top:4px">'
-            f'<span>■ <span style="color:{C_SAGE}">专注</span></span>'
-            f'<span>■ <span style="color:{C_AMBER}">一般</span></span>'
-            f'<span>■ <span style="color:{C_ROSE}">分心</span></span>'
-            f'<span>■ <span style="color:{C_LINE}">无数据</span></span>'
+            f'<span>▐ <span style="color:{C_SAGE}">专注</span></span>'
+            f'<span>▐ <span style="color:{C_AMBER}">一般</span></span>'
+            f'<span>▐ <span style="color:{C_ROSE}">分心</span></span>'
+            f'<span>▐ <span style="color:{C_LINE}">无数据</span></span>'
+            f'<span style="font-size:10px">│白边=有人脸</span>'
             f'</span>'
         )
         bar = f'<div style="display:flex;height:12px;border-radius:2px;overflow:hidden;background:{C_BG};border:1px solid {C_LINE}">{"".join(blocks)}</div>'

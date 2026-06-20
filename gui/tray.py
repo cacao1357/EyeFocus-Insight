@@ -136,6 +136,12 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         self._dnd_action.setChecked(False)
         self._dnd_action.triggered.connect(self._toggle_dnd)
 
+        self._popup_auto_close = True  # v4.43: 弹窗自动关闭开关
+        self._popup_action = menu.addAction("弹窗自动关闭")
+        self._popup_action.setCheckable(True)
+        self._popup_action.setChecked(True)
+        self._popup_action.triggered.connect(self._toggle_popup_auto_close)
+
         menu.addSeparator()
 
         # ── 配置 ──
@@ -218,9 +224,10 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         return self._do_not_disturb
 
     def show_fatigue_notification(self, message: str = "检测到疲劳，建议休息"):
-        """v4.26: 恢复疲劳提醒"""
+        """v4.26: 恢复疲劳提醒; v4.43: 尊重弹窗自动关闭开关"""
+        timeout = 5000 if self._popup_auto_close else 0
         self.showMessage("EyeFocus Insight - 疲劳提醒", message,
-                         QSystemTrayIcon.Warning, 5000)
+                         QSystemTrayIcon.Warning, timeout)
 
     # ── 内部方法 ──
 
@@ -641,6 +648,11 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         """切换免打扰模式"""
         self._do_not_disturb = checked
         logger.info("免打扰模式: %s", "ON" if checked else "OFF")
+
+    def _toggle_popup_auto_close(self, checked: bool):
+        """v4.43: 切换弹窗自动关闭 — unchecked 时弹窗不自动消失"""
+        self._popup_auto_close = checked
+        logger.info("弹窗自动关闭: %s", "ON" if checked else "OFF")
 
     def _show_settings(self):
         """打开设置对话框"""
