@@ -475,19 +475,49 @@ class ChartGenerator:
         if n == 0:
             return self._empty_html("无数据")
 
-        # 生成色条 HTML
-        blocks = []
-        for r in fr:
-            s = r.focus_score
-            c = C_SAGE if s >= 70 else C_AMBER if s >= 40 else C_ROSE
-            blocks.append(f'<span style="background:{c};flex:1;height:100%;min-width:2px"></span>')
+        # v4.43: 按时间比例生成色块 — 数据段着色，间隙段灰色
+        first_ts = self._ts(fr[0])
+        last_ts = max(self._ts(fr[-1]),
+                      getattr(fr[-1], 'window_end', 0) or 0)
+        total_span = max(1.0, last_ts - first_ts)
 
-        # 图例
+        gap_threshold = self._effective_gap(total_span)
+
+        blocks = []
+        for i, r in enumerate(fr):
+            t_start = self._ts(r)
+            t_end = getattr(r, 'window_end', 0) or t_start
+            dur = max(1.0, t_end - t_start)
+
+            # 间隙块（仅当间隙超过阈值）
+            if i > 0:
+                prev_end = getattr(fr[i - 1], 'window_end', 0) or self._ts(fr[i - 1])
+                gap = t_start - prev_end
+                if gap > gap_threshold:
+                    gap_pct = gap / total_span * 100
+                    blocks.append(
+                        f'<span style="background:{C_LINE};width:{gap_pct:.2f}%;'
+                        f'height:100%;min-width:2px;flex-shrink:0" '
+                        f'title="无数据 {gap/60:.0f}分钟"></span>'
+                    )
+
+            # 数据块
+            s = r.focus_score if r.focus_score is not None else 0
+            c = C_SAGE if s >= 70 else C_AMBER if s >= 40 else C_ROSE
+            pct = dur / total_span * 100
+            blocks.append(
+                f'<span style="background:{c};width:{pct:.2f}%;'
+                f'height:100%;min-width:2px;flex-shrink:0" '
+                f'title="{s:.0f}分"></span>'
+            )
+
+        # 图例 (v4.43: +无数据)
         legend = (
             f'<span style="display:flex;gap:12px;font-size:11px;color:{C_QUIET};margin-top:4px">'
             f'<span>■ <span style="color:{C_SAGE}">专注</span></span>'
             f'<span>■ <span style="color:{C_AMBER}">一般</span></span>'
             f'<span>■ <span style="color:{C_ROSE}">分心</span></span>'
+            f'<span>■ <span style="color:{C_LINE}">无数据</span></span>'
             f'</span>'
         )
         bar = f'<div style="display:flex;height:12px;border-radius:2px;overflow:hidden;background:{C_BG};border:1px solid {C_LINE}">{"".join(blocks)}</div>'
@@ -862,19 +892,18 @@ class ChartGenerator:
 
     @staticmethod
     def _bucket_24h(records, start_of_day_ts: float, value_key: str = "focus_score",
-                    time_key: str = "window_start", n_slots: int = 96):
+                    time_key: str = "window_start", n_slots: int = 96,
+                    value_fn=None):
         """v4.41: 将记录分入 24h 的 96 个槽（每槽 15 分钟）。
+        v4.43: 新增 value_fn 可选参数，支持计算派生值（如 sqrt(yaw²+pitch²)）。
 
         Args:
-            records: FocusRecord / FatigueRecord 列表
+            records: FocusRecord / FatigueRecord / FrameRecord 列表
             start_of_day_ts: 当天 00:00:00 的 Unix 时间戳
-            value_key: 取值的属性名
+            value_key: 取值的属性名（value_fn 为 None 时使用）
             time_key: 取时间的属性名
             n_slots: 槽位数（默认 96 = 15分钟/槽）
-
-        Returns:
-            List of dicts: [{slot_idx, wall_clock, avg, min_val, max_val, count}, ...]
-            空槽不返回（图表自然留空）
+            value_fn: 可选，callable(record) -> float；传入时忽略 value_key
         """
         slot_sec = 86400 / n_slots  # 900s = 15min
         slots = [[] for _ in range(n_slots)]
@@ -885,7 +914,10 @@ class ChartGenerator:
                 t = getattr(r, 'timestamp', 0.0)
             if t is None or t <= 0:
                 continue
-            v = getattr(r, value_key, None)
+            if value_fn is not None:
+                v = value_fn(r)
+            else:
+                v = getattr(r, value_key, None)
             if v is None:
                 continue
             idx = int((t - start_of_day_ts) / slot_sec)
@@ -1151,6 +1183,59 @@ class ChartGenerator:
                        tickvals=tick_vals, ticktext=tick_texts,
                        range=[-300, 86700]),
             showlegend=False,
+        )
+        return self._to_html(fig, height=220)
+
+    def generate_head_pose_24h(self, bucketed, title="头部姿态变化（全天）"):
+        """v4.43: 24h 墙钟时间头部姿态偏移趋势图。
+        折线=平均偏移角度，空槽>1h贴零，≤1h线性插值。
+        """
+        if not bucketed:
+            return self._empty_html("无头部姿态数据")
+
+        bucketed = self._fill_empty_slots(bucketed)
+        valid = [b for b in bucketed if b['avg'] is not None]
+        if not valid:
+            return self._empty_html("无头部姿态数据")
+
+        t_sec = [b['slot_idx'] * 900 for b in valid]
+        wall_clocks = [b['wall_clock'] for b in valid]
+        avgs = [b['avg'] for b in valid]
+
+        # 计算舒适区占比（排除零值填充）
+        real_vals = [a for a in avgs if a > 0]
+        in_zone = sum(1 for a in real_vals if a <= 20)
+        pct = in_zone / len(real_vals) * 100 if real_vals else 0
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=t_sec, y=avgs, mode='lines',
+            line=dict(width=1.5, color=C_IRIS),
+            text=wall_clocks,
+            name='偏移角',
+            hovertemplate='%{y:.1f}°<br>%{text}<extra></extra>',
+            connectgaps=False,
+        ))
+        fig.add_hline(y=20, line_dash="dash", line_color=C_SAGE, line_width=1,
+                      annotation_text="舒适上限 20°", annotation_position="right",
+                      annotation_font_size=10, annotation_font_color=C_SAGE)
+
+        tick_vals, tick_texts = self._wall_clock_ticks_24h(interval_hours=2)
+
+        fig.update_layout(**_LAYOUT_BASE)
+        fig.update_layout(
+            yaxis=dict(**_LAYOUT_BASE["yaxis"], title="偏移度 (°)"),
+            xaxis=dict(**_LAYOUT_BASE["xaxis"], title="时间",
+                       tickvals=tick_vals, ticktext=tick_texts,
+                       range=[-300, 86700]),
+            showlegend=False,
+            annotations=[
+                dict(x=1, y=0.98, xref="paper", yref="paper",
+                     xanchor="right", yanchor="top",
+                     text=f"≤20° 舒适区占 {pct:.0f}%", showarrow=False,
+                     font=dict(size=11, color=C_SAGE),
+                     bgcolor="rgba(254,253,251,0.85)"),
+            ],
         )
         return self._to_html(fig, height=220)
 
