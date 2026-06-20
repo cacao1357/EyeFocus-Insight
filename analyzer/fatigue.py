@@ -138,11 +138,11 @@ class FatigueAnalyzer:
         avg_ear: Optional[float] = None,
         blink_flag: bool = False,
     ) -> FatigueAnalysisResult:
-        """分析疲劳等级 (v4.44: 双因子 = 次数分×0.5 + 时长分×0.5)
+        """分析疲劳等级 (v4.45: PERCLOS 累计秒数 + 实时加成)
 
         Args:
             closure_type: EyeAspectDetector.get_closure_info() — "open"/"blink"/"prolonged"
-            closure_duration: v4.44 当前闭眼已持续秒数（仅 prolonged 时有效）
+            closure_duration: v4.45 当前闭眼已持续秒数（用于实时加成）
             blink_rate: 眨眼频率 (次/分钟)
             (其他参数保留用于向后兼容)
         """
@@ -156,11 +156,12 @@ class FatigueAnalyzer:
         if head_stability is not None:
             self._recent_head_stabilities.append(head_stability)
 
-        # v4.44: 记录长闭眼事件 (timestamp, duration)
+        # v4.45: 记录长闭眼事件 (timestamp, duration) — 用于窗口清理+PERCLOS
+        if closure_type == "prolonged" and not self._was_prolonged:
+            self._prolonged_events.append((current_time, max(0.8, closure_duration)))
+        # v4.45: 持续追踪当前闭眼状态（跨帧去重）
         if closure_type == "prolonged":
-            if not self._was_prolonged:
-                self._prolonged_events.append((current_time, max(0.8, closure_duration)))
-                self._was_prolonged = True
+            self._was_prolonged = True
         else:
             self._was_prolonged = False
 
@@ -169,13 +170,17 @@ class FatigueAnalyzer:
         while self._prolonged_events and self._prolonged_events[0][0] < cutoff:
             self._prolonged_events.popleft()
 
-        prolonged_count = len(self._prolonged_events)
+        # v4.45: 累计闭眼秒数（PERCLOS 基础分）
+        total_sec = sum(d for _, d in self._prolonged_events)
+        perclos_score = self._score_from_seconds(total_sec)
 
-        # v4.44: 双因子公式
-        count_score = self._score_from_count(prolonged_count)
-        max_duration = max((d for _, d in self._prolonged_events), default=0.0)
-        duration_score = self._score_from_duration(max_duration)
-        score = round(count_score * 0.5 + duration_score * 0.5, 1)
+        # v4.45: 实时加成 — 当前仍在闭眼时缓慢放大
+        if closure_type == "prolonged" and closure_duration > 0.8:
+            boost = 1.0 + min(0.5, closure_duration / 120.0)
+        else:
+            boost = 1.0
+
+        score = round(min(100.0, perclos_score * boost), 1)
 
         # 等级判定 (v4.44: 基于综合分数而非纯次数)
         indicator = self._indicator_from_score(score)
@@ -192,7 +197,7 @@ class FatigueAnalyzer:
 
         return FatigueAnalysisResult(
             fatigue_indicator=indicator,
-            prolonged_closures_3min=prolonged_count,
+            prolonged_closures_3min=len(self._prolonged_events),
             blink_rate=blink_rate,
             fatigue_level=self._indicator_to_legacy_level(indicator),
             fatigue_score=score,
@@ -206,7 +211,7 @@ class FatigueAnalyzer:
 
     @staticmethod
     def _indicator_from_score(score: float) -> FatigueIndicator:
-        """v4.44: 基于综合分数判定疲劳等级"""
+        """v4.45: 基于综合分数判定疲劳等级"""
         if score <= 25:
             return FatigueIndicator.RESTED
         elif score <= 55:
@@ -215,41 +220,25 @@ class FatigueAnalyzer:
             return FatigueIndicator.TIRED
 
     @staticmethod
-    def _score_from_count(count: int) -> float:
-        """v4.44: 闭眼次数 → 分数（锚点线性插值）
+    def _score_from_seconds(total_sec: float) -> float:
+        """v4.45: 3分钟窗口内累计闭眼秒数 → PERCLOS 疲劳分（锚点线性插值）
 
-        锚点: (0→5) (3→20) (8→40) (15→70) (25→95)
+        锚点: (0s→5) (5s→15) (10s→30) (20s→55) (30s→70) (45s→85) (60s→95) (90s→99) (120s→100)
         """
-        if count <= 0:
+        if total_sec <= 0:
             return 5.0
-        anchors = [(0, 5.0), (3, 20.0), (8, 40.0), (15, 70.0), (25, 95.0)]
-        if count >= anchors[-1][0]:
+        anchors = [
+            (0, 5.0), (5, 15.0), (10, 30.0), (20, 55.0),
+            (30, 70.0), (45, 85.0), (60, 95.0), (90, 99.0), (120, 100.0),
+        ]
+        if total_sec >= anchors[-1][0]:
             return anchors[-1][1]
         for i in range(len(anchors) - 1):
-            lo_c, lo_s = anchors[i]
-            hi_c, hi_s = anchors[i + 1]
-            if lo_c <= count < hi_c:
-                ratio = (count - lo_c) / (hi_c - lo_c) if hi_c != lo_c else 0.0
-                return round(lo_s + ratio * (hi_s - lo_s), 1)
-        return 5.0
-
-    @staticmethod
-    def _score_from_duration(max_duration: float) -> float:
-        """v4.44: 最长闭眼时长(秒) → 分数（锚点线性插值）
-
-        锚点: (0.8s→5) (1.5s→25) (2.5s→50) (4s→75) (6s→95)
-        """
-        if max_duration <= 0.0:
-            return 5.0
-        anchors = [(0.8, 5.0), (1.5, 25.0), (2.5, 50.0), (4.0, 75.0), (6.0, 95.0)]
-        if max_duration >= anchors[-1][0]:
-            return anchors[-1][1]
-        for i in range(len(anchors) - 1):
-            lo_d, lo_s = anchors[i]
-            hi_d, hi_s = anchors[i + 1]
-            if lo_d <= max_duration < hi_d:
-                ratio = (max_duration - lo_d) / (hi_d - lo_d) if hi_d != lo_d else 0.0
-                return round(lo_s + ratio * (hi_s - lo_s), 1)
+            lo_s, lo_v = anchors[i]
+            hi_s, hi_v = anchors[i + 1]
+            if lo_s <= total_sec < hi_s:
+                ratio = (total_sec - lo_s) / (hi_s - lo_s) if hi_s != lo_s else 0.0
+                return round(lo_v + ratio * (hi_v - lo_v), 1)
         return 5.0
 
     @staticmethod

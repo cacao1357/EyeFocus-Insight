@@ -108,23 +108,24 @@ class TestFatigueAnalyzer:
         assert result.fatigue_indicator == FatigueIndicator.RESTED
 
     def test_prolonged_closures_trigger_attention(self):
-        """v4.44: 10次长闭眼(最长2.0s) → 次数40+时长38 → 疲劳39 → ATTENTION"""
+        """v4.45: 累计15s闭眼 → PERCLOS≈42 → ATTENTION"""
         analyzer = FatigueAnalyzer()
         analyzer.start()
         now = time.time()
-        for i in range(10):
-            analyzer._prolonged_events.append((now - i * 15, 1.0 + i * 0.1))
+        for i in range(8):
+            analyzer._prolonged_events.append((now - i * 20, 1.8))
         result = analyzer.analyze(closure_type="open", blink_rate=15.0)
         assert result.fatigue_indicator == FatigueIndicator.ATTENTION
 
     def test_many_prolonged_trigger_tired(self):
-        """v4.44: 20次长闭眼(最长4.0s) → 次数82+时长75 → 疲劳78.5 → TIRED"""
+        """v4.45: 持续闭眼30s + 实时加成 → PERCLOS 70×1.25=88 → TIRED"""
         analyzer = FatigueAnalyzer()
         analyzer.start()
         now = time.time()
-        for i in range(20):
-            analyzer._prolonged_events.append((now - i * 8, 0.9 + i * 0.16))
-        result = analyzer.analyze(closure_type="open", blink_rate=15.0)
+        for i in range(5):
+            analyzer._prolonged_events.append((now - i * 30, 6.0))
+        result = analyzer.analyze(closure_type="prolonged", closure_duration=30.0,
+                                  blink_rate=15.0)
         assert result.fatigue_indicator == FatigueIndicator.TIRED
 
     def test_start_reset(self):

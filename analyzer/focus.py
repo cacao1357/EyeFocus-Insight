@@ -346,8 +346,8 @@ class FocusAnalyzer:
             self._ema_long_score = (1.0 - alpha_long) * self._ema_long_score + alpha_long * smooth_focus
         smooth_focus = round(self._ema_long_score, 1)
 
-        # ── v4.44: 疲劳→专注乘法耦合 ──
-        fatigue_penalty = max(0.4, 1.0 - fatigue_score / 300.0)
+        # ── v4.45: 疲劳→专注二次惩罚曲线（疲劳100→专注归零）──
+        fatigue_penalty = max(0.0, 1.0 - fatigue_score * fatigue_score / 10000.0)
         smooth_focus = round(smooth_focus * fatigue_penalty, 1)
 
         # ── 保存最后分数（供人脸丢失冻结用）──
