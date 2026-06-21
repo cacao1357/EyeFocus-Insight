@@ -1,13 +1,9 @@
 """
-analyzer/focus.py — 专注度分析器 (v4.13)
+analyzer/focus.py — 专注度分析器 (v4.49)
 
-v4.13: 评分算法重构
-  - 窗口 30s→15s，响应更快
-  - 新增相对眨眼评分（对比个人基线，非绝对阈值）
-  - EMA 平滑（快速下降 α=0.4，慢速恢复 α=0.15）— 阶梯式响应
-  - 头部得分平滑化（渐变替代二元）
-  - 混合分权重：眼70% + 头20% + 视线10%
-  - 人脸丢失 → 冻结分数
+v4.49: 去长EMA + 放宽openness — 恢复速度由第一层EMA直接输出
+  - 去掉第二层长EMA(τ=15s)，根除30秒恢复滞后
+  - openness门槛 0.7→0.5，高baseline_ear用户不卡恢复
 """
 
 import logging
@@ -41,9 +37,9 @@ FOCUS_LEVEL_LABELS = {
     FocusLevel.DISTRACTED: "分心",
 }
 
-# v4.13: 窗口 15s，阈值对应缩小
-FOCUSED_MAX_DEVIATION_SECS = 3      # ≤3 秒偏差 → FOCUSED
-DISTRACTED_MIN_DEVIATION_SECS = 8   # ≥8 秒偏差 → DISTRACTED
+# v4.47: 窗口 30s @ 2Hz (60样本)，阈值按比例调整
+FOCUSED_MAX_DEVIATION_SECS = 6      # ≤6 次偏差 → FOCUSED (10%)
+DISTRACTED_MIN_DEVIATION_SECS = 16  # ≥16 次偏差 → DISTRACTED (27%)
 
 
 @dataclass
@@ -88,35 +84,36 @@ class KalmanFilter1D:
 
 
 class FocusAnalyzer:
-    """专注度分析器 (v4.13)
+    """专注度分析器 (v4.48)
 
-    15s 滑动窗口 + 相对眨眼评分 + EMA 阶梯平滑。
+    30s 滑动窗口 @ 2Hz + 相对眨眼评分 + 信号驱动 EMA 恢复。
 
-    眼部得分 = 睁眼度×35% + 稳定性×35% + 相对眨眼×30%
-    综合分   = 眼部×70% + 头部×20% + 视线×10%
+    眼部得分 = 睁眼度×32.5% + 稳定性×32.5% + 相对眨眼×35%
+    综合分   = 眼部×70% + 头部×5% + 视线×25%
+    疲劳惩罚 = max(0, 1 - fatigue²/10000)
     """
 
-    # 头部舒适区（在此角度内不扣分）
-    _COMFORT_YAW = 18.0
-    _COMFORT_PITCH = 22.0
+    # v4.48: 头部舒适区放宽 — 正常办公姿态不再误扣
+    _COMFORT_YAW = 25.0
+    _COMFORT_PITCH = 30.0
 
-    # v4.44: 混合分权重（视线提升至20%，区分"看屏幕"和"发呆"）
-    _EYE_BLEND = 0.60
-    _HEAD_BLEND = 0.20
-    _GAZE_BLEND = 0.20
+    # v4.48: 混合分权重 — 头部降至5%，避免低头/转头过度敏感
+    _EYE_BLEND = 0.70
+    _HEAD_BLEND = 0.05
+    _GAZE_BLEND = 0.25
 
-    # v4.13: 头部惩罚缩放（平滑过渡，舒适区→32°/40°满分惩罚）
+    # v4.13: 头部惩罚缩放（平滑过渡）
     _YAW_SCALE = 20.0
     _PITCH_SCALE = 25.0
 
-    # v4.39: 最小舒适角（避免 baseline_std 太小导致过度敏感）
-    _MIN_COMFORT_YAW = 8.0
-    _MIN_COMFORT_PITCH = 10.0
+    # v4.48: 最小舒适角放宽
+    _MIN_COMFORT_YAW = 12.0
+    _MIN_COMFORT_PITCH = 15.0
 
-    # v4.44: EMA 平滑系数
-    _EMA_FAST = 0.40   # 下降快（分心时迅速反应）
-    _EMA_SLOW = 0.12   # v4.44: 0.20→0.12 恢复更慢，避免假恢复
-    _EMA_LONG_TAU = 60.0  # v4.44: 60s 长窗口平滑，过滤短暂波动
+    # v4.48: EMA 平滑系数 — 信号驱动恢复
+    _EMA_FAST = 0.25   # v4.48: 0.40→0.25 下降更缓，过滤短暂动作
+    _EMA_SLOW = 0.12   # 间歇好转→慢恢复（避免假恢复）
+    _EMA_RECOVER = 0.60  # v4.48: 0.50→0.60 快速恢复更强力
 
     # v4.13: 相对眨眼基线参数
     _BLINK_BASELINE_COLLECT_SECS = 120.0  # 前2分钟收集基线样本
@@ -147,7 +144,7 @@ class FocusAnalyzer:
         eye_weight: float = 0.35,
         head_weight: float = 0.30,
         gaze_weight: float = 0.35,
-        window_size: float = 15.0,       # v4.13: 15s 窗口
+        window_size: float = 30.0,       # v4.47: 30s 窗口 @ 2Hz
         fps: float = 30.0,
         enable_kalman: bool = False,
         adjustment_factor: float = 1.0,  # v4.35: 校准调整因子
@@ -159,9 +156,10 @@ class FocusAnalyzer:
         self.fps = fps
         self._adjustment_factor: float = adjustment_factor
 
-        self._max_samples = int(window_size)
+        # v4.47: 2Hz 采样 → 30s 窗口 = 60 样本
+        self._max_samples = int(window_size * 2)
         self._window_samples: Deque[float] = deque(maxlen=self._max_samples)
-        self._last_sample_second: int = -1
+        self._last_sample_time: float = 0.0  # v4.47: 0.5s 间隔采样
 
         self._blink_detector = None
         self._current_level = FocusLevel.NORMAL
@@ -169,8 +167,10 @@ class FocusAnalyzer:
 
         # v4.13: EMA 平滑
         self._ema_score: Optional[float] = None
-        # v4.44: 60s 长窗口 EMA
-        self._ema_long_score: Optional[float] = None
+
+        # v4.47: 信号驱动恢复状态
+        self._consecutive_good_seconds: float = 0.0
+        self._last_good_check_time: float = 0.0
 
         # v4.13: 人脸丢失时保存的最后分数
         self._last_eye_score: float = 50.0
@@ -210,10 +210,9 @@ class FocusAnalyzer:
         if pitch_std is not None:
             self.baseline_pitch_std = pitch_std
         self._window_samples.clear()
-        self._last_sample_second = -1
+        self._last_sample_time = 0.0
         # v4.13: 重置 EMA、眨眼基线、冻结分数
         self._ema_score = None
-        self._ema_long_score = None
         self._blink_baseline = None
         self._blink_baseline_samples.clear()
         self._blink_baseline_ready = False
@@ -257,23 +256,31 @@ class FocusAnalyzer:
         ear: float,
         yaw: float = 0.0,
         pitch: float = 0.0,
-        gaze_score: float = 100.0,
+        gaze_score: float = 60.0,   # v4.47: 默认满分60（纯瞳孔偏移）
         brightness: float = 128.0,
         face_detected: bool = True,
         fatigue_score: float = 0.0,
+        apply_fatigue_to_frozen: bool = False,  # v4.47: 闭眼丢脸时应用疲劳惩罚
     ) -> FocusResult:
         current_time = time.time()
 
-        # ── 人脸丢失：冻结最后分数 ──
+        # ── 人脸丢失 ──
         if not face_detected:
-            return self._handle_face_lost(current_time)
+            if apply_fatigue_to_frozen:
+                # v4.47: 闭眼导致丢脸 → 冻结信号分但应用疲劳惩罚
+                frozen = self._handle_face_lost(current_time)
+                fatigue_penalty = max(0.0, 1.0 - fatigue_score * fatigue_score / 10000.0)
+                frozen.focus_score = round(frozen.focus_score * fatigue_penalty, 1)
+                return frozen
+            else:
+                # 真离开 → 完全冻结
+                return self._handle_face_lost(current_time)
 
         self._face_lost_start_time = None
 
-        # ── 采样（每秒一次）──
-        current_second = int(current_time)
-        if current_second != self._last_sample_second:
-            self._last_sample_second = current_second
+        # ── 采样（v4.47: 每0.5秒一次，2Hz）──
+        if current_time - self._last_sample_time >= 0.5:
+            self._last_sample_time = current_time
             self._window_samples.append(ear)
 
         # ── 睁眼度 ──
@@ -322,14 +329,32 @@ class FocusAnalyzer:
             1,
         )
 
-        # ── EMA 平滑（阶梯式响应）──
+        # ── v4.47: 信号驱动 EMA 恢复 ──
         if self._ema_score is None:
             self._ema_score = raw_focus
         else:
-            if raw_focus < self._ema_score:
-                alpha = self._EMA_FAST   # 分心 → 快速下降
+            # v4.48: 判断信号是否"良好"（去掉head_score条件，低头不阻挡恢复）
+            is_good = (
+                raw_focus >= self._ema_score
+                and openness >= 0.5   # v4.49: 0.7→0.5 更宽松
+                and gaze_score >= 30
+            )
+            if is_good:
+                if self._last_good_check_time > 0:
+                    self._consecutive_good_seconds += current_time - self._last_good_check_time
+                else:
+                    self._consecutive_good_seconds = 0.5  # 首帧良好
+                self._last_good_check_time = current_time
             else:
-                alpha = self._EMA_SLOW   # 恢复 → 慢速回升
+                self._consecutive_good_seconds = 0.0
+                self._last_good_check_time = current_time
+
+            if raw_focus < self._ema_score:
+                alpha = self._EMA_FAST        # 下降 → 快速
+            elif self._consecutive_good_seconds >= 1.5:
+                alpha = self._EMA_RECOVER      # v4.48: 持续1.5秒良好 → 快速恢复
+            else:
+                alpha = self._EMA_SLOW         # 间歇好转 → 慢恢复
             self._ema_score = alpha * raw_focus + (1 - alpha) * self._ema_score
 
         smooth_focus = round(self._ema_score, 1)
@@ -338,16 +363,11 @@ class FocusAnalyzer:
         decay = self._compute_session_decay()
         smooth_focus = round(smooth_focus * decay, 1)
 
-        # ── v4.44: 60s 长窗口 EMA 二次平滑（过滤短暂波动）──
-        if not hasattr(self, '_ema_long_score') or self._ema_long_score is None:
-            self._ema_long_score = smooth_focus
-        else:
-            alpha_long = 1.0 - math.exp(-1.0 / self._EMA_LONG_TAU)
-            self._ema_long_score = (1.0 - alpha_long) * self._ema_long_score + alpha_long * smooth_focus
-        smooth_focus = round(self._ema_long_score, 1)
+        # v4.49: 去掉长EMA — 第一层信号驱动EMA已足够平滑
+        # 恢复速度由第一层直接输出，不再被第二层τ=15s拖慢
 
-        # ── v4.44: 疲劳→专注乘法耦合 ──
-        fatigue_penalty = max(0.4, 1.0 - fatigue_score / 300.0)
+        # ── v4.45: 疲劳→专注二次惩罚曲线（疲劳100→专注归零）──
+        fatigue_penalty = max(0.0, 1.0 - fatigue_score * fatigue_score / 10000.0)
         smooth_focus = round(smooth_focus * fatigue_penalty, 1)
 
         # ── 保存最后分数（供人脸丢失冻结用）──
@@ -383,12 +403,12 @@ class FocusAnalyzer:
 
     def _compute_dynamic_weights(self, brightness: float,
                                  yaw: float, pitch: float) -> tuple[float, float, float]:
-        """根据环境/姿态置信度动态调整 eye/head/gaze 混合权重
+        """v4.48: 基于光照/姿态置信度动态调整权重
 
-        正常:        eye=0.70  head=0.20  gaze=0.10
-        低光照:      eye-0.20  head+0.15  gaze+0.05
-        极端角度:    eye+0.10  head-0.15  gaze+0.05
-        低光+极端:   eye-0.10  head+0.00  gaze+0.10
+        正常:        eye=0.70  head=0.05  gaze=0.25
+        低光照:      eye=0.60  head=0.15  gaze=0.25 (头部适度提升)
+        极端角度:    eye=0.85  head=0.05  gaze=0.10
+        低光+极端:   eye=0.70  head=0.10  gaze=0.20
 
         Returns:
             (eye_w, head_w, gaze_w) 总和为 1.0
@@ -399,11 +419,11 @@ class FocusAnalyzer:
         extreme_angle = abs(yaw) > self._YAW_EXTREME or abs(pitch) > self._PITCH_EXTREME
 
         if low_light and extreme_angle:
-            ew, hw, gw = 0.60, 0.20, 0.20
+            ew, hw, gw = 0.70, 0.10, 0.20
         elif low_light:
-            ew, hw, gw = 0.50, 0.35, 0.15
+            ew, hw, gw = 0.60, 0.15, 0.25
         elif extreme_angle:
-            ew, hw, gw = 0.80, 0.05, 0.15
+            ew, hw, gw = 0.85, 0.05, 0.10
         # else keep defaults
 
         # 硬边界
@@ -414,12 +434,11 @@ class FocusAnalyzer:
         return (ew / total, hw / total, gw / total)
 
     def _compute_window_level(self, yaw: float = 0.0, pitch: float = 0.0,
-                              gaze_score: float = 100.0) -> tuple[float, FocusLevel]:
-        """v4.13: 15s 窗口统计（FOCUSED≤3, DISTRACTED≥8）
+                              gaze_score: float = 60.0) -> tuple[float, FocusLevel]:
+        """v4.47: 30s 窗口统计 (FOCUSED≤6, DISTRACTED≥16)
 
-        v4.34: 多信号门控 — EAR 偏离≥8s 时，若视线+头部均正常则降为 NORMAL。
-        仅眨眼频繁但注视屏幕 + 头姿稳定 ≠ 分心。
-        v4.35: 偏差阈值受 adjustment_factor 调控 — factor<1.0 时更宽容（检测器过敏感）。
+        v4.34: 多信号门控 — EAR 偏离≥16次时，若视线+头部均正常则降为 NORMAL。
+        v4.47: gaze_score 满分60，门控阈值 30（50%）。
         """
         if len(self._window_samples) < 3:
             return 1.0, FocusLevel.NORMAL
@@ -450,7 +469,7 @@ class FocusAnalyzer:
             head_penalty = min(1.0, max(
                 yaw_excess / yaw_scale, pitch_excess / pitch_scale))
             head_ok = (100.0 * (1.0 - head_penalty)) >= 50
-            gaze_ok = gaze_score >= 50
+            gaze_ok = gaze_score >= 30  # v4.47: 新满分60的50%
             if gaze_ok and head_ok:
                 level = FocusLevel.NORMAL
             else:
@@ -616,7 +635,7 @@ class FocusAnalyzer:
         focus_score = round(
             eye_score * self._EYE_BLEND
             + 50.0 * self._HEAD_BLEND
-            + 50.0 * self._GAZE_BLEND,
+            + 30.0 * self._GAZE_BLEND,  # v4.47: gaze 满分60
             1,
         )
         return FocusRecord(
@@ -626,7 +645,7 @@ class FocusAnalyzer:
             focus_score=focus_score,
             eye_score=eye_score,
             head_score=50.0,
-            gaze_score=50.0,
+            gaze_score=30.0,  # v4.47
             blink_rate=blink_rate,
             avg_ear=avg_ear,
             avg_yaw=0.0,
@@ -635,12 +654,11 @@ class FocusAnalyzer:
 
     def reset(self) -> None:
         self._window_samples.clear()
-        self._last_sample_second = -1
+        self._last_sample_time = 0.0
         self._face_lost_start_time = None
         self._current_level = FocusLevel.NORMAL
         # v4.13: 重置 EMA、眨眼基线、冻结分数
         self._ema_score = None
-        self._ema_long_score = None
         self._blink_baseline = None
         self._blink_baseline_samples.clear()
         self._blink_baseline_ready = False
@@ -672,14 +690,7 @@ class FocusAnalyzer:
 # ── v4.17: 分心原因分解 ──
 
 def compute_distraction_causes(focus_result: FocusResult) -> dict:
-    """分解专注度下降源。
-
-    从 FocusResult 的 eye_score/head_score/gaze_score 推算
-    各因素在总分下降中的贡献占比。
-
-    v4.34: FocusLevel 由 _compute_window_level() 多信号门控决定 —
-    EAR 偏离是主要触发源，但仅当视线或头姿也指示不专注时才判 DISTRACTED。
-    本函数按比例报告三个子分数，无论哪个信号触发了等级变化。
+    """v4.47: 分解专注度下降源。
 
     Returns:
         {"眨眼异常": float%, "头部偏移": float%, "视线偏离": float%}
@@ -687,19 +698,18 @@ def compute_distraction_causes(focus_result: FocusResult) -> dict:
     """
     if focus_result is None:
         return {}
-    # v4.18: None 安全
     fs = focus_result.focus_score or 0.0
     if fs >= 60:
         return {}
 
     eye_s = focus_result.eye_score if focus_result.eye_score is not None else 50.0
     head_s = focus_result.head_score if focus_result.head_score is not None else 50.0
-    gaze_s = focus_result.gaze_score if focus_result.gaze_score is not None else 50.0
+    gaze_s = focus_result.gaze_score if focus_result.gaze_score is not None else 30.0
 
-    # 期望值：正常专注时眼≈90, 头≈100, 视线≈100
+    # v4.47: 期望值 — 眼≈90, 头≈100, 视线≈60（新满分）
     eye_drop = max(0.0, 90.0 - eye_s)
     head_drop = max(0.0, 100.0 - head_s)
-    gaze_drop = max(0.0, 100.0 - gaze_s)
+    gaze_drop = max(0.0, 60.0 - gaze_s)
 
     total = eye_drop + head_drop + gaze_drop
     if total < 1.0:

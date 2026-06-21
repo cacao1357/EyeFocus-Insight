@@ -367,7 +367,7 @@ class TestGazeDetector:
         assert result is not None
         assert isinstance(result.gaze_offset, tuple)
         assert len(result.gaze_offset) == 2
-        assert 0.0 <= result.gaze_concentration <= 100.0
+        assert 0.0 <= result.gaze_concentration <= 60.0  # v4.47: 满分60
 
     def test_detect_none_landmarks(self):
         """测试 None 输入"""
@@ -390,7 +390,7 @@ class TestGazeDetector:
         result = detector.detect(landmarks, head_pose_yaw=0.0, head_pose_pitch=0.0)
 
         if result is not None:
-            assert 0.0 <= result.gaze_concentration <= 100.0
+            assert 0.0 <= result.gaze_concentration <= 60.0  # v4.47: 满分60
 
     def test_factory_function(self):
         """测试工厂函数"""

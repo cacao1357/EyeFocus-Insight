@@ -120,16 +120,17 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         calibrate_action = menu.addAction("重新校准")
         calibrate_action.triggered.connect(self._start_calibration)
 
-        voice_enabled = True
-        try:
-            from config import get_yaml_value
-            voice_enabled = get_yaml_value("voice", "enabled", default=True)
-        except Exception:
-            pass
-        self._voice_action = menu.addAction("启用语音反馈")
-        self._voice_action.setCheckable(True)
-        self._voice_action.setChecked(voice_enabled)
-        self._voice_action.triggered.connect(self._toggle_voice)
+        # v4.49+: 语音已移除
+        # voice_enabled = True
+        # try:
+        #     from config import get_yaml_value
+        #     voice_enabled = get_yaml_value("voice", "enabled", default=True)
+        # except Exception:
+        #     pass
+        # self._voice_action = menu.addAction("启用语音反馈")
+        # self._voice_action.setCheckable(True)
+        # self._voice_action.setChecked(voice_enabled)
+        # self._voice_action.triggered.connect(self._toggle_voice)
 
         self._dnd_action = menu.addAction("免打扰模式")
         self._dnd_action.setCheckable(True)
@@ -211,9 +212,9 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         }
         self._pomodoro_action.setText(labels.get(state, "🍅 开始番茄"))
 
-    def set_voice_enabled(self, enabled: bool):
-        """同步语音状态到菜单项"""
-        self._voice_action.setChecked(enabled)
+    # def set_voice_enabled(self, enabled: bool):   # v4.49+: 语音已移除
+    #     """同步语音状态到菜单项"""
+    #     self._voice_action.setChecked(enabled)
 
     def set_do_not_disturb(self, enabled: bool):
         """设置免打扰模式"""
@@ -635,14 +636,14 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             import traceback
             traceback.print_exc()
 
-    def _toggle_voice(self, checked: bool):
-        """切换语音反馈"""
-        logger.info("语音反馈: %s", "ON" if checked else "OFF")
-        try:
-            if hasattr(self._app, '_voice_asst') and self._app._voice_asst is not None:
-                self._app._voice_asst.set_enabled(checked)
-        except Exception as e:
-            logger.warning("切换语音反馈失败: %s", e)
+    # def _toggle_voice(self, checked: bool):       # v4.49+: 语音已移除
+    #     """切换语音反馈"""
+    #     logger.info("语音反馈: %s", "ON" if checked else "OFF")
+    #     try:
+    #         if hasattr(self._app, '_voice_asst') and self._app._voice_asst is not None:
+    #             self._app._voice_asst.set_enabled(checked)
+    #     except Exception as e:
+    #         logger.warning("切换语音反馈失败: %s", e)
 
     def _toggle_dnd(self, checked: bool):
         """切换免打扰模式"""
@@ -665,13 +666,13 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             import traceback
             traceback.print_exc()
             return
-        # 保存后刷新语音开关状态
-        try:
-            from config import get_yaml_value
-            voice_enabled = get_yaml_value("voice", "enabled", default=True)
-            self.set_voice_enabled(voice_enabled)
-        except Exception:
-            pass
+        # 保存后刷新语音开关状态                    # v4.49+: 语音已移除
+        # try:
+        #     from config import get_yaml_value
+        #     voice_enabled = get_yaml_value("voice", "enabled", default=True)
+        #     self.set_voice_enabled(voice_enabled)
+        # except Exception:
+        #     pass
 
     # v4.29: 移除旧的 AI 模式切换/测试方法（功能由设置面板和 AI CLI 替代）
 

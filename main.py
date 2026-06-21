@@ -50,7 +50,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import CAMERA
 from analyzer.focus import FocusAnalyzer, create_focus_analyzer
-from analyzer.voice_assistant import create_voice_assistant
+# from analyzer.voice_assistant import create_voice_assistant  # v4.49+: 语音已移除
 from analyzer.reminder_engine import create_reminder_engine
 from analyzer.gamification import create_gamification_engine
 from analyzer.pomodoro import create_pomodoro_engine
@@ -270,14 +270,16 @@ class EyeFocusApp:
             self._fatigue_analyzer.start()
 
             # v4.17: 语音反馈助手（从 config.yaml 读取开关状态）
-            from config import get_yaml_value
-            voice_enabled = get_yaml_value("voice", "enabled", default=True)
-            self._voice_asst = create_voice_assistant(enabled=voice_enabled)
+            # v4.49+: 语音已移除
+            # from config import get_yaml_value
+            # voice_enabled = get_yaml_value("voice", "enabled", default=True)
+            # self._voice_asst = create_voice_assistant(enabled=voice_enabled)
+            self._voice_asst = None
 
             # v4.17: 智能提醒引擎（回调延迟绑定）
             self._reminder_engine = create_reminder_engine(
                 tray_callback=self._reminder_tray_notify,
-                voice_callback=lambda text: self._voice_asst.say(text) if self._voice_asst else None,
+                # voice_callback=...,     # v4.49+: 语音已移除
             )
 
             # v4.17: 游戏化引擎
@@ -285,9 +287,10 @@ class EyeFocusApp:
 
             # v4.18: 番茄工作法（回调延迟绑定）
             self._pomodoro = create_pomodoro_engine(
-                voice_callback=lambda text: self._voice_asst.say(text) if self._voice_asst else None,
+                # voice_callback=...,     # v4.49+: 语音已移除
                 pause_callback=lambda: self._pomodoro_pause(),
                 resume_callback=lambda: self._pomodoro_resume(),
+                notify_callback=lambda t, m: self._reminder_tray_notify(t, m),
             )
 
             # v4.24: 专注度趋势预测器
@@ -683,6 +686,20 @@ class EyeFocusApp:
             logger.debug("_qt_process_frame 首次调用")
 
         # v4.19: 暂停时跳过处理
+        # v4.49+: 番茄时钟移到暂停检查前，休息倒计时不受暂停影响
+        if hasattr(self, '_pomodoro') and self._pomodoro is not None:
+            self._pomodoro.tick()
+            pomo_ui_time = getattr(self, '_pomo_ui_time', 0)
+            if time.time() - pomo_ui_time >= 1.0:
+                self._pomo_ui_time = time.time()
+                if hasattr(self, '_qt_window') and self._qt_window is not None:
+                    self._qt_window.update_pomodoro(self._pomodoro.get_status())
+                    if hasattr(self._qt_window, '_tray_icon') and self._qt_window._tray_icon is not None:
+                        st = self._pomodoro.state
+                        if self._pomodoro._paused:
+                            st = "PAUSED"
+                        self._qt_window._tray_icon.set_pomodoro_state(st, self._pomodoro.count)
+
         if getattr(self, '_qt_window', None) is not None and self._qt_window.is_paused():
             return
 
@@ -786,13 +803,13 @@ class EyeFocusApp:
                 if hasattr(self, '_session_start_time') and self._session_start_time:
                     session_min = (time.time() - self._session_start_time) / 60.0
 
-                # 语音
-                if hasattr(self, '_voice_asst') and self._voice_asst is not None:
-                    self._voice_asst.on_tick(
-                        focus_score=focus_score, fatigue_level=fatigue_level,
-                        session_minutes=session_min,
-                        face_detected=self._frame_processor.latest_face_detected,
-                    )
+                # 语音                                # v4.49+: 语音已移除
+                # if hasattr(self, '_voice_asst') and self._voice_asst is not None:
+                #     self._voice_asst.on_tick(
+                #         focus_score=focus_score, fatigue_level=fatigue_level,
+                #         session_minutes=session_min,
+                #         face_detected=self._frame_processor.latest_face_detected,
+                #     )
 
                 # 提醒
                 if hasattr(self, '_reminder_engine') and self._reminder_engine is not None:
@@ -811,16 +828,7 @@ class EyeFocusApp:
                     # v4.24: 专注度趋势预测
                     if hasattr(self, '_focus_predictor') and self._focus_predictor is not None:
                         self._focus_predictor.add_score(focus_score)
-                    # 番茄 tick + UI 更新 + 托盘同步
-                    if hasattr(self, '_pomodoro') and self._pomodoro is not None:
-                        self._pomodoro.tick()
-                        if hasattr(self, '_qt_window') and self._qt_window is not None:
-                            self._qt_window.update_pomodoro(self._pomodoro.get_status())
-                            if hasattr(self._qt_window, '_tray_icon') and self._qt_window._tray_icon is not None:
-                                st = self._pomodoro.state
-                                if self._pomodoro._paused:
-                                    st = "PAUSED"
-                                self._qt_window._tray_icon.set_pomodoro_state(st, self._pomodoro.count)
+                    # v4.49+: 番茄 tick + UI 已移至暂停检查前，此处不再重复
 
                 # v4.22: Web 仪表盘广播（每秒一次）
                 if hasattr(self, '_web_dashboard') and self._web_dashboard is not None:
@@ -1462,9 +1470,9 @@ class EyeFocusApp:
         # v4.16: 强制移除托盘图标
         self._tray_cleanup()
 
-        # v4.17: 关闭语音助手
-        if hasattr(self, '_voice_asst') and self._voice_asst is not None:
-            self._voice_asst.shutdown()
+        # v4.17: 关闭语音助手                    # v4.49+: 语音已移除
+        # if hasattr(self, '_voice_asst') and self._voice_asst is not None:
+        #     self._voice_asst.shutdown()
 
         # v4.22: 停止 Web 仪表盘
         if hasattr(self, '_web_dashboard') and self._web_dashboard is not None:

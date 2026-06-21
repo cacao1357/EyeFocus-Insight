@@ -15,7 +15,7 @@ from typing import List, Optional, Tuple
 logger = logging.getLogger("eyefocus.distraction")
 
 # ── 默认阈值 ─────────────────────────────────────────────
-GAZE_DISTRACTED_THRESHOLD = 40.0   # gaze_score < 此值视为分心
+GAZE_DISTRACTED_THRESHOLD = 24.0   # v4.47: gaze_score(0-60) < 24(40%)视为分心
 SHORT_MAX_SEC = 15.0                # 短分心上限
 MEDIUM_MAX_SEC = 60.0               # 中分心上限
 LONG_MIN_SEC = 60.0                 # 长分心下限

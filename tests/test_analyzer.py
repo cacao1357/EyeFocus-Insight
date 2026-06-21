@@ -108,23 +108,24 @@ class TestFatigueAnalyzer:
         assert result.fatigue_indicator == FatigueIndicator.RESTED
 
     def test_prolonged_closures_trigger_attention(self):
-        """v4.44: 10次长闭眼(最长2.0s) → 次数40+时长38 → 疲劳39 → ATTENTION"""
+        """v4.45: 累计15s闭眼 → PERCLOS≈42 → ATTENTION"""
         analyzer = FatigueAnalyzer()
         analyzer.start()
         now = time.time()
-        for i in range(10):
-            analyzer._prolonged_events.append((now - i * 15, 1.0 + i * 0.1))
+        for i in range(8):
+            analyzer._prolonged_events.append((now - i * 20, 1.8))
         result = analyzer.analyze(closure_type="open", blink_rate=15.0)
         assert result.fatigue_indicator == FatigueIndicator.ATTENTION
 
     def test_many_prolonged_trigger_tired(self):
-        """v4.44: 20次长闭眼(最长4.0s) → 次数82+时长75 → 疲劳78.5 → TIRED"""
+        """v4.45: 持续闭眼30s + 实时加成 → PERCLOS 70×1.25=88 → TIRED"""
         analyzer = FatigueAnalyzer()
         analyzer.start()
         now = time.time()
-        for i in range(20):
-            analyzer._prolonged_events.append((now - i * 8, 0.9 + i * 0.16))
-        result = analyzer.analyze(closure_type="open", blink_rate=15.0)
+        for i in range(5):
+            analyzer._prolonged_events.append((now - i * 30, 6.0))
+        result = analyzer.analyze(closure_type="prolonged", closure_duration=30.0,
+                                  blink_rate=15.0)
         assert result.fatigue_indicator == FatigueIndicator.TIRED
 
     def test_start_reset(self):
@@ -186,34 +187,34 @@ class TestMultiSignalFocusLevel:
     """v4.34: 多信号门控 — 高频眨眼 + 视线注视 ≠ 分心"""
 
     def test_high_blink_with_gaze_head_stays_normal(self):
-        """EAR 偏离 8s+ 但视线注视 + 头部稳定 → NORMAL"""
+        """v4.47: EAR 偏离≥16次 但视线注视+头部稳定 → NORMAL"""
         from analyzer.focus import FocusLevel
         analyzer = FocusAnalyzer(baseline_ear=0.25)
-        # 8 个偏离样本 (> DISTRACTED_MIN_DEVIATION_SECS)
-        analyzer._window_samples.extend([0.15] * 8)
-        analyzer._window_samples.extend([0.25] * 7)
+        # 16 个偏离 (≥DISTRACTED_MIN_DEVIATION_SECS) + 44 个正常
+        analyzer._window_samples.extend([0.15] * 16)
+        analyzer._window_samples.extend([0.25] * 44)
         result = analyzer.analyze(ear=0.15, yaw=0.0, pitch=0.0,
-                                  gaze_score=90.0, face_detected=True)
+                                  gaze_score=50.0, face_detected=True)
         assert result.focus_level == FocusLevel.NORMAL
 
     def test_high_blink_with_low_gaze_stays_distracted(self):
-        """EAR 偏离 8s+ + 视线偏离 → 仍是 DISTRACTED"""
+        """v4.47: EAR 偏离≥16次 + 视线偏离(gaze<30) → DISTRACTED"""
         from analyzer.focus import FocusLevel
         analyzer = FocusAnalyzer(baseline_ear=0.25)
-        analyzer._window_samples.extend([0.15] * 8)
-        analyzer._window_samples.extend([0.25] * 7)
+        analyzer._window_samples.extend([0.15] * 16)
+        analyzer._window_samples.extend([0.25] * 44)
         result = analyzer.analyze(ear=0.15, yaw=0.0, pitch=0.0,
                                   gaze_score=20.0, face_detected=True)
         assert result.focus_level == FocusLevel.DISTRACTED
 
     def test_high_blink_with_head_turned_stays_distracted(self):
-        """EAR 偏离 8s+ + 头部偏转 → 仍是 DISTRACTED"""
+        """v4.48: EAR 偏离≥16次 + 头部大幅偏转(yaw=40°) → DISTRACTED"""
         from analyzer.focus import FocusLevel
         analyzer = FocusAnalyzer(baseline_ear=0.25)
-        analyzer._window_samples.extend([0.15] * 8)
-        analyzer._window_samples.extend([0.25] * 7)
-        result = analyzer.analyze(ear=0.15, yaw=35.0, pitch=0.0,
-                                  gaze_score=90.0, face_detected=True)
+        analyzer._window_samples.extend([0.15] * 16)
+        analyzer._window_samples.extend([0.25] * 44)
+        result = analyzer.analyze(ear=0.15, yaw=40.0, pitch=0.0,
+                                  gaze_score=50.0, face_detected=True)
         assert result.focus_level == FocusLevel.DISTRACTED
 
 
