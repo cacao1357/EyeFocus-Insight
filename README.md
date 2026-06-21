@@ -2,11 +2,11 @@
 
 **眼动追踪与疲劳检测系统** — 基于 MediaPipe Face Mesh 实时分析专注度、疲劳和分心行为，生成个性化 HTML 报告。
 
-![Python](https://img.shields.io/badge/Python-3.12-blue) ![PyQt5](https://img.shields.io/badge/GUI-PyQt5-green) ![MediaPipe](https://img.shields.io/badge/MediaPipe-FaceMesh-orange) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
+![Python](https://img.shields.io/badge/Python-3.12-blue) ![PyQt5](https://img.shields.io/badge/GUI-PyQt5-green) ![MediaPipe](https://img.shields.io/badge/MediaPipe-FaceMesh-orange) ![License](https://img.shields.io/badge/License-MIT-lightgrey) ![Privacy](https://img.shields.io/badge/Privacy-Local%20Only-success)
 
 ---
 
-## 📖 目录
+## 目录
 
 - [功能](#-功能)
 - [截图](#-截图)
@@ -16,8 +16,11 @@
 - [FAQ](#-faq)
 - [技术栈](#-技术栈)
 - [项目结构](#-项目结构)
-- [进度](#-进度)
+- [隐私与数据](#-隐私与数据)
+- [贡献](#-贡献)
+- [路线图](#-路线图)
 - [已知限制](#-已知限制)
+- [致谢](#-致谢)
 - [License](#-license)
 
 ---
@@ -28,14 +31,13 @@
 | 功能 | 描述 |
 |------|------|
 | 👁️ **眨眼检测** | EAR (Eye Aspect Ratio) 实时计算，眨眼事件追踪 |
-| 🎯 **专注度分级** | 30 秒滑动窗口 → FOCUSED / NORMAL / DISTRACTED 三档，信号驱动 EMA 恢复（3s 快速恢复） |
-| 😫 **疲劳评估** | 信号驱动衰减 + PERCLOS 锚点插值，持续睁眼加速恢复（5s→2x, 10s→4x） |
+| 🎯 **专注度分级** | 30 秒滑动窗口 → FOCUSED / NORMAL / DISTRACTED 三档，信号驱动 EMA 恢复 |
+| 😫 **疲劳评估** | 信号驱动衰减 + PERCLOS 锚点插值 + 持续睁眼加速恢复 |
 | 👓 **眼镜检测** | blendshapes + 眼角距离双保险，自动适应是否戴镜 |
 | 💡 **光照感知** | 三级亮度分类，低光照时自动降低检测阈值 |
-| ➡️ **头部追踪** | yaw/pitch/roll 实时显示 + 5 帧滑动窗口平滑滤波 |
-| 🎯 **视线追踪** | 纯瞳孔偏移视线估计 + 个人虹膜基线校准（3s 初始 + EMA 持续更新），死区评分（±0.3 内满分） |
+| ➡️ **头部追踪** | yaw/pitch/roll 实时显示 + 滑动窗口平滑滤波 |
+| 🎯 **视线追踪** | 纯瞳孔偏移视线估计 + 个人虹膜基线校准 |
 | 🔇 **分心识别** | 综合视线和面部存在检测，区分短/中/长分心事件 |
-| 📉 **分心原因分析** | 实时计算头部偏移% + 眨眼异常%，分心时显示归因标签 |
 
 ### 离线分析
 | 功能 | 描述 |
@@ -44,48 +46,46 @@
 | 🚨 **异常检测** | IsolationForest 标记异常行为会话 |
 | 📈 **趋势分析** | STL 时间序列分解，展示长周期趋势 |
 | 🎯 **因素归因** | Cohen's d 效应量评估各因素对专注度的影响 |
-| 💡 **个性化建议** | 数据驱动的针对性改善建议 |
 
 ### 专注力工具
 | 功能 | 描述 |
 |------|------|
-| 🍅 **番茄工作法** | 状态机引擎（IDLE/WORKING/BREAK/PAUSED），自定义时长，托盘气泡通知（开始/完成/休息结束），倒计时不受暂停影响 |
+| 🍅 **番茄工作法** | 状态机引擎（IDLE/WORKING/BREAK/PAUSED），自定义时长，托盘气泡通知 |
 | 🔥 **游戏化激励** | 连续打卡天数、今日专注累计时长、跨零点自动续期 |
 | ⏰ **智能提醒** | 定时休息提醒、长时间分心提醒、可配置间隔时间 |
 
-### AI 分析（v4.24 → v4.33）
+### AI 分析（可选）
 | 功能 | 描述 |
 |------|------|
-| 🤖 **AI 分析摘要** | 内置模板 / Ollama 本地 / llama-cpp-python 三种后端，展示在建议 Tab |
-| 📥 **本地模型** | 可选 Ollama 或 llama-cpp-python 本地推理，零网络请求 |
-| ⚙️ **一键切换** | 系统托盘菜单一键切换 AI 后端，无需重启 |
+| 🤖 **AI 分析摘要** | 内置模板 / Ollama 本地 / llama-cpp-python 三种后端 |
+| 📥 **本地推理** | 可选 Ollama 或 llama-cpp-python 本地推理，零网络请求 |
+| ⚙️ **一键切换** | 系统托盘菜单一键切换 AI 后端 |
 | 🛡️ **超时保护** | LLM 调用 15s 超时自动降级，不影响主流程 |
 
 ### 扩展
 | 功能 | 描述 |
 |------|------|
-| 🌐 **Web 仪表盘** | aiohttp 后台 HTTP + WebSocket 服务器，浏览器实时查看专注度圆环/指标/波线/番茄状态 |
-| ⚙️ **设置面板** | 图形化 QDialog 配置（摄像头、番茄时间），替代 config.yaml 手动编辑 |
+| 🌐 **Web 仪表盘** | aiohttp 后台 HTTP + WebSocket 服务器，浏览器实时查看 |
+| ⚙️ **设置面板** | 图形化 QDialog 配置，替代 config.yaml 手动编辑 |
 
-### 报告与数据（v4.33）
+### 报告与数据
 | 功能 | 描述 |
 |------|------|
 | 📄 **HTML 报告** | 3 Tab 概览/数据/建议，专注度趋势+疲劳+眨眼+日历热力图 |
 | 📊 **可视化图表** | Plotly 交互式图表：降采样趋势线、间隙自适应标记点、宽柱眨眼图 |
-| ⚡ **快速打开** | 5 分钟 HTML 缓存，检测中重复打开免重生成 |
-| 🗓️ **周报** | 聚合 7 天数据分析长周期趋势，按天汇总统计 |
+| 🗓️ **周报** | 聚合 7 天数据分析长周期趋势 |
 | 📤 **CSV 导出** | 帧记录 / 专注记录一键导出为 CSV |
 | 🔍 **会话历史** | SQLite 浏览历史会话，报告快速跳转 |
-| 💡 **个性化建议** | 基于数据归因的针对性改善建议 |
 
 ---
 
 ## 📸 截图
 
-<!-- TODO: 运行 `python main.py --qt` 后截取以下画面替换占位图 -->
 | 校准对话框 | 监测窗口 | HTML 报告 |
 |:---:|:---:|:---:|
 | ![校准](docs/screenshots/calibration.png) | ![监测](docs/screenshots/monitoring.png) | ![报告](docs/screenshots/report.png) |
+
+> 截图可通过运行 `python main.py --qt` 后获取。
 
 ---
 
@@ -138,9 +138,9 @@ python main.py --qt
 python main.py
 ```
 
-### 5. （可选）下载本地 AI 模型
+### 5.（可选）下载本地 AI 模型
 
-如需要使用本地 AI 分析功能，需额外下载模型文件（~1 GB）：
+如需要使用本地 AI 分析功能，需额外下载模型文件：
 
 ```bash
 python scripts/download_model.py
@@ -149,7 +149,6 @@ python scripts/download_model.py
 ### 6. 运行测试
 
 ```bash
-# 全部测试（621 个）
 python -m pytest tests/ calibration/tests/ --tb=line -q
 ```
 
@@ -161,21 +160,17 @@ python -m pytest tests/ calibration/tests/ --tb=line -q
 
 首次使用需完成校准，Qt 校准对话框引导 4 步骤：
 
-1. **睁眼基线**（5s）— 保持自然睁眼
-2. **闭眼检测**（3s）— 轻轻闭上双眼
-3. **头部姿态**（4 方向 × 2s）— 上下左右转动头部
-4. **眨眼计数**（8s）— 正常眨眼后输入次数
+1. **睁眼基线** — 保持自然睁眼
+2. **闭眼检测** — 轻轻闭上双眼
+3. **头部姿态** — 上下左右转动头部
+4. **眨眼计数** — 正常眨眼后输入次数
 
 校准结果自动应用，可直接进入监测模式。
 
 ### 监测模式
 
-- **实时数据面板**（50:50 视频/面板比例）：
-  - 专注度 **FocusRing** 圆环（140×140，32px 大字）
-  - 专注时长 ⏱（22px 粗体）、番茄倒计时 🍅（18px）、识别状态 🟢（16px）
-  - 实时专注度波线（60s 滑动窗口渐变填充）
-  - 游戏化栏 🔥（连续天数 + 今日时长，14px）
-- **操控按钮**：⏸ 暂停 / ⚙ 校准（大按钮 13px）
+- **实时数据面板**：专注度 FocusRing 圆环 / 专注时长 / 番茄倒计时 / 实时波线 / 游戏化栏
+- **操控按钮**：⏸ 暂停 / ⚙ 校准
 - **番茄工作法**：面板番茄图标点击弹出菜单（开始/暂停/继续/停止/设置时间）
 - **系统托盘**：右键菜单含完整番茄控制 + 最近会话子菜单
 - **自动行为**：人脸丢失 > 10s 自动暂停，恢复后自动继续
@@ -199,31 +194,19 @@ python -m pytest tests/ calibration/tests/ --tb=line -q
 
 **Q: 戴眼镜检测不准？**
 
-系统采用 blendshapes 眯眼比率 + 眼角距离双保险检测，支持手动开关：
-```python
-# 在 main.py 启动前设置
-app._glasses_detector.set_manual_mode(GlassesMode.WITH_GLASSES)
-```
+系统采用 blendshapes 眯眼比率 + 眼角距离双保险检测，也支持手动模式切换。
 
 **Q: 数据存储在哪里？本地还是云端？**
 
-全部本地 SQLite 存储，**0 HTTP 请求**，不存储图像帧，保护隐私。
+全部本地 SQLite 存储，**0 HTTP 请求**，不存储图像帧。详见 [隐私与数据](#-隐私与数据)。
 
 **Q: 番茄工作法怎么用？**
 
-点击主窗口面板的 🍅 图标弹出菜单，选择"开始"即可。支持暂停/继续/停止，也可在托盘右键菜单操作。点击"设置时间"可自定义工作（1-120 分钟）和休息（1-60 分钟）时长。
-
-**Q: 游戏化连续天数怎么计算的？**
-
-系统记录每一天的首次专注会话日期。跨零点后首次监测自动续期，无需手动打卡。连续天数 = 从最近一次有记录的日期往前推算的连续日期数。
-
-**Q: 报告在哪里？**
-
-会话结束后自动生成到 `reports/` 目录，文件名格式 `{session_id}.html`。
+点击主窗口面板的 🍅 图标弹出菜单，选择"开始"即可。支持暂停/继续/停止，也可在托盘右键菜单操作。
 
 **Q: 如何打包成独立 exe？**
 
-参见 [PyInstaller 打包说明](docs/DEV_GUIDE.md#pyinstaller-打包)。
+参见 [docs/DEV_GUIDE.md](docs/DEV_GUIDE.md#pyinstaller-打包)。
 
 ---
 
@@ -247,83 +230,84 @@ app._glasses_detector.set_manual_mode(GlassesMode.WITH_GLASSES)
 
 ```
 EyeFocus Insight/
-├── main.py                     # 主程序入口（EyeFocusApp ~2200 行）
+├── main.py                     # 主程序入口（EyeFocusApp）
 ├── config.py                   # 集中配置管理
-├── detector/                   # 信号采集层
-│   ├── face_mesh.py            # MediaPipe FaceMesh
-│   ├── eye_aspect.py           # EAR 眨眼检测 + 多信号融合
-│   ├── head_pose.py            # 头部姿态
-│   ├── gaze.py                 # 视线估计
-│   └── light.py                # 光照检测
-├── analyzer/                   # 信号分析层
-│   ├── focus.py                # 专注度分析（30s 窗口 + EMA 平滑）
-│   ├── fatigue.py              # 疲劳分析
-│   ├── glasses.py              # 眼镜检测
-│   ├── distraction.py          # 分心识别 + 原因归因
-│   ├── pomodoro.py             # 🍅 番茄工作法引擎（状态机 + 托盘弹窗）
-│   ├── voice_assistant.py      # 🎤 TTS 语音反馈（v4.49+: 已禁用，代码保留）
-│   ├── reminder_engine.py      # ⏰ 智能提醒引擎
-│   ├── gamification.py         # 🔥 游戏化激励（连续天数/今日时长）
-│   ├── baseline.py             # EAR 自动基线校准
-│   ├── predictor.py            # 📈 专注度趋势预测（v4.24）
-│   ├── llm_client.py           # 🤖 AI 分析客户端（模板/Ollama/本地llama-cpp, v4.27 去云端）
-│   ├── user_calibration.py     # 用户校准数据管理器
-│   └── insights/               # 离线分析（PELT/IF/KMeans/STL）
-├── app/                        # main.py 拆分包（strangler 模式）
-│   ├── camera.py               # 摄像头管理类
-│   ├── processor.py            # 帧处理流水线
-│   └── calibration.py          # 校准流程回调与协调器
+├── detector/                   # 信号采集层（face_mesh / eye_aspect / head_pose / gaze / light）
+├── analyzer/                   # 信号分析层（focus / fatigue / glasses / distraction / pomodoro ...）
+├── app/                        # main.py 拆分包（camera / processor / calibration）
 ├── gui/                        # PyQt5 图形界面
-│   ├── qt_window.py            # 监测主窗口（50:50 面板布局）
-│   ├── qt_overlay.py           # FocusRing 专注圆环 + 状态波线
-│   ├── settings_dialog.py      # ⚙️ 图形化设置面板（v4.22）
-│   ├── tray.py                 # 系统托盘（番茄菜单/语音开关/会话历史）
-│   ├── calibration_dialog.py   # 校准对话框
-│   └── video_label.py          # QLabel 视频渲染
-├── storage/                    # 数据持久化
-│   ├── db.py                   # SQLite WAL 模式数据库
-│   └── models.py               # 数据模型（Session/FrameRecord/BlinkRecord）
-├── reporter/                   # HTML 报告
-│   ├── report_html.py          # 报告生成 + 周报
-│   ├── charts.py               # Plotly 图表（日历热力图/饼图/柱状图/波线）
-│   └── insights.py             # 建议生成
-├── webserver/                  # 🌐 Web 仪表盘（aiohttp + WebSocket, v4.22）
-│   ├── server.py               #    HTTP + WebSocket 服务器
-│   └── static/index.html       #    前端仪表盘（FocusRing/波线/指标）
+├── storage/                    # 数据持久化（SQLite WAL）
+├── reporter/                   # HTML 报告生成
+├── webserver/                  # 🌐 Web 仪表盘（aiohttp + WebSocket）
 ├── calibration/                # 校准模块（Qt 对话框引导 4 步骤）
-├── tests/                      # 测试（606+ 用例）
-└── docs/                       # 文档
+├── tests/                      # 测试（621+ 用例，pytest 全绿）
+└── docs/                       # 文档（ARCHITECTURE / USER_GUIDE / API / DEV_GUIDE ...）
 ```
 
 完整架构说明见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ---
 
-## 📈 进度
+## 🔒 隐私与数据
 
-| 版本 | 内容 | 测试 |
-|------|------|:----:|
-| **v3.4** | 帧处理重构（FrameProcessor） | 251 |
-| **v4.0** | 10 个审计发现修复 | 275 |
-| **v4.1** | insights 离线分析子包 | 284 |
-| **v4.2** | calibration 模块重做 | 284 |
-| **v4.3** | 集成校准 + GUI + 44 audit fixes | 556 |
-| **v4.4** | GUI 清晰化（圆环/横条/无脸检测） | 580 |
-| **v4.5** | Qt 校准对话框 + 眨眼验证闭环 | 580 |
-| **v4.6** | Insights + 分心识别 + 建议升级 | 408 |
-| **v4.7** | Qt 校准重设计 + 边界修复 | 606 |
-| **v4.17** | 语音反馈 + 智能提醒 + 游戏化 + 分心归因 + 周报 | 606 |
-| **v4.18** | 会话历史浏览器 + 番茄工作法 + CSV 导出 + 周报 | 606 |
-| **v4.19** | 代码审查修复 + 文件归档 + 路径管理 + UI 修复 | 606 |
-| **v4.20** | 报告修复 + 卡片去字 + 番茄增强 + 按钮美化 | 606 |
-| **v4.21** | 面板 50:50 布局重设计 + FocusRing + QLabel 大字体 | 606 |
-| **v4.22** | main.py 拆分（strangler）+ 设置面板 + Web 仪表盘 | 606 |
-| **v4.23** | 黑背景 + 报告打不开 根因修复（查看终止分离） | 606 |
-| **v4.24** | AI 分析摘要（4 种后端）+ LLMClient + 专注度预测 + 本地模型（脚本下载）| 606 |
-| **v4.27** | 移除云端 API（Claude/OpenAI/Gemini），仅保留本地 AI | 616 |
-| **v4.47** | 核心算法全面优化：纯瞳孔偏移视线/信号驱动恢复/疲劳连续累积 | 621 |
-| **v4.48** | 专注度降敏感：头部权重 20%→5%、舒适区放宽、EMA 降速 | 621 |
-| **v4.49** | 恢复加速（去长 EMA）+ 番茄托盘弹窗 + 疲劳显示最值 + 移除语音 | 621 |
+EyeFocus Insight 的核心设计原则：**数据不出本机**。
+
+### 数据存储
+
+- **本地 SQLite**（`data/eyefocus.db`，WAL 模式）
+- **不存储图像帧**，仅存元数据（EAR、yaw、pitch、focus_score 等数值）
+- 配置文件、数据库、报告默认存于项目目录内
+
+### 网络请求
+
+- **0 主动 HTTP 请求**（除用户主动启用的功能外）
+- **AI 分析可选**：模板版无网络请求；Ollama / llama-cpp-python 仅访问本地回环
+- **Web 仪表盘**：仅监听本地端口（默认 `127.0.0.1:8765`）
+
+### 配置中的密钥
+
+- `.env.example` 是占位模板，**不含真实密钥**
+- 真实密钥请存于 `.env`（已在 `.gitignore`）
+- 云端 API 后端已自 v4.27 起移除
+
+### 摄像头数据流
+
+```
+摄像头 → 内存（推理）→ SQLite（数值）→ HTML 报告
+                       ↓
+                  永不上传
+```
+
+---
+
+## 🤝 贡献
+
+欢迎贡献！建议流程：
+
+1. **Fork** 本仓库
+2. 创建特性分支（`git checkout -b feat/your-feature`）
+3. 提交前运行测试：`pytest tests/ calibration/tests/`
+4. 提交（建议一个特性一个 commit）
+5. 发起 **Pull Request**
+
+### 提交流程约定
+
+- 提交信息格式：`<type>(<scope>): <summary>`，subject ≤ 70 字
+- type：`feat` / `fix` / `docs` / `refactor` / `test` / `chore`
+- 测试门禁：新增模块需带测试；覆盖率不下降
+
+详见 [docs/DEV_GUIDE.md](docs/DEV_GUIDE.md) 与 [docs/MODULE_INTERFACES.md](docs/MODULE_INTERFACES.md)。
+
+---
+
+## 🗺️ 路线图
+
+持续迭代方向（详细见各模块代码注释与 `docs/CURRENT_STATE.md`）：
+
+- 多模态融合（脑电 / 微表情）以更好区分"思考"与"分心"
+- 跨平台支持（macOS / Linux）
+- 报告导出 PDF 格式
+- 多人 / 多设备云同步（**默认关闭**，需用户主动开启）
 
 ---
 
@@ -332,12 +316,47 @@ EyeFocus Insight/
 - **MediaPipe WARNING**：`W0000` 日志来自 MediaPipe C++ 层（mediapipe 0.10.35），不影响功能
 - **单摄像头**：无法区分"思考时视线偏移"和"真正分心"
 - **头部范围**：yaw 超过 ±60° 时关键点检测精度下降
-- **GUI 渲染**：CLI 环境无法验证像素输出，完整视觉验证需 Windows GUI 桌面
-- **main.py 体量**：主文件约 2200 行，后续版本计划拆分
+- **平台**：当前仅在 Windows 10/11 实测验证
 - **校准依赖**：首次使用必须完成校准（自动基线），未校准则专注度评分不准确
+
+---
+
+## 🙏 致谢
+
+- **MediaPipe** — Google 开源的 478 点 Face Mesh 模型与 blendshapes
+- **EAR 算法** — Soukupová & Čech (2016)
+- **PELT 算法** — Killick et al. (2012)
+- **STL 分解** — Cleveland et al. (1990)
+- **IsolationForest** — Liu et al. (2008)
+- **Plotly** — 交互式图表渲染
+- **PyQt5** — 跨平台 GUI 框架
 
 ---
 
 ## 📄 License
 
-MIT
+本项目采用 **MIT License** — 详见 [LICENSE](LICENSE) 文件。
+
+```
+MIT License
+
+Copyright (c) 2026 EyeFocus Insight Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
