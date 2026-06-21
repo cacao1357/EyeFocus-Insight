@@ -80,10 +80,3 @@ pytest calibration/tests/integration/ -v --durations=5  # 11 集成（~44s，含
 | S2 | 音频反馈 | beep + 中文 TTS（pyttsx3 ≥ 2.90，SAPI 失败时降级 beep-only）|
 | C2 | 用户控制权 | 鼠标点屏幕数字键盘主导 + 键盘加速 + IME 兼容 |
 | X1 | 失败契约 | `Optional[CalibrationResult]`，失败/取消**返回 None 不抛异常** |
-
-## 关联文档
-
-- 设计 spec：`docs/superpowers/specs/2026-06-02-user-calibration-redesign.md`（已实施）
-- 实施 plan：`docs/superpowers/plans/2026-06-02-calibration-redesign-plan.md`
-- 真机验收：`docs/REAL_MACHINE_TEST_v4.3.md`（CQS=1.00）
-- 失败教训：`docs/old_schemes/T148_USER_CALIBRATION_DESIGN_v1.0.md`（T148 旧方案）

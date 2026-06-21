@@ -247,7 +247,6 @@
 
 ## 七、参考
 
-- v4.2 calibration 范本：`docs/superpowers/specs/2026-06-02-user-calibration-redesign.md`
 - v4.1 insights 范本：`PROJECT_PLAN.md` §6.9 + `PHASE2_PLAN.md` §2.6
 - 项目总方案：`PROJECT_PLAN.md` v4.2
 - 阶段计划：`PHASE1_PLAN.md` v1.8 + `PHASE2_PLAN.md` v1.1
