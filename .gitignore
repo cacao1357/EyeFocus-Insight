@@ -61,8 +61,6 @@ docs/archive/
 # ── spike 自动输出 ──
 spike/s2_result.json
 spike/s1_result.json
-spike/results/**/*.json
-spike/results/**/*.png
 
 # ── brainstorm ──
 .superpowers/
@@ -83,8 +81,18 @@ docs/archive/
 docs/old_schemes/
 docs/superpowers/
 
+# ── 隐私/个人文档（不入仓）──
+/api安全性检查基准.md
+/ppt大纲.md
+/核心算法公式和架构.md
+
 # ── OpenSpec 工作流 ──
 /openspec/
+
+# ── spike 测试结果（含个人标识的输出文件）──
+spike/results/**/*.txt
+spike/results/**/*.json
+spike/results/**/*.png
 
 # ── 跨平台行尾符锁定 ──
 .gitattributes tracked in repo
