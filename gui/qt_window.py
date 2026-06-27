@@ -322,7 +322,7 @@ class EyeFocusWindow(QMainWindow):
         footer_layout.setSpacing(6)
         footer_layout.setContentsMargins(0, 4, 0, 0)
 
-        # 校准提示（降级为 footer 小字）
+        # 校准状态提示（footer 小字）— v4.50: 显示"已校准/未校准"
         self._calib_prompt = QLabel("未校准 · 评分仅供参考")
         self._calib_prompt.setAlignment(Qt.AlignCenter)
         self._calib_prompt.setStyleSheet(
@@ -627,10 +627,28 @@ class EyeFocusWindow(QMainWindow):
         elif not visible:
             self._show_toast()
 
-    def set_calibration_prompt(self, visible: bool) -> None:
-        """v4.13: 设置校准提示可见性（footer 小字）"""
-        if hasattr(self, '_calib_prompt'):
-            self._calib_prompt.setVisible(visible)
+    def set_calibration_status(self, calibrated: bool) -> None:
+        """v4.50: 设置校准状态显示（已校准/未校准）"""
+        if not hasattr(self, '_calib_prompt'):
+            return
+        if calibrated:
+            self._calib_prompt.setText("✓ 已校准")
+            self._calib_prompt.setStyleSheet(
+                "color: #5A8A6D; background: transparent;"
+                "border: none; font-size: 11px; font-weight: 600;"
+            )
+            self._calib_prompt.setVisible(True)
+        else:
+            self._calib_prompt.setText("未校准 · 评分仅供参考")
+            self._calib_prompt.setStyleSheet(
+                "color: #8E8E93; background: transparent;"
+                "border: none; font-size: 11px;"
+            )
+            self._calib_prompt.setVisible(True)
+
+    def show_calibration_not_found(self) -> None:
+        """v4.50: 托盘"应用已有校准数据"无数据时显示提示"""
+        self._show_toast("⚠ 校准失败，当前无校准数据", "warn")
 
     def update_data(self,
                     focus_score: Optional[float] = None,

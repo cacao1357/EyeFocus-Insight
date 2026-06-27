@@ -7,6 +7,7 @@ v4.16: 从 matplotlib PNG 切换到 Plotly 交互式图表。
   - 响应式宽度，统一 Quiet Focus 色板
 """
 import logging
+from datetime import datetime
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -541,21 +542,22 @@ class ChartGenerator:
                 f'title="{label}"></span>'
             )
 
-        # 图例 (v4.46: 5项)
+        # 图例 (v4.46: 5项) — v4.50: 修复■颜色继承外层灰色的问题
         legend = (
             f'<span style="display:flex;gap:10px;font-size:11px;color:{C_QUIET};margin-top:4px">'
-            f'<span>■ <span style="color:{C_SAGE}">专注</span></span>'
-            f'<span>■ <span style="color:{C_ROSE}">分心</span></span>'
-            f'<span>■ <span style="color:#BDBDBD">无人脸</span></span>'
-            f'<span>■ <span style="color:{C_IRIS}">疲劳</span></span>'
-            f'<span>■ <span style="color:{C_LINE}">无数据</span></span>'
+            f'<span style="color:{C_SAGE}">■ 专注</span>'
+            f'<span style="color:{C_ROSE}">■ 分心</span>'
+            f'<span style="color:#BDBDBD">■ 无人脸</span>'
+            f'<span style="color:{C_IRIS}">■ 疲劳</span>'
+            f'<span style="color:{C_LINE}">■ 无数据</span>'
             f'</span>'
         )
         bar = f'<div style="display:flex;height:12px;border-radius:2px;overflow:hidden;background:{C_BG};border:1px solid {C_LINE}">{"".join(blocks)}</div>'
 
-        # 时间标签（开始/结束）
-        labels = self._time_labels(focus_records)
-        time_range = f'<div style="display:flex;justify-content:space-between;font-size:10px;color:{C_QUIET};margin-top:2px"><span>{labels[0] if labels else "0:00"}</span><span>{labels[-1] if labels else "--"}</span></div>'
+        # 时间标签（开始/结束）— v4.50: 显示实际墙钟时间
+        first_clock = datetime.fromtimestamp(first_ts).strftime("%H:%M")
+        last_clock = datetime.fromtimestamp(last_ts).strftime("%H:%M")
+        time_range = f'<div style="display:flex;justify-content:space-between;font-size:10px;color:{C_QUIET};margin-top:2px"><span>{first_clock}</span><span>{last_clock}</span></div>'
 
         return f'<div style="padding:4px 0">{bar}{time_range}{legend}</div>'
 

@@ -167,6 +167,10 @@ class EyeFocusApp:
         self._last_face_time: Optional[float] = None
         # v4.13: 历史校准加载状态
         self._calib_loaded: bool = False
+        # v4.50: 校准持久化文件路径
+        self._CALIBRATION_FILE: str = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "data", "user_calibration.json"
+        )
         # v4.33: 报告 HTML 时间缓存（5 分钟 TTL，检测中重复打开免重生成）
         self._report_html_cache: "Dict[str, tuple]" = {}  # {cache_key: (html, timestamp)}
 
@@ -535,7 +539,7 @@ class EyeFocusApp:
         )
         # v4.13: 已加载历史校准 → 隐藏未校准提示
         if getattr(self, '_calib_loaded', False):
-            self._qt_window.set_calibration_prompt(False)
+            self._qt_window.set_calibration_status(True)
 
         # 初始化人脸丢失计时（Qt 模式下也需要跟踪）
         self._last_face_time = time.time()
@@ -641,7 +645,7 @@ class EyeFocusApp:
         # v4.13: 校准完成后标记已校准 + 隐藏提示
         self._calib_loaded = True
         if self._qt_window is not None:
-            self._qt_window.set_calibration_prompt(False)
+            self._qt_window.set_calibration_status(True)
 
     def _on_qt_calibrate(self) -> None:
         """Qt 窗口校准按钮处理"""
@@ -1363,13 +1367,21 @@ class EyeFocusApp:
                 date_str = datetime.now().strftime("%Y-%m-%d")
                 try:
                     html = generator.generate_daily_report(date_str)
-                except Exception as e:
-                    logger.warning("日汇总报告失败，回退到会话报告: %s", e)
+                except Exception as e1:
+                    logger.warning("日汇总报告异常: %s", e1)
+                    html = None
+                # v4.50: generate_daily_report 内部 catch-all 可能返回错误页，
+                # 需检测并回退到单会话报告
+                if html is None or "生成报告时出错" in html:
+                    if html is not None:
+                        logger.warning("日汇总报告返回错误页，回退到单会话报告")
                     try:
                         html = generator.generate_report_with_insights(self._session_id)
                     except Exception as e2:
-                        logger.error("会话报告也失败: %s", e2)
-                        html = generator._error_html(str(e2))
+                        try:
+                            html = generator.generate_report(self._session_id)
+                        except Exception as e3:
+                            html = generator._error_html(str(e3))
             else:
                 try:
                     html = generator.generate_report_with_insights(self._session_id)
@@ -1656,10 +1668,13 @@ class EyeFocusApp:
                 is_calibrated=True,
             )
 
-        # v4.13: 校准完成后标记已校准 + 隐藏提示
+        # v4.13: 校准完成后标记已校准 + 更新状态
         self._calib_loaded = True
         if self._qt_window is not None:
-            self._qt_window.set_calibration_prompt(False)
+            self._qt_window.set_calibration_status(True)
+
+        # v4.50: 校准数据持久化到文件
+        self._save_calibration_to_file(result)
 
         logger.info(
             "v4.2 校准结果已应用: EAR=%.4f, 眨眼阈值=%.4f, adjustment=%.3f",
@@ -1667,6 +1682,113 @@ class EyeFocusApp:
             result.final_blink_threshold,
             result.final_adjustment_factor,
         )
+
+    def _save_calibration_to_file(self, result: "CalibrationResult") -> None:
+        """v4.50: 将校准结果保存到 JSON 文件，方便跨会话复用。"""
+        import json
+        try:
+            from calibration.result import signal_to_head_pose_std
+            yaw_std, pitch_std = signal_to_head_pose_std(result.signal)
+        except Exception:
+            yaw_std = pitch_std = None
+
+        data = {
+            "ear_mean": result.signal.ear_mean,
+            "yaw_std": yaw_std,
+            "pitch_std": pitch_std,
+            "baseline_blink_rate": result.baseline_blink_rate,
+            "blink_threshold": result.final_blink_threshold,
+            "squint_threshold": result.final_squint_threshold,
+            "adjustment_factor": result.final_adjustment_factor,
+            "cqs": result.cqs,
+            "glasses_mode": result.signal.glasses_mode,
+            "timestamp": datetime.now().isoformat(),
+        }
+        try:
+            os.makedirs(os.path.dirname(self._CALIBRATION_FILE), exist_ok=True)
+            with open(self._CALIBRATION_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            logger.info("校准数据已持久化: %s", self._CALIBRATION_FILE)
+        except Exception as e:
+            logger.warning("保存校准数据失败: %s", e)
+
+    def apply_saved_calibration(self) -> bool:
+        """v4.50: 从文件加载已保存的校准数据并应用到各模块。
+
+        由托盘菜单"应用已有校准数据"调用。
+        若无校准数据文件，显示提示。
+        """
+        import json
+        if not os.path.exists(self._CALIBRATION_FILE):
+            logger.warning("无已保存的校准数据: %s", self._CALIBRATION_FILE)
+            if self._qt_window is not None:
+                from PyQt5.QtWidgets import QSystemTrayIcon
+                try:
+                    self._qt_window.show_calibration_not_found()
+                except Exception:
+                    pass
+            return False
+
+        try:
+            with open(self._CALIBRATION_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            logger.warning("读取校准数据失败: %s", e)
+            return False
+
+        ear = data.get("ear_mean")
+        yaw_std = data.get("yaw_std")
+        pitch_std = data.get("pitch_std")
+        blink_rate = data.get("baseline_blink_rate")
+
+        if ear is None or ear <= 0:
+            logger.warning("校准数据无效: ear_mean 缺失或为零")
+            return False
+
+        # 应用到各 detector
+        if self._eye_detector is not None:
+            self._eye_detector.set_baseline(ear)
+            adj = data.get("adjustment_factor")
+            if adj and hasattr(self._eye_detector, 'set_adjustment_factor'):
+                self._eye_detector.set_adjustment_factor(adj)
+
+        if self._focus_analyzer is not None and hasattr(self._focus_analyzer, 'set_baseline'):
+            self._focus_analyzer.set_baseline(ear, yaw_std, pitch_std)
+            adj = data.get("adjustment_factor")
+            if adj and hasattr(self._focus_analyzer, 'set_adjustment_factor'):
+                self._focus_analyzer.set_adjustment_factor(adj)
+
+        if blink_rate and self._fatigue_analyzer is not None:
+            self._fatigue_analyzer.set_baseline_blink_rate(blink_rate)
+
+        # 持久化到当前会话 DB
+        if self._db and self._session_id:
+            from storage.models import GlassesMode
+            gm = data.get("glasses_mode")
+            if gm == "with_glasses":
+                glasses_mode_enum = GlassesMode.WITH_GLASSES
+            elif gm == "without_glasses":
+                glasses_mode_enum = GlassesMode.WITHOUT_GLASSES
+            else:
+                glasses_mode_enum = None
+
+            self._db.update_session(
+                self._session_id,
+                baseline_ear=ear,
+                baseline_blink_rate=blink_rate,
+                baseline_yaw_std=yaw_std,
+                baseline_pitch_std=pitch_std,
+                cqs_score=data.get("cqs"),
+                glasses_mode=glasses_mode_enum,
+                is_calibrated=True,
+            )
+
+        self._calib_loaded = True
+        if self._qt_window is not None:
+            self._qt_window.set_calibration_status(True)
+
+        logger.info("已从文件加载校准数据: EAR=%.4f, blink=%.1f", ear, blink_rate or 0)
+        return True
 
 
 def _check_single_instance() -> bool:

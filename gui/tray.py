@@ -120,6 +120,9 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
         calibrate_action = menu.addAction("重新校准")
         calibrate_action.triggered.connect(self._start_calibration)
 
+        apply_cal_action = menu.addAction("📂 应用已有校准数据")
+        apply_cal_action.triggered.connect(self._apply_saved_calibration)
+
         # v4.49+: 语音已移除
         # voice_enabled = True
         # try:
@@ -590,7 +593,7 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
             try:
                 with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
                     header = f.read(512)
-                if "数据收集中" in header or "生成报告时出错" in header:
+                if "数据收集中" in header or "生成报告时出错" in header or "报告生成失败" in header:
                     _os.makedirs(draft_dir, exist_ok=True)
                     _os.rename(fpath, _os.path.join(draft_dir, fname))
                     logger.info("占位报告移入 _drafts: %s", fname)
@@ -633,6 +636,29 @@ class EyeFocusTrayIcon(QSystemTrayIcon):
                 logger.warning("无法启动校准: _app 无校准方法")
         except Exception as e:
             logger.error("重新校准异常: %s", e)
+            import traceback
+            traceback.print_exc()
+
+    def _apply_saved_calibration(self):
+        """v4.50: 应用已保存的校准数据"""
+        logger.info("托盘菜单: 应用已有校准数据")
+        try:
+            if hasattr(self._app, 'apply_saved_calibration'):
+                ok = self._app.apply_saved_calibration()
+                if ok:
+                    self.showMessage(
+                        "EyeFocus Insight", "✓ 已从文件加载校准数据",
+                        QSystemTrayIcon.Information, 3000,
+                    )
+                else:
+                    self.showMessage(
+                        "EyeFocus Insight", "校准失败，当前无校准数据",
+                        QSystemTrayIcon.Warning, 3000,
+                    )
+            else:
+                logger.warning("无法应用校准: _app 无 apply_saved_calibration")
+        except Exception as e:
+            logger.error("应用校准数据异常: %s", e)
             import traceback
             traceback.print_exc()
 
