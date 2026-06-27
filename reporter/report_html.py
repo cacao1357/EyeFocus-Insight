@@ -260,10 +260,12 @@ class HTMLReportGenerator:
             total_duration = data["total_duration"]
             fatigue_level = self._determine_fatigue_level(data["fatigue_records"])
             # v4.37: 计算最长单次会话时长（用于日汇总建议）
+            # v4.50: default=0.0 防止活跃会话 end_time=None 导致 max() 空生成器
             max_session_duration = max(
-                (s.end_time - s.start_time).total_seconds()
-                for s in sessions if s.end_time
-            ) if sessions else 0.0
+                ((s.end_time - s.start_time).total_seconds()
+                 for s in sessions if s.end_time),
+                default=0.0,
+            )
 
             report_data = self._data = ReportData(
                 session=combined_session,
@@ -489,7 +491,11 @@ class HTMLReportGenerator:
             charts["calendar_heatmap"] = {"data": None, "error": str(e)}
 
         # v4.32: 缓存图表结果（同数据集再打开免重渲染）
-        _chart_html_cache[cache_key] = charts
+        # v4.50: 日历热力图数据源是全局 daily_stats，不按会话缓存
+        calendar_chart = charts.pop("calendar_heatmap", None)
+        _chart_html_cache[cache_key] = dict(charts)  # 浅拷贝，防后续修改污染缓存
+        if calendar_chart is not None:
+            charts["calendar_heatmap"] = calendar_chart
         # 限制缓存 ≤ 5 条目，防内存增长
         if len(_chart_html_cache) > 5:
             oldest = next(iter(_chart_html_cache))
@@ -500,7 +506,11 @@ class HTMLReportGenerator:
     # ── v4.17: 日历热力图 ──
 
     def _generate_calendar_chart(self) -> str:
-        """生成专注日历热力图"""
+        """生成专注日历热力图
+
+        v4.50: daily_stats 只在会话结束时写入，活跃会话当天无数据行，
+        因此若今天缺失，从 sessions 表实时计算补上。
+        """
         try:
             all_stats = self.db.get_all_daily_stats()
             if not all_stats:
@@ -509,6 +519,17 @@ class HTMLReportGenerator:
                 {"date": s.date, "minutes": s.total_focus_minutes}
                 for s in all_stats
             ]
+            # v4.50: 补上今天缺失的数据（活跃会话尚未写入 daily_stats）
+            from datetime import datetime
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            if not any(d["date"] == today_str for d in daily_list):
+                today_sessions = self.db.get_sessions_by_date_range(today_str, today_str)
+                if today_sessions:
+                    today_minutes = sum(
+                        (sess.end_time or datetime.now() - sess.start_time).total_seconds()
+                        for sess in today_sessions
+                    ) / 60.0
+                    daily_list.append({"date": today_str, "minutes": today_minutes})
             return self.chart_gen.generate_calendar_heatmap(daily_list)
         except Exception as e:
             logger.warning("日历热力图生成失败: %s", e)
@@ -731,9 +752,15 @@ class HTMLReportGenerator:
         # 按天分组
         from collections import defaultdict
         day_groups = defaultdict(list)
+        today_key = today_str  # "YYYY-MM-DD"
         for sess in sessions:
+            # v4.50: 活跃会话（end_time=None）的纳入规则：
+            #   - 今天的活跃会话 → 纳入，duration_seconds() 用 now 算已有时长
+            #   - 过去日期的活跃会话 → 孤儿会话（crash 未正常结束），跳过
             if sess.end_time is None:
-                continue  # 跳过未结束的孤立会话
+                day_key = sess.start_time.strftime("%Y-%m-%d")
+                if day_key != today_key:
+                    continue
             day_key = sess.start_time.strftime("%Y-%m-%d")
             day_groups[day_key].append(sess)
 
@@ -741,7 +768,8 @@ class HTMLReportGenerator:
             return None
 
         # v4.31: 批量获取所有会话的专注度记录（单次查询，消除 N+1）
-        all_sids = [s.session_id for s in sessions if s.end_time is not None]
+        # v4.50: 只查纳入 day_groups 的会话（排除孤儿会话）
+        all_sids = [s.session_id for group in day_groups.values() for s in group]
         focus_map = self.db.get_focus_records_batch(all_sids)
 
         total_minutes = 0.0
@@ -1145,7 +1173,12 @@ class HTMLReportGenerator:
             elif backend == "local":
                 kwargs["model_key"] = get_yaml_value("ai", "model_key", default="qwen2.5:1.5b")
             elif backend == "openai":
-                kwargs["api_key"] = get_yaml_value("ai", "api_key", default="")
+                # v4.x: 优先 keyring，回退 env/YAML
+                try:
+                    from analyzer.secrets import get_api_key
+                    kwargs["api_key"] = get_api_key() or ""
+                except ImportError:
+                    kwargs["api_key"] = get_yaml_value("ai", "api_key", default="")
                 kwargs["base_url"] = get_yaml_value("ai", "api_url", default="https://api.deepseek.com/v1")
                 kwargs["model"] = get_yaml_value("ai", "api_model", default="deepseek-chat")
             client = create_llm_client(backend, **kwargs)
@@ -1178,7 +1211,12 @@ class HTMLReportGenerator:
 
             kwargs = {}
             if backend == "openai":
-                kwargs["api_key"] = get_yaml_value("ai", "api_key", default="")
+                # v4.x: 优先 keyring，回退 env/YAML
+                try:
+                    from analyzer.secrets import get_api_key
+                    kwargs["api_key"] = get_api_key() or ""
+                except ImportError:
+                    kwargs["api_key"] = get_yaml_value("ai", "api_key", default="")
                 kwargs["base_url"] = get_yaml_value("ai", "api_url", default="https://api.deepseek.com/v1")
                 kwargs["model"] = get_yaml_value("ai", "api_model", default="deepseek-chat")
             else:

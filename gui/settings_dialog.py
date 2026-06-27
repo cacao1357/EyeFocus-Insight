@@ -226,8 +226,7 @@ class SettingsDialog(QDialog):
         self._ai_backend_loaded = get_yaml_value("ai", "backend", default="template")
         self._ai_model_key = get_yaml_value("ai", "model_key", default="qwen2.5:1.5b")
 
-        # v4.29: API 凭证
-        self._api_key = get_yaml_value("ai", "api_key", default="")
+        # v4.x: API Key 不再从这里读取 — 由 keyring / env 提供
         self._api_url = get_yaml_value("ai", "api_url", default="")
         self._api_model = get_yaml_value("ai", "api_model", default="")
 
@@ -324,28 +323,39 @@ class SettingsDialog(QDialog):
         self._api_url_input.setText(self._api_url)
         ai_layout.addRow("API 地址：", self._api_url_input)
 
-        # API Key + 显示/隐藏切换
+        # v4.x: API Key 由 OS keyring 托管 — UI 只显示来源 + 操作按钮
         key_row = QHBoxLayout()
-        self._api_key_input = QLineEdit()
-        self._api_key_input.setStyleSheet(self.INPUT_WIDGET_QSS)
-        self._api_key_input.setEchoMode(QLineEdit.Password)
-        self._api_key_input.setPlaceholderText("sk-...")
-        self._api_key_input.setText(self._api_key)
-        key_row.addWidget(self._api_key_input)
-        self._api_key_toggle = QPushButton("显示")
-        self._api_key_toggle.setFixedWidth(50)
-        self._api_key_toggle.setStyleSheet("""
+        self._key_storage_label = QLabel("（加载中…）")
+        self._key_storage_label.setStyleSheet("color: #6B6B6B; font-size: 12px;")
+        key_row.addWidget(self._key_storage_label, 1)
+
+        _btn_qss = """
             QPushButton {
                 background-color: #F0F0F0; color: #1C1C1E;
                 border: 1px solid #D0D0D0; border-radius: 4px;
-                padding: 4px 8px; font-size: 12px;
+                padding: 4px 10px; font-size: 12px;
             }
             QPushButton:hover { background-color: #E5E5E5; }
             QPushButton:pressed { background-color: #D8D8D8; }
-        """)
-        self._api_key_toggle.clicked.connect(self._toggle_api_key_visible)
-        key_row.addWidget(self._api_key_toggle)
+        """
+        self._key_modify_btn = QPushButton("修改 Key")
+        self._key_modify_btn.setStyleSheet(_btn_qss)
+        self._key_modify_btn.clicked.connect(self._on_modify_api_key)
+        key_row.addWidget(self._key_modify_btn)
+
+        self._key_migrate_btn = QPushButton("移到凭据管理器")
+        self._key_migrate_btn.setStyleSheet(_btn_qss)
+        self._key_migrate_btn.clicked.connect(self._on_migrate_api_key)
+        self._key_migrate_btn.setVisible(False)  # 仅在 .env 来源时显示
+        key_row.addWidget(self._key_migrate_btn)
+
+        self._key_clear_btn = QPushButton("清除")
+        self._key_clear_btn.setStyleSheet(_btn_qss)
+        self._key_clear_btn.clicked.connect(self._on_clear_api_key)
+        key_row.addWidget(self._key_clear_btn)
+
         ai_layout.addRow("API Key：", key_row)
+        self._refresh_key_storage_label()
 
         self._api_model_input = QLineEdit()
         self._api_model_input.setStyleSheet(self.INPUT_WIDGET_QSS)
@@ -476,8 +486,7 @@ class SettingsDialog(QDialog):
             set_yaml_value("ai", "model_key", value=LOCAL_MODEL_MAP[raw_backend][1])
         else:
             set_yaml_value("ai", "backend", value=raw_backend)
-        # v4.29: 保存 API 凭证
-        set_yaml_value("ai", "api_key", value=self._api_key_input.text().strip())
+        # v4.x: API Key 不再写入 YAML — 由 keyring / env 托管
         set_yaml_value("ai", "api_url", value=self._api_url_input.text().strip())
         set_yaml_value("ai", "api_model", value=self._api_model_input.text().strip())
         set_yaml_value("ui", "auto_start", value=auto_start)
@@ -509,16 +518,134 @@ class SettingsDialog(QDialog):
         except Exception as e:
             logger.warning("番茄设置应用失败: %s", e)
 
-    # ── v4.29: API 凭证辅助方法 ──
+    # ── v4.x: API Key 凭据管理 (keyring) ──
 
-    def _toggle_api_key_visible(self) -> None:
-        """切换 API Key 显示/隐藏"""
-        if self._api_key_input.echoMode() == QLineEdit.Password:
-            self._api_key_input.setEchoMode(QLineEdit.Normal)
-            self._api_key_toggle.setText("隐藏")
+    def _refresh_key_storage_label(self) -> None:
+        """根据 keyring / env / none 刷新标签与按钮可见性"""
+        try:
+            from analyzer.secrets import storage_location, keyring_available
+            loc = storage_location()
+        except Exception:
+            loc = "none"
+            keyring_available = lambda: False  # noqa: E731
+        if loc == "keyring":
+            self._key_storage_label.setText("🔐 已存储于 Windows 凭据管理器")
+            self._key_migrate_btn.setVisible(False)
+        elif loc == "env":
+            self._key_storage_label.setText("📄 来源: .env 环境变量（明文，建议改用凭据管理器）")
+            self._key_migrate_btn.setVisible(keyring_available())
         else:
-            self._api_key_input.setEchoMode(QLineEdit.Password)
-            self._api_key_toggle.setText("显示")
+            self._key_storage_label.setText("（未设置 API Key）")
+            self._key_migrate_btn.setVisible(False)
+
+    def _on_modify_api_key(self) -> None:
+        """弹出密码对话框，设置或替换 keyring 中的 API Key"""
+        from PyQt5.QtWidgets import QDialog, QFormLayout, QHBoxLayout, QDialogButtonBox
+        from analyzer.secrets import get_api_key, set_api_key, is_loopback_url
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("设置 API Key")
+        layout = QFormLayout(dlg)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        # 顶部提示
+        url = self._api_url_input.text().strip()
+        hint = "Key 将存储到 Windows 凭据管理器（推荐）"
+        try:
+            if url and is_loopback_url(url):
+                hint = f"检测到 loopback 地址（{url}），调用时 Key 不会通过 HTTP header 发送。"
+        except Exception:
+            pass
+        layout.addRow(QLabel(hint))
+
+        # Key 输入（默认隐藏，可切换显示）
+        current = get_api_key() or ""
+        key_edit = QLineEdit()
+        key_edit.setEchoMode(QLineEdit.Password)
+        key_edit.setPlaceholderText("sk-...")
+        key_edit.setText(current)
+
+        show_btn = QPushButton("显示")
+        show_btn.setFixedWidth(60)
+        show_btn.setCheckable(True)
+        show_btn.toggled.connect(
+            lambda checked: key_edit.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
+        )
+        show_btn.toggled.connect(
+            lambda checked: show_btn.setText("隐藏" if checked else "显示")
+        )
+        row = QHBoxLayout()
+        row.addWidget(key_edit)
+        row.addWidget(show_btn)
+        layout.addRow("API Key：", row)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        layout.addRow(btns)
+
+        if dlg.exec_() == QDialog.Accepted:
+            new_key = key_edit.text().strip()
+            if not new_key:
+                return
+            if set_api_key(new_key):
+                # 清掉 env，避免 split-brain
+                os.environ.pop("MINIMAX_API_KEY", None)
+                self._refresh_key_storage_label()
+                from PyQt5.QtWidgets import QMessageBox
+                QMessageBox.information(self, "API Key", "✅ Key 已存到凭据管理器。\n重启后下次启动会从这里读取。")
+            else:
+                from PyQt5.QtWidgets import QMessageBox
+                QMessageBox.warning(self, "API Key", "❌ 保存到凭据管理器失败。\n请检查系统凭据存储是否可用。")
+
+    def _on_migrate_api_key(self) -> None:
+        """一键把 .env 里的 key 搬到 keyring"""
+        try:
+            from analyzer.secrets import get_api_key, set_api_key
+        except Exception as e:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "迁移", f"keyring 模块不可用: {e}")
+            return
+        current = get_api_key() or ""
+        if not current:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.information(self, "迁移", ".env 中没有可迁移的 Key。")
+            return
+        if set_api_key(current):
+            os.environ.pop("MINIMAX_API_KEY", None)
+            self._refresh_key_storage_label()
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self, "迁移",
+                "✅ Key 已迁移到 Windows 凭据管理器。\n\n"
+                "建议下一步：从 .env 中删除 MINIMAX_API_KEY 行以彻底脱离明文存储。\n"
+                "（本程序不会自动修改 .env，由你决定何时删除）",
+            )
+        else:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "迁移", "❌ 写入凭据管理器失败。")
+
+    def _on_clear_api_key(self) -> None:
+        """清除 keyring + env 中的 API Key"""
+        from PyQt5.QtWidgets import QMessageBox
+        ret = QMessageBox.question(
+            self, "清除 API Key",
+            "确认清除所有 API Key 存储（keyring + 环境变量）？\n清除后需要重新设置才能继续调用云端模型。",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if ret != QMessageBox.Yes:
+            return
+        try:
+            from analyzer.secrets import delete_api_key
+            delete_api_key()
+        except Exception:
+            pass
+        os.environ.pop("MINIMAX_API_KEY", None)
+        self._refresh_key_storage_label()
+        QMessageBox.information(self, "清除", "✅ 已清除 API Key。")
+
+    # ── v4.29: API 提供商辅助方法 ──
 
     def _on_api_provider_change(self, idx: int) -> None:
         """选择提供商时自动填入 URL 和模型名"""
@@ -563,12 +690,17 @@ class SettingsDialog(QDialog):
 
     def _test_api_connection(self) -> None:
         """测试 API 连接（异步）"""
-        api_key = self._api_key_input.text().strip()
+        # v4.x: Key 来自 keyring / env，不再有 _api_key_input
+        try:
+            from analyzer.secrets import get_api_key
+            api_key = get_api_key() or ""
+        except Exception:
+            api_key = ""
         base_url = self._api_url_input.text().strip()
         model = self._api_model_input.text().strip()
 
         if not api_key:
-            self._api_test_result.setText("⚠️ 请先输入 API Key")
+            self._api_test_result.setText("⚠️ 未设置 API Key（点'修改 Key'配置）")
             self._api_test_result.setStyleSheet("color: #B55C5C;")
             return
         if not base_url:

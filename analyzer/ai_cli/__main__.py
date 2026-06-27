@@ -177,13 +177,20 @@ def _call_llm(messages: list, model: str, base_url: str, api_key: str,
         "temperature": 0.7,
     }).encode()
 
+    # v4.x: loopback 不发 Authorization header（与 analyzer.llm_client 对齐）
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        try:
+            from analyzer.secrets import is_loopback_url
+            if not is_loopback_url(base_url):
+                headers["Authorization"] = f"Bearer {api_key}"
+        except ImportError:
+            headers["Authorization"] = f"Bearer {api_key}"
+
     req = urllib.request.Request(
         f"{base_url.rstrip('/')}/chat/completions",
         data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
+        headers=headers,
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         result = _json.loads(resp.read())
@@ -339,7 +346,8 @@ def main():
     # ── 读取配置 ──
     try:
         from config import get_yaml_value
-        api_key = get_yaml_value("ai", "api_key", default="")
+        from analyzer.secrets import get_api_key, is_loopback_url
+        api_key = get_api_key() or ""
         base_url = get_yaml_value("ai", "api_url", default="https://api.deepseek.com/v1")
         model = get_yaml_value("ai", "api_model", default="deepseek-chat")
         backend = get_yaml_value("ai", "backend", default="template")
@@ -357,8 +365,8 @@ def main():
     print(f"  API: {c('已配置', Style.GREEN)} ({_mask_key(api_key)})")
     print(f"  后端: {c(backend, Style.CYAN)}")
     print(f"  模型: {c(model, Style.MAGENTA)}")
-    if base_url.startswith("http://"):
-        print(c(f"  ⚠ API 地址使用 HTTP，将明文传输 Key！建议改用 HTTPS。", Style.RED))
+    if base_url.startswith("http://") and not is_loopback_url(base_url):
+        print(c(f"  ⚠ API 地址使用 HTTP（非 loopback），将明文传输 Key！建议改用 HTTPS。", Style.RED))
     print()
 
     # ── 连接数据库 ──

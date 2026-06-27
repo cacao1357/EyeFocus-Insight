@@ -261,6 +261,26 @@ class OpenAICompatibleClient(LLMClient):
     def available(self) -> bool:
         return bool(self._api_key)
 
+    def _build_headers(self) -> dict:
+        """构造 HTTP headers
+
+        Loopback URL（LM Studio / Ollama）默认不发 Authorization header：
+        - 节省字节，避免在 loopback 上明文传递 key
+        - LM Studio 默认 "Require API Key" = OFF，无 header 也可连通
+        - 若用户显式开了 "Require API Key"，错误消息兜底（401）
+        """
+        headers = {"Content-Type": "application/json"}
+        if not self._api_key:
+            return headers
+        try:
+            from analyzer.secrets import is_loopback_url
+            if is_loopback_url(self._base_url):
+                return headers
+        except ImportError:
+            pass
+        headers["Authorization"] = f"Bearer {self._api_key}"
+        return headers
+
     def test_connection(self) -> str:
         """测试 API 连通性，返回空字符串表示成功，否则返回错误描述"""
         if not self._api_key:
@@ -277,10 +297,7 @@ class OpenAICompatibleClient(LLMClient):
             req = urllib.request.Request(
                 f"{self._base_url}/chat/completions",
                 data=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {self._api_key}",
-                },
+                headers=self._build_headers(),
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 return "" if resp.status == 200 else f"HTTP {resp.status}"
@@ -317,10 +334,7 @@ class OpenAICompatibleClient(LLMClient):
         req = urllib.request.Request(
             f"{self._base_url}/chat/completions",
             data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._api_key}",
-            },
+            headers=self._build_headers(),
         )
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
@@ -361,10 +375,7 @@ class OpenAICompatibleClient(LLMClient):
         req = urllib.request.Request(
             f"{self._base_url}/chat/completions",
             data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._api_key}",
-            },
+            headers=self._build_headers(),
         )
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
@@ -389,10 +400,7 @@ class OpenAICompatibleClient(LLMClient):
         req = urllib.request.Request(
             f"{self._base_url}/chat/completions",
             data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._api_key}",
-            },
+            headers=self._build_headers(),
         )
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
