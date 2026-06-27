@@ -166,8 +166,13 @@ class _DirectDB:
 
 def _call_llm(messages: list, model: str, base_url: str, api_key: str,
               max_tokens: int = 800, timeout: int = 30) -> str:
-    """调用 OpenAI 兼容 API"""
+    """调用 OpenAI 兼容 API
+
+    异常附带响应 body（截 500 字）便于诊断 LM Studio 返回的非标准响应
+    （如 {"error": {...}} 而非 {"choices": [...]}）。
+    """
     import json as _json
+    import urllib.error
     import urllib.request
 
     payload = _json.dumps({
@@ -187,10 +192,25 @@ def _call_llm(messages: list, model: str, base_url: str, api_key: str,
         data=payload,
         headers=headers,
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        result = _json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body_bytes = resp.read()
+    except urllib.error.HTTPError as e:
+        body = e.read()[:500].decode("utf-8", errors="replace")
+        raise RuntimeError(f"LLM HTTP {e.code}: {body}") from e
+
+    try:
+        result = _json.loads(body_bytes)
+    except _json.JSONDecodeError as e:
+        snippet = body_bytes[:500].decode("utf-8", errors="replace")
+        raise RuntimeError(f"LLM 响应非 JSON ({e!r}); body={snippet}") from e
+
+    try:
         raw = result["choices"][0]["message"]["content"]
-        return _clean_output(raw)
+    except (KeyError, IndexError, TypeError) as e:
+        snippet = body_bytes[:500].decode("utf-8", errors="replace")
+        raise RuntimeError(f"LLM 响应缺字段 ({e!r}); body={snippet}") from e
+    return _clean_output(raw)
 
 
 # ── 数据计算 ──

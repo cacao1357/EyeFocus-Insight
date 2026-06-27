@@ -183,3 +183,89 @@ class TestHttpPlaintxtWarning:
         warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
         assert not any("明文" in w for w in warnings), \
             f"HTTPS 不应触发明文警告，实际: {warnings}"
+
+
+# ── _post_chat 诊断日志：响应 schema 异常时附带 body ─────────────────────
+
+class TestPostChatDiagnostics:
+    """回归 v4.x.2: 'choices' KeyError 应该附带响应 body 便于诊断"""
+
+    def _mock_urlopen(self, body_bytes=None, status=200, http_error=None):
+        """构造 urlopen 上下文管理器 mock"""
+        if http_error is not None:
+            return mock.patch("urllib.request.urlopen", side_effect=http_error)
+        resp = mock.MagicMock()
+        resp.status = status
+        resp.read.return_value = body_bytes
+        resp.__enter__ = mock.MagicMock(return_value=resp)
+        resp.__exit__ = mock.MagicMock(return_value=False)
+        return mock.patch("urllib.request.urlopen", return_value=resp)
+
+    def _make_http_error(self, code: int, body: bytes):
+        """构造真实的 urllib.error.HTTPError"""
+        import io
+        import urllib.error
+        return urllib.error.HTTPError(
+            url="http://127.0.0.1:1234/chat/completions",
+            code=code,
+            msg="Mocked",
+            hdrs={},
+            fp=io.BytesIO(body),
+        )
+
+    def test_missing_choices_includes_body(self):
+        """200 OK 但 body 是 {\"error\": ...} → RuntimeError 带 body"""
+        body = b'{"error": {"message": "Model not found", "code": "model_not_found"}}'
+        with self._mock_urlopen(body_bytes=body):
+            c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "qwen")
+            with pytest.raises(RuntimeError) as exc_info:
+                c._post_chat({"model": "qwen", "messages": [], "max_tokens": 10}, timeout=10)
+        msg = str(exc_info.value)
+        assert "choices" in msg
+        assert "Model not found" in msg
+        assert "model_not_found" in msg
+
+    def test_http_error_includes_body(self):
+        """HTTP 4xx/5xx → RuntimeError 带 status code + body"""
+        err = self._make_http_error(404, b'{"error": "model Qwen3 not found"}')
+        with self._mock_urlopen(http_error=err):
+            c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "Qwen3")
+            with pytest.raises(RuntimeError) as exc_info:
+                c._post_chat({"model": "Qwen3", "messages": [], "max_tokens": 10}, timeout=10)
+        msg = str(exc_info.value)
+        assert "HTTP 404" in msg
+        assert "model Qwen3 not found" in msg
+
+    def test_non_json_response_includes_body(self):
+        """SSE 流式 / 纯文本 → RuntimeError 带 body 片段"""
+        body = b"data: {\"id\":\"x\",\"choices\":[...]}\n\ndata: [DONE]\n"
+        with self._mock_urlopen(body_bytes=body):
+            c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "qwen")
+            with pytest.raises(RuntimeError) as exc_info:
+                c._post_chat({"model": "qwen", "messages": [], "max_tokens": 10}, timeout=10)
+        msg = str(exc_info.value)
+        assert "非 JSON" in msg or "JSON" in msg
+        assert "data:" in msg
+
+    def test_successful_response_extracts_content(self):
+        """正常 200 OK 响应 → 返回 content"""
+        body = b'{"choices": [{"message": {"content": "hello"}}]}'
+        with self._mock_urlopen(body_bytes=body):
+            c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "qwen")
+            result = c._post_chat({"model": "qwen", "messages": [], "max_tokens": 10}, timeout=10)
+        assert result == "hello"
+
+    def test_analyze_returns_empty_on_diagnostic_error(self):
+        """analyze 包装 _post_chat：异常时返回空串（不动 outer 语义）"""
+        body = b'{"error": {"message": "Model not found"}}'
+        with self._mock_urlopen(body_bytes=body):
+            c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "qwen")
+            result = c.analyze({"duration": 100, "avg_focus": 80})
+        assert result == ""  # 失败返回空串，调用方用模板兜底
+
+    def test_deep_analyze_returns_empty_on_diagnostic_error(self):
+        body = b'{"error": {"message": "Model not found"}}'
+        with self._mock_urlopen(body_bytes=body):
+            c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "qwen")
+            result = c.deep_analyze({"duration": 100, "avg_focus": 80})
+        assert result == ""
