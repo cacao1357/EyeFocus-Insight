@@ -166,8 +166,14 @@ class _DirectDB:
 
 def _call_llm(messages: list, model: str, base_url: str, api_key: str,
               max_tokens: int = 800, timeout: int = 30) -> str:
-    """调用 OpenAI 兼容 API"""
+    """调用 OpenAI 兼容 API
+
+    异常附带响应 body（截 500 字）便于诊断 LM Studio 返回的非标准响应
+    （如 {"error": {...}} 而非 {"choices": [...]}）；遇到 endpoint 错误
+    会追加 /v1 路径提示。
+    """
     import json as _json
+    import urllib.error
     import urllib.request
 
     payload = _json.dumps({
@@ -177,18 +183,45 @@ def _call_llm(messages: list, model: str, base_url: str, api_key: str,
         "temperature": 0.7,
     }).encode()
 
+    # v4.x: 有 key 就发 Authorization（与 analyzer.llm_client 对齐）
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
     req = urllib.request.Request(
         f"{base_url.rstrip('/')}/chat/completions",
         data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
+        headers=headers,
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        result = _json.loads(resp.read())
+
+    # LM Studio / Ollama 端点路径不对的提示（与 analyzer.llm_client._endpoint_hint 对齐）
+    def _hint(body: str) -> str:
+        if not body:
+            return ""
+        bl = body.lower()
+        if "unexpected endpoint" in bl or "not found" in bl:
+            return "\n\n💡 提示：LM Studio / Ollama / vLLM 等 OpenAI 兼容服务的 base_url 通常需要 /v1 前缀，例如 http://127.0.0.1:1234/v1"
+        return ""
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body_bytes = resp.read()
+    except urllib.error.HTTPError as e:
+        body = e.read()[:500].decode("utf-8", errors="replace")
+        raise RuntimeError(f"LLM HTTP {e.code}: {body}{_hint(body)}") from e
+
+    try:
+        result = _json.loads(body_bytes)
+    except _json.JSONDecodeError as e:
+        snippet = body_bytes[:500].decode("utf-8", errors="replace")
+        raise RuntimeError(f"LLM 响应非 JSON ({e!r}); body={snippet}{_hint(snippet)}") from e
+
+    try:
         raw = result["choices"][0]["message"]["content"]
-        return _clean_output(raw)
+    except (KeyError, IndexError, TypeError) as e:
+        snippet = body_bytes[:500].decode("utf-8", errors="replace")
+        raise RuntimeError(f"LLM 响应缺字段 ({e!r}); body={snippet}{_hint(snippet)}") from e
+    return _clean_output(raw)
 
 
 # ── 数据计算 ──
@@ -339,7 +372,8 @@ def main():
     # ── 读取配置 ──
     try:
         from config import get_yaml_value
-        api_key = get_yaml_value("ai", "api_key", default="")
+        from analyzer.secrets import get_api_key, is_loopback_url
+        api_key = get_api_key() or ""
         base_url = get_yaml_value("ai", "api_url", default="https://api.deepseek.com/v1")
         model = get_yaml_value("ai", "api_model", default="deepseek-chat")
         backend = get_yaml_value("ai", "backend", default="template")
@@ -357,8 +391,8 @@ def main():
     print(f"  API: {c('已配置', Style.GREEN)} ({_mask_key(api_key)})")
     print(f"  后端: {c(backend, Style.CYAN)}")
     print(f"  模型: {c(model, Style.MAGENTA)}")
-    if base_url.startswith("http://"):
-        print(c(f"  ⚠ API 地址使用 HTTP，将明文传输 Key！建议改用 HTTPS。", Style.RED))
+    if base_url.startswith("http://") and not is_loopback_url(base_url):
+        print(c(f"  ⚠ API 地址使用 HTTP（非 loopback），将明文传输 Key！建议改用 HTTPS。", Style.RED))
     print()
 
     # ── 连接数据库 ──

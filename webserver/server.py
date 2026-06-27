@@ -17,6 +17,15 @@ import aiohttp.web
 
 logger = logging.getLogger("eyefocus.webserver")
 
+# v4.x: API Key 解析 — keyring 优先，回退到 .env；loopback 警告豁免
+try:
+    from analyzer.secrets import is_loopback_url, get_api_key as _resolve_api_key, storage_location as _storage_location
+except ImportError:  # 极端兜底：模块加载失败时不让 webserver 起不来
+    _resolve_api_key = lambda: ""
+    _storage_location = lambda: "none"
+    def is_loopback_url(_url: str) -> bool:  # type: ignore[no-redef]
+        return False
+
 
 class WebDashboard:
     """Web 仪表盘 — 实时专注度数据可视化 (v4.26: +控制)
@@ -170,7 +179,7 @@ class WebDashboard:
             if backend == "template":
                 return False
             if backend == "openai":
-                api_key = get_yaml_value("ai", "api_key", default="")
+                api_key = _resolve_api_key() or ""
                 if not api_key:
                     return False
                 client = create_llm_client("openai",
@@ -250,9 +259,15 @@ class WebDashboard:
                         logger.warning("LLM 预热失败: %s", self._llm_error)
                         return
                 elif backend == "openai":
+                    openai_base_url = get_yaml_value("ai", "api_url", default="https://api.deepseek.com/v1")
+                    # v4.x: 非 loopback HTTP 明文警告（远端 API 易被 MITM）
+                    if openai_base_url.startswith("http://") and not is_loopback_url(openai_base_url):
+                        logger.warning(
+                            "API 地址使用明文 HTTP（非 loopback），Key 将在网络上明文传输！建议改用 HTTPS。"
+                        )
                     client = create_llm_client("openai",
-                        api_key=get_yaml_value("ai", "api_key", default=""),
-                        base_url=get_yaml_value("ai", "api_url", default="https://api.deepseek.com/v1"),
+                        api_key=_resolve_api_key() or "",
+                        base_url=openai_base_url,
                         model=get_yaml_value("ai", "api_model", default="deepseek-chat"),
                     )
                     if not client.available:
@@ -263,7 +278,9 @@ class WebDashboard:
                     err = client.test_connection()
                     if err:
                         self._llm_error = f"API 连接失败: {err}"
+                        self._llm_ready.set()
                         logger.warning("LLM 预热: %s", self._llm_error)
+                        return  # v4.x: 关键 bug 修复 — 失败时不再落入"预热完成"假象
 
                 self._llm_client = client
                 self._llm_backend = backend
@@ -545,7 +562,8 @@ class WebDashboard:
                 "backend": get_yaml_value("ai", "backend", default="template"),
                 "api_model": get_yaml_value("ai", "api_model", default=""),
                 "api_url": "***" if get_yaml_value("ai", "api_url", default="") else "",  # v4.29: 脱敏
-                "has_api_key": bool(get_yaml_value("ai", "api_key", default="")),
+                "has_api_key": bool(_resolve_api_key()),
+                "key_storage": _storage_location(),
                 "web_port": get_yaml_value("web", "port", default=8080),
                 "gamification": get_yaml_value("gamification", "enabled", default=True),
             }

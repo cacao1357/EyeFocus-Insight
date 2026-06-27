@@ -20,5 +20,7 @@ PyQt5>=5.15.0
 absl-py>=2.0.0
 # v4.22: Web 仪表盘
 aiohttp>=3.9.0
+# v4.x: API Key 安全存储（Windows Credential Manager / macOS Keychain / Secret Service）
+keyring>=24.0.0
 # v4.24: 本地 AI 模型（可选，取消注释以启用）
 # llama-cpp-python>=0.3.0

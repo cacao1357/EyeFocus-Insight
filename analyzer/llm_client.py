@@ -16,6 +16,21 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger("eyefocus.analyzer")
 
+
+def _endpoint_hint(body: str) -> str:
+    """检测 LM Studio / Ollama 等"端点路径不对"的典型错误，返回 /v1 提示。
+
+    LM Studio 收到错误路径会返回 {"error":"Unexpected endpoint or method. ..."}
+    Ollama 返回 {"error":"404 page not found"}。这些是 base_url 缺 /v1 前缀的症状。
+    注意：用具体短语而非裸 "not found"，避免误触发 "Model not found" 等常见 API 错误。
+    """
+    if not body:
+        return ""
+    body_lower = body.lower()
+    if "unexpected endpoint" in body_lower or "404 page not found" in body_lower:
+        return "\n\n💡 提示：LM Studio / Ollama / vLLM 等 OpenAI 兼容服务的 base_url 通常需要 /v1 前缀，例如 http://127.0.0.1:1234/v1"
+    return ""
+
 # ── 标准分析提示模板 ──
 
 ANALYSIS_SYSTEM_PROMPT = """你是一个专注力分析教练，用朋友聊天的方式说话。
@@ -261,36 +276,77 @@ class OpenAICompatibleClient(LLMClient):
     def available(self) -> bool:
         return bool(self._api_key)
 
+    def _build_headers(self) -> dict:
+        """构造 HTTP headers
+
+        有 key 就发 Authorization header（loopback 也发）。
+        Loopback 字节本来就不出本机，"省略" 是过度优化，且会破坏 LM Studio
+        "Require API Key" 模式。Loopback 的安全保护靠上游 HTTP 警告而非省略 header。
+        """
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        return headers
+
+    def _post_chat(self, payload: dict, timeout: int) -> str:
+        """发送 chat/completions 请求并提取首个 choice 的 content
+
+        异常时附带响应 body（截 500 字）便于诊断 LM Studio / OpenAI 兼容 API
+        返回的非标准响应（如 {"error": {...}} 而非 {"choices": [...]}）。
+
+        Raises:
+            RuntimeError: HTTPError / 响应 schema 缺字段 / JSON 解析失败，
+                message 内含响应 body 片段 + 端点路径提示（如果是 endpoint 错误）
+        """
+        import urllib.error
+        import urllib.request
+        import json as _json
+
+        data = _json.dumps(payload).encode()
+        req = urllib.request.Request(
+            f"{self._base_url}/chat/completions",
+            data=data,
+            headers=self._build_headers(),
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                body_bytes = resp.read()
+        except urllib.error.HTTPError as e:
+            body = e.read()[:500].decode("utf-8", errors="replace")
+            hint = _endpoint_hint(body)
+            raise RuntimeError(f"LLM HTTP {e.code}: {body}{hint}") from e
+
+        # 200 OK — 解析响应
+        try:
+            result = _json.loads(body_bytes)
+        except _json.JSONDecodeError as e:
+            snippet = body_bytes[:500].decode("utf-8", errors="replace")
+            hint = _endpoint_hint(snippet)
+            raise RuntimeError(f"LLM 响应非 JSON ({e!r}); body={snippet}{hint}") from e
+
+        try:
+            return result["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as e:
+            snippet = body_bytes[:500].decode("utf-8", errors="replace")
+            hint = _endpoint_hint(snippet)
+            raise RuntimeError(f"LLM 响应缺字段 ({e!r}); body={snippet}{hint}") from e
+
     def test_connection(self) -> str:
         """测试 API 连通性，返回空字符串表示成功，否则返回错误描述"""
         if not self._api_key:
             return "API Key 未设置"
         try:
-            import urllib.request
-            import json as _json
-            # 发一个极简请求验证连通性
-            payload = _json.dumps({
+            payload = {
                 "model": self._model,
                 "messages": [{"role": "user", "content": "hi"}],
                 "max_tokens": 1,
-            }).encode()
-            req = urllib.request.Request(
-                f"{self._base_url}/chat/completions",
-                data=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {self._api_key}",
-                },
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                return "" if resp.status == 200 else f"HTTP {resp.status}"
+            }
+            self._post_chat(payload, timeout=10)
+            return ""
         except Exception as e:
             return self._sanitize_err(str(e))
 
     def analyze(self, data: Dict[str, Any]) -> str:
-        import urllib.request
-        import json as _json
-
         _safe = lambda k, d: data.get(k, d)
         user_msg = ANALYSIS_USER_TEMPLATE.format(
             duration=_safe("duration", 0), avg_focus=_safe("avg_focus", 50),
@@ -304,7 +360,7 @@ class OpenAICompatibleClient(LLMClient):
             gaze_pct=_safe("gaze_pct", 0), dist_peak_hour=_safe("dist_peak_hour", ""),
             pomo_count=_safe("pomo_count", 0), streak=_safe("streak", 0),
         )
-        payload = _json.dumps({
+        payload = {
             "model": self._model,
             "messages": [
                 {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
@@ -312,29 +368,15 @@ class OpenAICompatibleClient(LLMClient):
             ],
             "max_tokens": 500,
             "temperature": 0.7,
-        }).encode()
-
-        req = urllib.request.Request(
-            f"{self._base_url}/chat/completions",
-            data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._api_key}",
-            },
-        )
+        }
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                result = _json.loads(resp.read())
-                return result["choices"][0]["message"]["content"]
+            return self._post_chat(payload, timeout=30)
         except Exception as e:
             logger.error("LLM analyze 请求失败: %s", self._sanitize_err(str(e)))
             return ""  # v4.33: 失败返回空串，不抛异常（符合"失败返回 Optional"规则）
 
     def deep_analyze(self, data: Dict[str, Any]) -> str:
         """L3 级深度分析（使用 DEEP_ANALYSIS 系列提示模板 + 时序数据）"""
-        import urllib.request
-        import json as _json
-
         # 构造 L3 数据上下文
         context_parts = []
         for key in ["duration", "avg_focus", "hist_avg_focus", "seg_start", "seg_mid", "seg_end",
@@ -348,7 +390,7 @@ class OpenAICompatibleClient(LLMClient):
                 context_parts.append("")
 
         user_msg = "\n".join(context_parts).strip()
-        payload = _json.dumps({
+        payload = {
             "model": self._model,
             "messages": [
                 {"role": "system", "content": DEEP_ANALYSIS_SYSTEM_PROMPT},
@@ -356,48 +398,23 @@ class OpenAICompatibleClient(LLMClient):
             ],
             "max_tokens": 800,
             "temperature": 0.7,
-        }).encode()
-
-        req = urllib.request.Request(
-            f"{self._base_url}/chat/completions",
-            data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._api_key}",
-            },
-        )
+        }
         try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                result = _json.loads(resp.read())
-                return result["choices"][0]["message"]["content"].strip()
+            return self._post_chat(payload, timeout=60).strip()
         except Exception as e:
             logger.error("LLM deep_analyze 请求失败: %s", self._sanitize_err(str(e)))
             return ""  # v4.33: 失败返回空串，不抛异常
 
     def chat(self, messages: list, max_tokens: int = 500) -> str:
         """OpenAI 格式对话（供 server.py _llm_chat 调用）"""
-        import urllib.request
-        import json as _json
-
-        payload = _json.dumps({
+        payload = {
             "model": self._model,
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": 0.7,
-        }).encode()
-
-        req = urllib.request.Request(
-            f"{self._base_url}/chat/completions",
-            data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._api_key}",
-            },
-        )
+        }
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                result = _json.loads(resp.read())
-                return result["choices"][0]["message"]["content"]
+            return self._post_chat(payload, timeout=30)
         except Exception as e:
             logger.error("LLM chat 请求失败: %s", self._sanitize_err(str(e)))
             return ""  # v4.33: 失败返回空串，不抛异常
