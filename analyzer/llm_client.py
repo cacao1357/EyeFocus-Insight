@@ -16,6 +16,21 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger("eyefocus.analyzer")
 
+
+def _endpoint_hint(body: str) -> str:
+    """检测 LM Studio / Ollama 等"端点路径不对"的典型错误，返回 /v1 提示。
+
+    LM Studio 收到错误路径会返回 {"error":"Unexpected endpoint or method. ..."}
+    Ollama 返回 {"error":"404 page not found"}。这些是 base_url 缺 /v1 前缀的症状。
+    注意：用具体短语而非裸 "not found"，避免误触发 "Model not found" 等常见 API 错误。
+    """
+    if not body:
+        return ""
+    body_lower = body.lower()
+    if "unexpected endpoint" in body_lower or "404 page not found" in body_lower:
+        return "\n\n💡 提示：LM Studio / Ollama / vLLM 等 OpenAI 兼容服务的 base_url 通常需要 /v1 前缀，例如 http://127.0.0.1:1234/v1"
+    return ""
+
 # ── 标准分析提示模板 ──
 
 ANALYSIS_SYSTEM_PROMPT = """你是一个专注力分析教练，用朋友聊天的方式说话。
@@ -281,7 +296,7 @@ class OpenAICompatibleClient(LLMClient):
 
         Raises:
             RuntimeError: HTTPError / 响应 schema 缺字段 / JSON 解析失败，
-                message 内含响应 body 片段
+                message 内含响应 body 片段 + 端点路径提示（如果是 endpoint 错误）
         """
         import urllib.error
         import urllib.request
@@ -298,20 +313,23 @@ class OpenAICompatibleClient(LLMClient):
                 body_bytes = resp.read()
         except urllib.error.HTTPError as e:
             body = e.read()[:500].decode("utf-8", errors="replace")
-            raise RuntimeError(f"LLM HTTP {e.code}: {body}") from e
+            hint = _endpoint_hint(body)
+            raise RuntimeError(f"LLM HTTP {e.code}: {body}{hint}") from e
 
         # 200 OK — 解析响应
         try:
             result = _json.loads(body_bytes)
         except _json.JSONDecodeError as e:
             snippet = body_bytes[:500].decode("utf-8", errors="replace")
-            raise RuntimeError(f"LLM 响应非 JSON ({e!r}); body={snippet}") from e
+            hint = _endpoint_hint(snippet)
+            raise RuntimeError(f"LLM 响应非 JSON ({e!r}); body={snippet}{hint}") from e
 
         try:
             return result["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as e:
             snippet = body_bytes[:500].decode("utf-8", errors="replace")
-            raise RuntimeError(f"LLM 响应缺字段 ({e!r}); body={snippet}") from e
+            hint = _endpoint_hint(snippet)
+            raise RuntimeError(f"LLM 响应缺字段 ({e!r}); body={snippet}{hint}") from e
 
     def test_connection(self) -> str:
         """测试 API 连通性，返回空字符串表示成功，否则返回错误描述"""

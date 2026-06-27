@@ -24,6 +24,36 @@ from analyzer.llm_client import OpenAICompatibleClient
 from webserver.server import WebDashboard
 
 
+# ── 测试模块级 helper ────────────────────────────────────────────────────
+
+def _make_http_error(code: int, body: bytes):
+    """构造真实的 urllib.error.HTTPError（urlopen 4xx/5xx 时抛出）"""
+    import io
+    import urllib.error
+    return urllib.error.HTTPError(
+        url="http://127.0.0.1:1234/chat/completions",
+        code=code,
+        msg="Mocked",
+        hdrs={},
+        fp=io.BytesIO(body),
+    )
+
+
+def _mock_urlopen_ok(body_bytes: bytes):
+    """模拟 urlopen 返回 200 OK 带指定 body"""
+    resp = mock.MagicMock()
+    resp.status = 200
+    resp.read.return_value = body_bytes
+    resp.__enter__ = mock.MagicMock(return_value=resp)
+    resp.__exit__ = mock.MagicMock(return_value=False)
+    return mock.patch("urllib.request.urlopen", return_value=resp)
+
+
+def _mock_urlopen_err(http_error):
+    """模拟 urlopen 抛 HTTPError"""
+    return mock.patch("urllib.request.urlopen", side_effect=http_error)
+
+
 # ── 公共 helper ──────────────────────────────────────────────────────────
 
 def _patch_warmup_env(dashboard, backend="openai", base_url="http://127.0.0.1:1234",
@@ -190,34 +220,11 @@ class TestHttpPlaintxtWarning:
 class TestPostChatDiagnostics:
     """回归 v4.x.2: 'choices' KeyError 应该附带响应 body 便于诊断"""
 
-    def _mock_urlopen(self, body_bytes=None, status=200, http_error=None):
-        """构造 urlopen 上下文管理器 mock"""
-        if http_error is not None:
-            return mock.patch("urllib.request.urlopen", side_effect=http_error)
-        resp = mock.MagicMock()
-        resp.status = status
-        resp.read.return_value = body_bytes
-        resp.__enter__ = mock.MagicMock(return_value=resp)
-        resp.__exit__ = mock.MagicMock(return_value=False)
-        return mock.patch("urllib.request.urlopen", return_value=resp)
-
-    def _make_http_error(self, code: int, body: bytes):
-        """构造真实的 urllib.error.HTTPError"""
-        import io
-        import urllib.error
-        return urllib.error.HTTPError(
-            url="http://127.0.0.1:1234/chat/completions",
-            code=code,
-            msg="Mocked",
-            hdrs={},
-            fp=io.BytesIO(body),
-        )
-
     def test_missing_choices_includes_body(self):
         """200 OK 但 body 是 {\"error\": ...} → RuntimeError 带 body"""
         body = b'{"error": {"message": "Model not found", "code": "model_not_found"}}'
-        with self._mock_urlopen(body_bytes=body):
-            c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "qwen")
+        c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "qwen")
+        with _mock_urlopen_ok(body):
             with pytest.raises(RuntimeError) as exc_info:
                 c._post_chat({"model": "qwen", "messages": [], "max_tokens": 10}, timeout=10)
         msg = str(exc_info.value)
@@ -227,9 +234,9 @@ class TestPostChatDiagnostics:
 
     def test_http_error_includes_body(self):
         """HTTP 4xx/5xx → RuntimeError 带 status code + body"""
-        err = self._make_http_error(404, b'{"error": "model Qwen3 not found"}')
-        with self._mock_urlopen(http_error=err):
-            c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "Qwen3")
+        err = _make_http_error(404, b'{"error": "model Qwen3 not found"}')
+        c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "Qwen3")
+        with _mock_urlopen_err(err):
             with pytest.raises(RuntimeError) as exc_info:
                 c._post_chat({"model": "Qwen3", "messages": [], "max_tokens": 10}, timeout=10)
         msg = str(exc_info.value)
@@ -238,34 +245,81 @@ class TestPostChatDiagnostics:
 
     def test_non_json_response_includes_body(self):
         """SSE 流式 / 纯文本 → RuntimeError 带 body 片段"""
-        body = b"data: {\"id\":\"x\",\"choices\":[...]}\n\ndata: [DONE]\n"
-        with self._mock_urlopen(body_bytes=body):
-            c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "qwen")
+        body = b'data: {"id":"x","choices":[...]}\n\ndata: [DONE]\n'
+        c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "qwen")
+        with _mock_urlopen_ok(body):
             with pytest.raises(RuntimeError) as exc_info:
                 c._post_chat({"model": "qwen", "messages": [], "max_tokens": 10}, timeout=10)
         msg = str(exc_info.value)
-        assert "非 JSON" in msg or "JSON" in msg
+        assert "JSON" in msg
         assert "data:" in msg
 
     def test_successful_response_extracts_content(self):
         """正常 200 OK 响应 → 返回 content"""
         body = b'{"choices": [{"message": {"content": "hello"}}]}'
-        with self._mock_urlopen(body_bytes=body):
-            c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "qwen")
+        c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "qwen")
+        with _mock_urlopen_ok(body):
             result = c._post_chat({"model": "qwen", "messages": [], "max_tokens": 10}, timeout=10)
         assert result == "hello"
 
     def test_analyze_returns_empty_on_diagnostic_error(self):
         """analyze 包装 _post_chat：异常时返回空串（不动 outer 语义）"""
         body = b'{"error": {"message": "Model not found"}}'
-        with self._mock_urlopen(body_bytes=body):
-            c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "qwen")
+        c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "qwen")
+        with _mock_urlopen_ok(body):
             result = c.analyze({"duration": 100, "avg_focus": 80})
-        assert result == ""  # 失败返回空串，调用方用模板兜底
+        assert result == ""
 
     def test_deep_analyze_returns_empty_on_diagnostic_error(self):
         body = b'{"error": {"message": "Model not found"}}'
-        with self._mock_urlopen(body_bytes=body):
-            c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "qwen")
+        c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "qwen")
+        with _mock_urlopen_ok(body):
             result = c.deep_analyze({"duration": 100, "avg_focus": 80})
         assert result == ""
+
+
+# ── /v1 端点路径提示：LM Studio / Ollama 缺 /v1 前缀的友好错误 ────────────
+
+class TestEndpointHint:
+    """_endpoint_hint + _post_chat 在 endpoint 错误时追加 /v1 提示"""
+
+    def test_unexpected_endpoint_includes_v1_hint(self):
+        """LM Studio 典型 'Unexpected endpoint' 错误 → 错误消息含 /v1 提示"""
+        body = b'{"error":"Unexpected endpoint or method. (POST /chat/completions)"}'
+        c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "Qwen3")
+        with _mock_urlopen_ok(body):
+            with pytest.raises(RuntimeError) as exc_info:
+                c._post_chat({"model": "Qwen3", "messages": [], "max_tokens": 10}, timeout=10)
+        msg = str(exc_info.value)
+        assert "/v1" in msg
+        assert "LM Studio" in msg or "Ollama" in msg
+
+    def test_ollama_404_includes_v1_hint(self):
+        """Ollama 典型 '404 page not found' → 触发 /v1 提示"""
+        body = b'{"error":"404 page not found"}'
+        c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:11434", "qwen")
+        with _mock_urlopen_ok(body):
+            with pytest.raises(RuntimeError) as exc_info:
+                c._post_chat({"model": "qwen", "messages": [], "max_tokens": 10}, timeout=10)
+        msg = str(exc_info.value)
+        assert "/v1" in msg
+
+    def test_model_not_found_no_hint(self):
+        """普通 'Model not found' 错误不应加 /v1 提示（避免误导）"""
+        body = b'{"error": {"message": "Model not found", "code": "model_not_found"}}'
+        c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234/v1", "qwen")
+        with _mock_urlopen_ok(body):
+            with pytest.raises(RuntimeError) as exc_info:
+                c._post_chat({"model": "qwen", "messages": [], "max_tokens": 10}, timeout=10)
+        msg = str(exc_info.value)
+        assert "/v1" not in msg, f"普通错误不应追加 /v1 提示: {msg}"
+
+    def test_endpoint_hint_helper_unit(self):
+        """_endpoint_hint 函数级单测"""
+        from analyzer.llm_client import _endpoint_hint
+        assert "/v1" in _endpoint_hint("Unexpected endpoint or method")
+        assert "/v1" in _endpoint_hint("404 page not found")
+        assert _endpoint_hint("") == ""
+        assert _endpoint_hint("Model not found") == ""       # 不应误触发
+        assert _endpoint_hint('{"error":"Model not found"}') == ""
+        assert _endpoint_hint('{"choices": [...]}') == ""    # 正常响应无提示

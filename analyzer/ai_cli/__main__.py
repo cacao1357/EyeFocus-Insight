@@ -169,7 +169,8 @@ def _call_llm(messages: list, model: str, base_url: str, api_key: str,
     """调用 OpenAI 兼容 API
 
     异常附带响应 body（截 500 字）便于诊断 LM Studio 返回的非标准响应
-    （如 {"error": {...}} 而非 {"choices": [...]}）。
+    （如 {"error": {...}} 而非 {"choices": [...]}）；遇到 endpoint 错误
+    会追加 /v1 路径提示。
     """
     import json as _json
     import urllib.error
@@ -192,24 +193,34 @@ def _call_llm(messages: list, model: str, base_url: str, api_key: str,
         data=payload,
         headers=headers,
     )
+
+    # LM Studio / Ollama 端点路径不对的提示（与 analyzer.llm_client._endpoint_hint 对齐）
+    def _hint(body: str) -> str:
+        if not body:
+            return ""
+        bl = body.lower()
+        if "unexpected endpoint" in bl or "not found" in bl:
+            return "\n\n💡 提示：LM Studio / Ollama / vLLM 等 OpenAI 兼容服务的 base_url 通常需要 /v1 前缀，例如 http://127.0.0.1:1234/v1"
+        return ""
+
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body_bytes = resp.read()
     except urllib.error.HTTPError as e:
         body = e.read()[:500].decode("utf-8", errors="replace")
-        raise RuntimeError(f"LLM HTTP {e.code}: {body}") from e
+        raise RuntimeError(f"LLM HTTP {e.code}: {body}{_hint(body)}") from e
 
     try:
         result = _json.loads(body_bytes)
     except _json.JSONDecodeError as e:
         snippet = body_bytes[:500].decode("utf-8", errors="replace")
-        raise RuntimeError(f"LLM 响应非 JSON ({e!r}); body={snippet}") from e
+        raise RuntimeError(f"LLM 响应非 JSON ({e!r}); body={snippet}{_hint(snippet)}") from e
 
     try:
         raw = result["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as e:
         snippet = body_bytes[:500].decode("utf-8", errors="replace")
-        raise RuntimeError(f"LLM 响应缺字段 ({e!r}); body={snippet}") from e
+        raise RuntimeError(f"LLM 响应缺字段 ({e!r}); body={snippet}{_hint(snippet)}") from e
     return _clean_output(raw)
 
 
