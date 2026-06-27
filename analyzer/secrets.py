@@ -8,11 +8,14 @@ analyzer/secrets.py — API key 解析与 OS keyring 包装
 
 写入只通过 set_api_key()（Settings dialog 触发），**不会**自动从 .env 迁移。
 keyring 包未安装 / 后端不可用时静默降级到 env，绝不抛异常。
+
+清理：remove_env_from_dotenv() 把明文 key 从 .env 删除（保留其他行/注释）。
 """
 from __future__ import annotations
 
 import logging
 import os
+import pathlib
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -103,6 +106,36 @@ def delete_api_key() -> bool:
         return True
     except Exception as e:
         logger.warning("keyring 删除失败: %s", e)
+        return False
+
+
+def remove_env_from_dotenv(env_var: str = ENV_KEY, dotenv_path: Optional[str] = None) -> bool:
+    """从项目根 .env 文件删除指定环境变量行（保留注释和其他键）。
+
+    用法：用户迁移 key 到 keyring 后调用，确保 .env 不再含明文 key。
+    - 不存在该行：返回 True（无副作用）
+    - .env 文件不存在：返回 True
+    - 写盘失败：返回 False，logger.warning
+    """
+    if dotenv_path is None:
+        # 项目根 = analyzer/secrets.py 的上两级
+        # analyzer/ -> 项目根
+        dotenv_path = str(pathlib.Path(__file__).resolve().parent.parent / ".env")
+    p = pathlib.Path(dotenv_path)
+    if not p.exists():
+        return True
+    try:
+        original = p.read_text(encoding="utf-8")
+        new_lines = [
+            line for line in original.splitlines(keepends=True)
+            if not line.lstrip().startswith(f"{env_var}=")
+        ]
+        if len(new_lines) == original.count("\n") + 1:
+            return True  # 没匹配行，无需写
+        p.write_text("".join(new_lines), encoding="utf-8")
+        return True
+    except Exception as e:
+        logger.warning(".env 清理失败 (%s): %s", dotenv_path, e)
         return False
 
 

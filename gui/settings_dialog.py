@@ -541,10 +541,15 @@ class SettingsDialog(QDialog):
     def _on_modify_api_key(self) -> None:
         """弹出密码对话框，设置或替换 keyring 中的 API Key"""
         from PyQt5.QtWidgets import QDialog, QFormLayout, QHBoxLayout, QDialogButtonBox
-        from analyzer.secrets import get_api_key, set_api_key, is_loopback_url
+        from analyzer.secrets import get_api_key, set_api_key, is_loopback_url, remove_env_from_dotenv
 
         dlg = QDialog(self)
         dlg.setWindowTitle("设置 API Key")
+        # v4.x: 白底对话框（防系统主题下黑底）
+        dlg.setStyleSheet(
+            "QDialog { background-color: #FFFFFF; }"
+            + self.INPUT_WIDGET_QSS
+        )
         layout = QFormLayout(dlg)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
@@ -560,11 +565,11 @@ class SettingsDialog(QDialog):
         layout.addRow(QLabel(hint))
 
         # Key 输入（默认隐藏，可切换显示）
-        current = get_api_key() or ""
+        # 安全考量：默认空字段，不预填 keyring 当前值（防 shoulder-surfing）
         key_edit = QLineEdit()
+        key_edit.setStyleSheet(self.INPUT_WIDGET_QSS)
         key_edit.setEchoMode(QLineEdit.Password)
         key_edit.setPlaceholderText("sk-...")
-        key_edit.setText(current)
 
         show_btn = QPushButton("显示")
         show_btn.setFixedWidth(60)
@@ -590,19 +595,24 @@ class SettingsDialog(QDialog):
             if not new_key:
                 return
             if set_api_key(new_key):
-                # 清掉 env，避免 split-brain
+                # 清掉进程 env + 项目 .env 明文（双保险：内存和磁盘）
                 os.environ.pop("MINIMAX_API_KEY", None)
+                remove_env_from_dotenv()
                 self._refresh_key_storage_label()
                 from PyQt5.QtWidgets import QMessageBox
-                QMessageBox.information(self, "API Key", "✅ Key 已存到凭据管理器。\n重启后下次启动会从这里读取。")
+                QMessageBox.information(
+                    self, "API Key",
+                    "✅ Key 已存到凭据管理器。\n"
+                    "下次启动会从这里读取；.env 里的明文已一并清理。",
+                )
             else:
                 from PyQt5.QtWidgets import QMessageBox
                 QMessageBox.warning(self, "API Key", "❌ 保存到凭据管理器失败。\n请检查系统凭据存储是否可用。")
 
     def _on_migrate_api_key(self) -> None:
-        """一键把 .env 里的 key 搬到 keyring"""
+        """一键把 .env 里的 key 搬到 keyring，并清理 .env 明文"""
         try:
-            from analyzer.secrets import get_api_key, set_api_key
+            from analyzer.secrets import get_api_key, set_api_key, remove_env_from_dotenv
         except Exception as e:
             from PyQt5.QtWidgets import QMessageBox
             QMessageBox.warning(self, "迁移", f"keyring 模块不可用: {e}")
@@ -613,14 +623,15 @@ class SettingsDialog(QDialog):
             QMessageBox.information(self, "迁移", ".env 中没有可迁移的 Key。")
             return
         if set_api_key(current):
+            # 同步清理进程 env + 项目 .env（用户预期是"彻底迁移"）
             os.environ.pop("MINIMAX_API_KEY", None)
+            remove_env_from_dotenv()
             self._refresh_key_storage_label()
             from PyQt5.QtWidgets import QMessageBox
             QMessageBox.information(
                 self, "迁移",
-                "✅ Key 已迁移到 Windows 凭据管理器。\n\n"
-                "建议下一步：从 .env 中删除 MINIMAX_API_KEY 行以彻底脱离明文存储。\n"
-                "（本程序不会自动修改 .env，由你决定何时删除）",
+                "✅ Key 已迁移到 Windows 凭据管理器。\n"
+                ".env 里的 MINIMAX_API_KEY 行也已一并删除。",
             )
         else:
             from PyQt5.QtWidgets import QMessageBox

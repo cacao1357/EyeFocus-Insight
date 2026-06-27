@@ -153,3 +153,64 @@ class TestStorageLocation:
         monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
         with mock.patch("keyring.get_password", return_value=None):
             assert secrets.storage_location() == "none"
+
+
+# ── remove_env_from_dotenv：迁移后清理 .env 明文 ──────────────────────────
+
+class TestRemoveEnvFromDotenv:
+
+    def _write_dotenv(self, path, content):
+        import pathlib
+        pathlib.Path(path).write_text(content, encoding="utf-8")
+
+    def test_removes_target_line_keeps_others(self, tmp_path):
+        """删除目标行 + 保留注释和其他键"""
+        dotenv = tmp_path / ".env"
+        self._write_dotenv(dotenv, (
+            "# 注释保留\n"
+            "OTHER_KEY=keep_me\n"
+            "MINIMAX_API_KEY=sk-secret\n"
+            "ANOTHER=also_keep\n"
+        ))
+        assert secrets.remove_env_from_dotenv("MINIMAX_API_KEY", str(dotenv)) is True
+        result = dotenv.read_text(encoding="utf-8")
+        assert "MINIMAX_API_KEY" not in result
+        assert "# 注释保留" in result
+        assert "OTHER_KEY=keep_me" in result
+        assert "ANOTHER=also_keep" in result
+
+    def test_no_target_line_noop(self, tmp_path):
+        dotenv = tmp_path / ".env"
+        self._write_dotenv(dotenv, "OTHER_KEY=foo\nANOTHER=bar\n")
+        original = dotenv.read_text(encoding="utf-8")
+        assert secrets.remove_env_from_dotenv("MINIMAX_API_KEY", str(dotenv)) is True
+        assert dotenv.read_text(encoding="utf-8") == original
+
+    def test_missing_dotenv_returns_true(self, tmp_path):
+        """不存在的 .env 文件：返回 True（无副作用）"""
+        missing = tmp_path / "no-such-file"
+        assert secrets.remove_env_from_dotenv("MINIMAX_API_KEY", str(missing)) is True
+
+    def test_indented_target_line_also_removed(self, tmp_path):
+        """带缩进的目标行也应被删除（虽然不常见）"""
+        dotenv = tmp_path / ".env"
+        self._write_dotenv(dotenv, (
+            "  OTHER=foo\n"
+            "    MINIMAX_API_KEY=sk-secret\n"
+        ))
+        assert secrets.remove_env_from_dotenv("MINIMAX_API_KEY", str(dotenv)) is True
+        result = dotenv.read_text(encoding="utf-8")
+        assert "MINIMAX_API_KEY" not in result
+        assert "OTHER=foo" in result
+
+    def test_write_failure_returns_false(self, tmp_path):
+        """写盘失败 → 返回 False（不抛）"""
+        import unittest.mock as _mock
+        dotenv = tmp_path / ".env"
+        self._write_dotenv(dotenv, "MINIMAX_API_KEY=sk-x\n")
+        # 模拟 write_text 抛异常
+        real_write = type(dotenv).write_text
+        def boom(self, *a, **kw):
+            raise OSError("disk full")
+        with _mock.patch.object(type(dotenv), "write_text", boom):
+            assert secrets.remove_env_from_dotenv("MINIMAX_API_KEY", str(dotenv)) is False
