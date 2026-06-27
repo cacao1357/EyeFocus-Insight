@@ -1030,6 +1030,38 @@ function _appendChatMsg(text, isUser) {
   box.scrollTop = box.scrollHeight;
 }
 
+// ── v4.x 第三波 B-α：结构化输出卡片 ────────────────────────────────────
+// 把 LLM 返回的 {insight, action, risk} 渲染成 3 张彩色卡片
+function _renderStructuredCards(s) {
+  var cards = [];
+  function card(emoji, label, text, color) {
+    if (!text) return '';
+    return '<div style="margin-top:6px;padding:6px 10px;border-left:3px solid ' + color
+         + ';background:var(--stone-50);border-radius:4px;font-size:12px;">'
+         + '<div style="font-weight:600;color:' + color + ';">' + emoji + ' ' + label + '</div>'
+         + '<div style="margin-top:2px;color:var(--ink-700);">' + _escapeHtml(text) + '</div>'
+         + '</div>';
+  }
+  cards.push(card('💡', 'Insight', s.insight, 'var(--iris-600)'));
+  cards.push(card('✅', 'Action',  s.action,  'var(--sage)'));
+  if (s.risk) cards.push(card('⚠', 'Risk', s.risk, 'var(--amber)'));
+  return cards.join('');
+}
+
+// ── v4.x 第三波 B-γ：token 累计 ─────────────────────────────────────────
+// localStorage 存累计，跨刷新保留
+function _accumulateTokens(n) {
+  try {
+    var cur = parseInt(localStorage.getItem('eyefocus_total_tokens') || '0', 10) || 0;
+    localStorage.setItem('eyefocus_total_tokens', String(cur + n));
+  } catch (e) {}
+}
+function _getTotalTokens() {
+  try {
+    return parseInt(localStorage.getItem('eyefocus_total_tokens') || '0', 10) || 0;
+  } catch (e) { return 0; }
+}
+
 async function triggerAiAnalysis() {
   if (!currentSid) return;
   switchReportTab('ai');
@@ -1133,6 +1165,8 @@ async function _sendChatStream(q) {
   box.scrollTop = box.scrollHeight;
 
   var fullText = '';
+  var structured = null;  // B-α: 流结束时的 {insight, action, risk}
+  var approxTokens = 0;    // B-γ: 流结束时的 token 估算
   // 限频：每 ~30ms 重渲染一次 markdown，避免 100 token × 5 regex 卡顿
   var lastRender = 0;
   function maybeRender() {
@@ -1191,6 +1225,15 @@ async function _sendChatStream(q) {
             return;
           } else if (data.done) {
             sawDone = true;
+            // B-α: 提取结构化数据
+            if (data.structured && typeof data.structured === 'object') {
+              structured = data.structured;
+            }
+            // B-γ: token 估算
+            if (typeof data.approx_tokens === 'number') {
+              approxTokens = data.approx_tokens;
+              _accumulateTokens(approxTokens);
+            }
           }
         } catch (e) {
           // ignore malformed JSON chunk
@@ -1200,7 +1243,17 @@ async function _sendChatStream(q) {
 
     // 最终渲染（确保最后一个 token 显示）
     if (fullText) {
-      msgDiv.innerHTML = _renderMarkdown(fullText);
+      // 拼接结构化卡片 + token 计数脚注
+      var html = _renderMarkdown(fullText);
+      if (structured) {
+        html += _renderStructuredCards(structured);
+      }
+      if (approxTokens > 0) {
+        html += '<div style="margin-top:6px;font-size:11px;color:var(--gray);text-align:right;">'
+              + '~' + approxTokens + ' tokens · 累计 '
+              + _getTotalTokens() + '</div>';
+      }
+      msgDiv.innerHTML = html;
       chatHistory.push({role: 'assistant', text: fullText});
       _saveChatHistory();
     } else if (!sawDone) {

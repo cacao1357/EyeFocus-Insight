@@ -733,6 +733,32 @@ class WebDashboard:
             fallback = self._template_chat_answer(question, llm_data)
             return aiohttp.web.json_response({"answer": fallback, "backend": "template"})
 
+    @staticmethod
+    def _extract_structured(full_text: str) -> Optional[Dict[str, Any]]:
+        """从 LLM 完整响应末尾的 ```json ... ``` 块提取结构化数据（B-α）
+
+        返回 {insight, action, risk} dict；解析失败 / 不存在 → 返回 None。
+        """
+        import re as _re
+        if not full_text:
+            return None
+        pattern = _re.compile(r"```json\s*\n(.*?)\n\s*```", _re.DOTALL)
+        matches = pattern.findall(full_text)
+        if not matches:
+            return None
+        import json as _json
+        try:
+            data = _json.loads(matches[-1])
+            if not isinstance(data, dict):
+                return None
+            return {
+                "insight": str(data.get("insight", "")),
+                "action": str(data.get("action", "")),
+                "risk": str(data.get("risk", "")),
+            }
+        except _json.JSONDecodeError:
+            return None
+
     async def _handle_api_chat_stream(self, request):
         """SSE 流式 AI 对话（v4.x：第二波 — token 级打字机）
 
@@ -821,7 +847,15 @@ class WebDashboard:
             "2. 分析原因而非只描述现象\n"
             "3. 给出可执行的建议\n"
             "4. 用中文，口语化，像朋友聊天\n"
-            "5. 不知道就说不知道，不要编造"
+            "5. 不知道就说不知道，不要编造\n\n"
+            "附加要求（v4.x 结构化输出）：\n"
+            "在回答最末尾另起一行，用 ```json ... ``` 包裹一个 JSON 对象：\n"
+            "{\n"
+            '  "insight": "本局最关键的 1 个发现（一句话）",\n'
+            '  "action": "建议用户立刻做的 1 件事（可执行）",\n'
+            '  "risk": "下次需要警惕的 1 个风险（没有就空字符串）"\n'
+            "}\n"
+            "JSON 必须是合法可解析的格式，不要有注释或多余文本。"
         )
         messages = [
             {"role": "system", "content": system_prompt},
@@ -848,16 +882,27 @@ class WebDashboard:
             return f"data: {_json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
 
         try:
+            full_text = ""
             if backend == "openai" and hasattr(self._llm_client, "chat_stream"):
                 # 流式 OpenAI 兼容
                 for token in self._llm_client.chat_stream(messages, max_tokens=500, timeout=60):
+                    full_text += token
                     await resp.write(_event({"token": token}))
-                await resp.write(_event({"done": True}))
             else:
                 # Ollama / local — 用一次性响应包装成单 token 事件
                 answer = self._llm_chat(self._llm_client, messages, backend)
+                full_text = answer
                 await resp.write(_event({"token": answer}))
-                await resp.write(_event({"done": True}))
+
+            # ── B-α: 末尾结构化 JSON 提取 ──
+            structured = self._extract_structured(full_text)
+            # ── B-γ: token 估算（不引 tiktoken；精度 ±20%，仅 UX 显示） ──
+            approx_tokens = estimate_tokens(full_text)
+            await resp.write(_event({
+                "done": True,
+                "structured": structured,
+                "approx_tokens": approx_tokens,
+            }))
         except Exception as e:
             err = self._sanitize_err(str(e))
             logger.warning("AI 流式对话失败: %s", err)

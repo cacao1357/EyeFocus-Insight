@@ -490,6 +490,20 @@ class OpenAICompatibleClient(LLMClient):
                 pass
 
 
+# ── Token 估算 ─────────────────────────────────────────────────────────────
+def estimate_tokens(text: str) -> int:
+    """粗略估算 token 数（不引 tiktoken 依赖）。
+
+    LM Studio / OpenAI 流式响应通常不带 usage 字段，前端需要客户端估算。
+    中英文混合按 chars/2 算；空字符串返回 0。
+    误差约 ±20%，仅用于 UX 显示（非计费）。
+    """
+    if not text:
+        return 0
+    # 中文偏密，每个汉字 ≈ 1 token；英文每 4 字符 ≈ 1 token；混合按 2
+    return max(1, len(text) // 2)
+
+
 # ── Ollama 本地版 ──
 
 class OllamaClient(LLMClient):

@@ -343,6 +343,37 @@ class TestSanitizeErr:
         assert self._san(msg) == "认证失败（无效 API Key）"
 
 
+# ── 第三波 B-γ：estimate_tokens ──────────────────────────────────────────
+
+class TestEstimateTokens:
+    """analyzer.llm_client.estimate_tokens — 粗略 token 估算"""
+
+    def test_empty_returns_zero(self):
+        from analyzer.llm_client import estimate_tokens
+        assert estimate_tokens("") == 0
+
+    def test_short_returns_min_one(self):
+        from analyzer.llm_client import estimate_tokens
+        assert estimate_tokens("hi") == 1
+
+    def test_chinese_text(self):
+        """中文按 chars/2 估算"""
+        from analyzer.llm_client import estimate_tokens
+        text = "你好世界"  # 4 chars
+        assert estimate_tokens(text) == 2  # max(1, 4//2)
+
+    def test_longer_text_proportional(self):
+        from analyzer.llm_client import estimate_tokens
+        assert estimate_tokens("a" * 100) == 50
+        assert estimate_tokens("a" * 200) == 100
+
+    def test_typical_chat_response(self):
+        """典型 LLM 回答 ~90 字 → ~45 tokens"""
+        from analyzer.llm_client import estimate_tokens
+        text = "你这次专注度 75 分，比平时略高。" * 5  # 90 chars
+        assert estimate_tokens(text) == 45
+
+
 # ── chat_stream：流式 OpenAI 兼容协议（第二波 SSE） ──────────────────────
 
 class TestChatStream:
