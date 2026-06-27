@@ -613,8 +613,11 @@ class TestEyeFocusAppCameraValidation:
         log_records = []
         handler = logging.Handler()
         handler.emit = lambda r: log_records.append(r.getMessage())
-        logging.getLogger("eyefocus").addHandler(handler)
-        logging.getLogger("eyefocus").setLevel(logging.ERROR)
+        parent_logger = logging.getLogger("eyefocus")
+        parent_logger.addHandler(handler)
+        # v4.x: 保存原始 level，finally 还原（防污染后续 caplog 测试）
+        saved_level = parent_logger.level
+        parent_logger.setLevel(logging.ERROR)
         try:
             app = EyeFocusApp(AppConfig(
                 camera_index=99,
@@ -627,7 +630,8 @@ class TestEyeFocusAppCameraValidation:
             assert err_logs, f"应记录摄像头无法打开的错误日志, 实际 {log_records}"
             assert any("99" in m for m in err_logs), f"错误日志应含 camera_index=99"
         finally:
-            logging.getLogger("eyefocus").removeHandler(handler)
+            parent_logger.removeHandler(handler)
+            parent_logger.setLevel(saved_level)
 
     def test_initialize_stops_camera_after_validation(self, monkeypatch, tmp_path):
         """B3 验证: 摄像头 start() 验证后必须 stop()，否则 main_loop start() 会冲突"""
