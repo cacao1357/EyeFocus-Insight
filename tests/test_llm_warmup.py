@@ -278,9 +278,72 @@ class TestPostChatDiagnostics:
         assert result == ""
 
 
-# ── /v1 端点路径提示：LM Studio / Ollama 缺 /v1 前缀的友好错误 ────────────
+# ── _sanitize_err JSON 边界脱敏（避免漏掉 {"key":"sk-..."}） ──────────────
 
-class TestEndpointHint:
+class TestSanitizeErr:
+    """v4.x.5: 用 regex 替代 word-split，防止 JSON body 边界漏脱敏"""
+
+    @staticmethod
+    def _san(msg):
+        return OpenAICompatibleClient._sanitize_err(msg)
+
+    # ── 旧 word-split 漏掉的 JSON 边界场景（核心回归）
+
+    def test_sk_token_in_json_quoted_value(self):
+        """{\"key\":\"sk-abc\"} — word-split 切出 ['{\"key\":', '\"sk-abc\"}']，漏检。"""
+        msg = '{"error":"invalid","key":"sk-test123"}'
+        assert self._san(msg) == "认证失败（无效 API Key）"
+
+    def test_bearer_in_json_quoted_value(self):
+        """{\"authorization\":\"Bearer sk-abc\"} — 同理。命中 SK（SK 优先于 Bearer）。"""
+        msg = '{"authorization":"Bearer sk-test123","error":"invalid"}'
+        # 语义：原代码 SK 检查先于 Bearer；regex 化后保留同样语义（命中 SK → 无效 Key）
+        assert self._san(msg) == "认证失败（无效 API Key）"
+
+    def test_sk_with_colon_prefix(self):
+        """用户的 key 含 ':'（LM Studio 本地 key 常见格式 sk-lm-xxx:yyy）。"""
+        msg = '{"key":"sk-lm-5saGlLbb:63PkNMsVF3la2VKpJKw4"}'
+        assert self._san(msg) == "认证失败（无效 API Key）"
+
+    # ── 旧逻辑覆盖的场景（确保没破坏）
+
+    def test_plain_sk_word(self):
+        msg = "the key is sk-xyz"
+        assert self._san(msg) == "认证失败（无效 API Key）"
+
+    def test_plain_bearer_word(self):
+        msg = "Authorization: Bearer sk-xyz"
+        # 同上语义：SK 命中优先于 Bearer
+        assert self._san(msg) == "认证失败（无效 API Key）"
+
+    # ── 负向：不应误脱敏
+
+    def test_no_key_message_passes_through(self):
+        assert self._san("HTTP Error 500: server error") == "HTTP Error 500: server error"
+
+    def test_unrelated_string_passes_through(self):
+        assert self._san("connection refused") == "connection refused"
+
+    def test_similar_but_not_sk(self):
+        # "skill" 不应误判 — 旧逻辑也匹配是因为 word.startswith('sk-')
+        # 新逻辑 r'sk-[A-Za-z0-9_\-:]+' 要求 'sk-' 紧跟一个 token 字符
+        assert self._san("skill test") == "skill test"
+
+    def test_empty_passes_through(self):
+        assert self._san("") == ""
+
+    # ── Real-world 错误消息
+
+    def test_typical_lm_studio_401_body(self):
+        msg = '{"error":{"message":"Invalid API Key. sk-abc123 provided.","code":"invalid_api_key"}}'
+        assert self._san(msg) == "认证失败（无效 API Key）"
+
+    def test_typical_openai_401_body(self):
+        msg = '{"error":{"message":"Incorrect API key provided: sk-abc****xyz. ","type":"invalid_request_error"}}'
+        assert self._san(msg) == "认证失败（无效 API Key）"
+
+
+# ── /v1 端点路径提示：LM Studio / Ollama 缺 /v1 前缀的友好错误 ────────────
     """_endpoint_hint + _post_chat 在 endpoint 错误时追加 /v1 提示"""
 
     def test_unexpected_endpoint_includes_v1_hint(self):

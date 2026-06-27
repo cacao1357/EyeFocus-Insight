@@ -11,6 +11,7 @@ analyzer/llm_client.py — LLM 客户端抽象 (v4.27)
 
 import logging
 import json
+import re
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
@@ -229,6 +230,12 @@ OPENAI_COMPATIBLE_PROVIDERS = {
     "groq":       {"base_url": "https://api.groq.com/openai/v1",       "model": "llama-3.3-70b-versatile"},
 }
 
+# v4.x: 错误消息脱敏用正则，避免 JSON body 边界漏脱敏
+#  `{"key":"sk-abc"}` 用 word-split 切出 ['{"key":', '"sk-abc"}']，
+#  两个 token 都不以 'sk-' 开头 — 会泄漏。regex.search 直接找 'sk-...' 模式。
+_SK_TOKEN_PATTERN = __import__('re').compile(r'sk-[A-Za-z0-9_\-:]+')
+_BEARER_PATTERN = __import__('re').compile(r'Bearer\s+[A-Za-z0-9_\-:]+')
+
 
 class OpenAICompatibleClient(LLMClient):
     """OpenAI 兼容 API（覆盖大多数主流云端 LLM）
@@ -256,13 +263,18 @@ class OpenAICompatibleClient(LLMClient):
 
     @staticmethod
     def _sanitize_err(msg: str) -> str:
+        """脱敏错误消息中的 API Key。
+
+        用正则而非 word-split，避免 JSON body 边界漏脱敏：
+        `{"key":"sk-abc"}` 切词后是 ['{"key":', '"sk-abc"}']，
+        两个 token 都不以 'sk-' 开头 — 会泄漏。regex.search 直接找 'sk-...' 模式。
+        """
         if not msg:
             return msg
-        for word in msg.split():
-            if word.startswith("sk-"):
-                return "认证失败（无效 API Key）"
-            if word.startswith("Bearer "):
-                return "认证失败（API Key 格式错误）"
+        if _SK_TOKEN_PATTERN.search(msg):
+            return "认证失败（无效 API Key）"
+        if _BEARER_PATTERN.search(msg):
+            return "认证失败（API Key 格式错误）"
         return msg
 
     @property
