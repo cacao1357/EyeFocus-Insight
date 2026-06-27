@@ -770,6 +770,9 @@ async function switchSession(sid) {
     drawSparkline();
     showView('Dashboard');
     connect();
+    // v4.x: 切回实时也加载对应桶（key='live'）
+    _loadChatHistory();
+    _renderChatBox();
     return;
   }
 
@@ -777,6 +780,10 @@ async function switchSession(sid) {
   viewingHistory = true;
   aiBtn.style.display = 'inline-block';
   document.getElementById('modeBadge').textContent = '📜 历史';
+
+  // v4.x B5: 切会话 → 加载该 sid 的历史对话 + 重渲染 chatBox
+  _loadChatHistory();
+  _renderChatBox();
 
   // 断开 WS
   if (ws) { ws.onclose = null; ws.close(); ws = null; }
@@ -959,6 +966,70 @@ function stopLlmPolling() {
 // ═══════════════════════════════════════════
 var chatHistory = [];
 
+// ── v4.x: localStorage 持久化（按 sid 分桶，刷新不丢） ──────────────────
+function _chatKey(sid) { return 'eyefocus_chat_' + (sid || 'live'); }
+function _loadChatHistory() {
+  try {
+    var raw = localStorage.getItem(_chatKey(currentSid));
+    chatHistory = raw ? JSON.parse(raw) : [];
+  } catch (e) { chatHistory = []; }
+}
+function _saveChatHistory() {
+  try {
+    // 限 20 条/会话，避免 localStorage 膨胀
+    var trimmed = chatHistory.slice(-20);
+    localStorage.setItem(_chatKey(currentSid), JSON.stringify(trimmed));
+  } catch (e) { /* quota 等错误静默 */ }
+}
+function _renderChatBox() {
+  // 重渲染整个 chatBox（切 session 后用）
+  var box = document.getElementById('chatBox');
+  if (!box) return;
+  box.innerHTML = '';
+  chatHistory.forEach(function (m) { _appendChatMsg(m.text, m.role === 'user'); });
+}
+
+// ── v4.x: 轻量 Markdown 渲染（self-contained，无外部依赖） ─────────────
+//  支持 **bold** *italic* `code` - 列表 行内 <br>
+//  必须先 escape HTML 防 XSS，再做替换
+function _escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function _renderMarkdown(s) {
+  var html = _escapeHtml(s);
+  // 代码（先做，避免被 bold 规则影响）
+  html = html.replace(/`([^`]+)`/g, '<code style="background:var(--stone-200);padding:1px 5px;border-radius:3px;font-family:monospace;font-size:12px;">$1</code>');
+  // bold
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  // italic（避免和 bold 冲突：用非星号字符边界）
+  html = html.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  // 先换行（让列表项能匹配行首）
+  html = html.replace(/\n/g, '<br>');
+  // 列表项（行首 "- " 或 "· "）— 在已转 <br> 的文本中匹配
+  html = html.replace(/(^|<br>)[\-·]\s+([^<\n]+)(?=<|$|<br>)/g,
+                      '$1<span style="display:inline-block;margin-left:6px;">• $2</span>');
+  return html;
+}
+
+// 用户消息保持纯文本（防 XSS），AI 消息用 markdown 渲染
+function _appendChatMsg(text, isUser) {
+  var box = document.getElementById('chatBox');
+  if (!box) return;
+  var div = document.createElement('div');
+  div.style.cssText = 'margin:6px 0;padding:8px 12px;border-radius:8px;max-width:85%;word-wrap:break-word;' +
+    (isUser
+      ? 'background:var(--iris-600);color:#fff;margin-left:auto;border-bottom-right-radius:2px;'
+      : 'background:var(--stone-100);color:var(--ink-700);margin-right:auto;border-bottom-left-radius:2px;');
+  if (isUser) {
+    div.textContent = text;
+  } else {
+    div.innerHTML = _renderMarkdown(text);
+  }
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
 async function triggerAiAnalysis() {
   if (!currentSid) return;
   switchReportTab('ai');
@@ -995,16 +1066,54 @@ async function triggerAiAnalysis() {
 }
 
 function addChatMsg(text, isUser) {
-  var box = document.getElementById('chatBox');
-  if (!box) return;
-  var div = document.createElement('div');
-  div.style.cssText = 'margin:6px 0;padding:8px 12px;border-radius:8px;max-width:85%;' +
-    (isUser
-      ? 'background:var(--iris-600);color:#fff;margin-left:auto;border-bottom-right-radius:2px;'
-      : 'background:var(--stone-100);color:var(--ink-700);margin-right:auto;border-bottom-left-radius:2px;');
-  div.textContent = text;
-  box.appendChild(div);
-  box.scrollTop = box.scrollHeight;
+  // v4.x: 改为 _appendChatMsg（支持 markdown 渲染 + localStorage 友好）
+  _appendChatMsg(text, isUser);
+}
+
+// ── v4.x: 加载中自动重试（C1：poll 1.5s × 20 上限） ─────────────────────
+var _chatRetryTimer = null;
+function _scheduleChatRetry(q, attemptsLeft) {
+  if (_chatRetryTimer) return;  // 已有重试排队
+  if (attemptsLeft <= 0) {
+    _appendChatMsg('⚠️ 模型长时间未就绪，请稍后手动重试', false);
+    return;
+  }
+  _chatRetryTimer = setTimeout(function () {
+    _chatRetryTimer = null;
+    _sendChatRequest(q, attemptsLeft - 1, /*isRetry*/ true);
+  }, 1500);
+}
+
+async function _sendChatRequest(q, attemptsLeft, isRetry) {
+  try {
+    const resp = await fetch('/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        session_id: currentSid,
+        question: q,
+        history: chatHistory.slice(-4),  // v4.x A2: -6 → -4 省 token
+      }),
+    });
+    const data = await resp.json();
+    if (data.status === 'loading') {
+      if (!isRetry) {
+        // 首次遇到 loading：显示提示 + 启动自动重试
+        _appendChatMsg('⏳ 模型加载中…（自动重试中）', false);
+      }
+      _scheduleChatRetry(q, attemptsLeft);
+      return;
+    }
+    if (data.answer) {
+      _appendChatMsg(data.answer, false);
+      chatHistory.push({role: 'user', text: q}, {role: 'assistant', text: data.answer});
+      _saveChatHistory();  // v4.x B5
+    } else if (data.error) {
+      _appendChatMsg('⚠️ ' + data.error, false);
+    }
+  } catch (e) {
+    _appendChatMsg('⚠️ 网络错误，请重试', false);
+  }
 }
 
 async function sendChat() {
@@ -1014,31 +1123,12 @@ async function sendChat() {
   if (!q || !currentSid) return;
 
   input.value = '';
-  addChatMsg(q, true);
+  _appendChatMsg(q, true);
   btn.disabled = true;
   btn.textContent = '...';
 
   try {
-    const resp = await fetch('/api/chat', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        session_id: currentSid,
-        question: q,
-        history: chatHistory.slice(-6),
-      }),
-    });
-    const data = await resp.json();
-    if (data.status === 'loading') {
-      addChatMsg('⏳ 模型加载中（约 5 秒），请稍候…', false);
-    } else if (data.answer) {
-      addChatMsg(data.answer, false);
-      chatHistory.push({role: 'user', text: q}, {role: 'assistant', text: data.answer});
-    } else if (data.error) {
-      addChatMsg('⚠️ ' + data.error, false);
-    }
-  } catch (e) {
-    addChatMsg('⚠️ 网络错误，请重试', false);
+    await _sendChatRequest(q, 20, /*isRetry*/ false);  // 20 次 × 1.5s = 30s 上限
   } finally {
     btn.disabled = false;
     btn.textContent = '发送';
