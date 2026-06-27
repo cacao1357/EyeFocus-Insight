@@ -177,15 +177,10 @@ def _call_llm(messages: list, model: str, base_url: str, api_key: str,
         "temperature": 0.7,
     }).encode()
 
-    # v4.x: loopback 不发 Authorization header（与 analyzer.llm_client 对齐）
+    # v4.x: 有 key 就发 Authorization（与 analyzer.llm_client 对齐）
     headers = {"Content-Type": "application/json"}
     if api_key:
-        try:
-            from analyzer.secrets import is_loopback_url
-            if not is_loopback_url(base_url):
-                headers["Authorization"] = f"Bearer {api_key}"
-        except ImportError:
-            headers["Authorization"] = f"Bearer {api_key}"
+        headers["Authorization"] = f"Bearer {api_key}"
 
     req = urllib.request.Request(
         f"{base_url.rstrip('/')}/chat/completions",

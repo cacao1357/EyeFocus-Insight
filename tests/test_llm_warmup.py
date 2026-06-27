@@ -13,6 +13,7 @@ tests/test_llm_warmup.py — LLM 预热回归 + loopback header 行为
 import logging
 import os
 import sys
+import time
 from unittest import mock
 
 import pytest
@@ -27,7 +28,13 @@ from webserver.server import WebDashboard
 
 def _patch_warmup_env(dashboard, backend="openai", base_url="http://127.0.0.1:1234",
                       test_err="API 连接失败: mock"):
-    """Mock get_yaml_value + create_llm_client；启动预热；等待线程结束"""
+    """Mock get_yaml_value + create_llm_client；启动预热；等待线程结束
+
+    关键点：
+    - 把父 logger "eyefocus" 暂时设回 INFO：tests/test_integration.py:617 会把它
+      永久设到 ERROR（无 finally 还原），污染后续 caplog 测试
+    - _llm_ready.set() 在 logger.info() 之前；wait() 返回后给线程 50ms flush 日志
+    """
     fake_client = mock.MagicMock()
     fake_client.available = True
     fake_client.test_connection.return_value = test_err
@@ -42,14 +49,21 @@ def _patch_warmup_env(dashboard, backend="openai", base_url="http://127.0.0.1:12
     def fake_get_yaml(*args, **kwargs):
         return config_values.get((args[0], args[1]), kwargs.get("default", ""))
 
+    parent_logger = logging.getLogger("eyefocus")
+    saved_level = parent_logger.level
+    parent_logger.setLevel(logging.INFO)
+
     p1 = mock.patch("config.get_yaml_value", side_effect=fake_get_yaml)
     p2 = mock.patch("analyzer.llm_client.create_llm_client", return_value=fake_client)
     p1.start(); p2.start()
     try:
         dashboard._start_llm_warmup()
         assert dashboard._llm_ready.wait(timeout=5), "warmup 线程未在 5s 内完成"
+        # _llm_ready.set() 在 logger.info() 之前；给线程留窗口发完日志
+        time.sleep(0.05)
     finally:
         p1.stop(); p2.stop()
+        parent_logger.setLevel(saved_level)
     return fake_client
 
 
@@ -57,19 +71,20 @@ def _patch_warmup_env(dashboard, backend="openai", base_url="http://127.0.0.1:12
 
 class TestBuildHeaders:
 
-    def test_omits_auth_on_loopback_127(self):
+    def test_sends_auth_on_loopback_127_when_key_set(self):
+        """回归 v4.x.1: loopback + 有 key 也发 Authorization（LM Studio Require API Key 需要）"""
         c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "qwen")
         h = c._build_headers()
-        assert "Authorization" not in h
-        assert h == {"Content-Type": "application/json"}
+        assert h["Authorization"] == "Bearer sk-test"
+        assert h["Content-Type"] == "application/json"
 
-    def test_omits_auth_on_loopback_localhost(self):
+    def test_sends_auth_on_loopback_localhost_when_key_set(self):
         c = OpenAICompatibleClient("sk-test", "http://localhost:1234", "qwen")
-        assert "Authorization" not in c._build_headers()
+        assert c._build_headers()["Authorization"] == "Bearer sk-test"
 
-    def test_omits_auth_on_ipv6_loopback(self):
+    def test_sends_auth_on_ipv6_loopback_when_key_set(self):
         c = OpenAICompatibleClient("sk-test", "http://[::1]:1234", "qwen")
-        assert "Authorization" not in c._build_headers()
+        assert c._build_headers()["Authorization"] == "Bearer sk-test"
 
     def test_sends_auth_on_https(self):
         c = OpenAICompatibleClient("sk-test", "https://api.deepseek.com/v1", "deepseek-chat")
@@ -82,7 +97,13 @@ class TestBuildHeaders:
         c = OpenAICompatibleClient("sk-test", "http://api.example.com", "x")
         assert c._build_headers()["Authorization"] == "Bearer sk-test"
 
-    def test_empty_key_never_sends_auth(self):
+    def test_empty_key_never_sends_auth_on_loopback(self):
+        """空 key → 无 Authorization（LM Studio 默认 Require API Key = OFF 也能通）"""
+        c = OpenAICompatibleClient("", "http://127.0.0.1:1234", "qwen")
+        assert "Authorization" not in c._build_headers()
+        assert c._build_headers() == {"Content-Type": "application/json"}
+
+    def test_empty_key_never_sends_auth_on_https(self):
         c = OpenAICompatibleClient("", "https://api.deepseek.com/v1", "x")
         assert "Authorization" not in c._build_headers()
 

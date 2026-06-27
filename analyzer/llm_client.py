@@ -264,21 +264,13 @@ class OpenAICompatibleClient(LLMClient):
     def _build_headers(self) -> dict:
         """构造 HTTP headers
 
-        Loopback URL（LM Studio / Ollama）默认不发 Authorization header：
-        - 节省字节，避免在 loopback 上明文传递 key
-        - LM Studio 默认 "Require API Key" = OFF，无 header 也可连通
-        - 若用户显式开了 "Require API Key"，错误消息兜底（401）
+        有 key 就发 Authorization header（loopback 也发）。
+        Loopback 字节本来就不出本机，"省略" 是过度优化，且会破坏 LM Studio
+        "Require API Key" 模式。Loopback 的安全保护靠上游 HTTP 警告而非省略 header。
         """
         headers = {"Content-Type": "application/json"}
-        if not self._api_key:
-            return headers
-        try:
-            from analyzer.secrets import is_loopback_url
-            if is_loopback_url(self._base_url):
-                return headers
-        except ImportError:
-            pass
-        headers["Authorization"] = f"Bearer {self._api_key}"
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
         return headers
 
     def test_connection(self) -> str:
