@@ -431,6 +431,64 @@ class OpenAICompatibleClient(LLMClient):
             logger.error("LLM chat 请求失败: %s", self._sanitize_err(str(e)))
             return ""  # v4.33: 失败返回空串，不抛异常
 
+    def chat_stream(self, messages: list, max_tokens: int = 500, timeout: int = 60):
+        """流式 chat completion，yield 每段 token 字符串。
+
+        使用 stream:true；响应是 SSE 格式 `data: {json}\\n\\n`，
+        终止于 `data: [DONE]`。每个 chunk 解出 choices[0].delta.content。
+
+        Yields:
+            str: 增量 token（可能为空字符串，应跳过）
+
+        Raises:
+            RuntimeError: HTTPError / 响应异常（带诊断 body）
+        """
+        import urllib.error
+        import urllib.request
+        import json as _json
+
+        payload = {
+            "model": self._model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": 0.7,
+            "stream": True,
+        }
+        data = _json.dumps(payload).encode()
+        req = urllib.request.Request(
+            f"{self._base_url}/chat/completions",
+            data=data,
+            headers=self._build_headers(),
+        )
+        try:
+            resp = urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            body = e.read()[:500].decode("utf-8", errors="replace")
+            raise RuntimeError(f"LLM HTTP {e.code}: {body}") from e
+
+        # 流式读取 — http.client.HTTPResponse 可迭代（按行）
+        try:
+            for raw_line in resp:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line or not line.startswith("data:"):
+                    continue
+                payload_str = line[5:].strip()
+                if payload_str == "[DONE]":
+                    break
+                try:
+                    chunk = _json.loads(payload_str)
+                except _json.JSONDecodeError:
+                    continue
+                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                token = delta.get("content")
+                if token:
+                    yield token
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
+
 
 # ── Ollama 本地版 ──
 

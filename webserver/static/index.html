@@ -1116,6 +1116,101 @@ async function _sendChatRequest(q, attemptsLeft, isRetry) {
   }
 }
 
+// ── v4.x 第二波：SSE 流式对话 + 打字机效果 ──────────────────────────────
+// 逐 token 增量渲染 AI 消息；流结束才推入 history。
+// 兼容性：流式失败（网络/旧后端）→ 自动回退到非流式 /api/chat。
+
+async function _sendChatStream(q) {
+  var box = document.getElementById('chatBox');
+  // 1. 创建 AI 消息框（初始为空）
+  var msgDiv = document.createElement('div');
+  msgDiv.style.cssText = 'margin:6px 0;padding:8px 12px;border-radius:8px;max-width:85%;' +
+    'margin-right:auto;background:var(--stone-100);color:var(--ink-700);' +
+    'border-bottom-left-radius:2px;word-wrap:break-word;min-height:1em;';
+  // 用占位符让初始高度不塌陷
+  msgDiv.innerHTML = '<span style="opacity:0.4">▍</span>';
+  box.appendChild(msgDiv);
+  box.scrollTop = box.scrollHeight;
+
+  var fullText = '';
+  // 限频：每 ~30ms 重渲染一次 markdown，避免 100 token × 5 regex 卡顿
+  var lastRender = 0;
+  function maybeRender() {
+    var now = Date.now();
+    if (now - lastRender < 30 && fullText.length > 0) return;
+    lastRender = now;
+    msgDiv.innerHTML = _renderMarkdown(fullText);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  try {
+    var resp = await fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        session_id: currentSid,
+        question: q,
+        history: chatHistory.slice(-4),
+      }),
+    });
+
+    if (!resp.ok || !resp.body) {
+      // 兼容：服务端无 stream 端点 → 回退 /api/chat
+      if (resp.status === 404 || resp.status === 405) {
+        msgDiv.remove();
+        return await _sendChatRequest(q, 20, false);
+      }
+      msgDiv.textContent = '⚠️ HTTP ' + resp.status;
+      return;
+    }
+
+    var reader = resp.body.getReader();
+    var decoder = new TextDecoder();
+    var buffer = '';
+    var sawDone = false;
+
+    while (true) {
+      var result = await reader.read();
+      if (result.done) break;
+      buffer += decoder.decode(result.value, { stream: true });
+      // SSE 事件以 \n\n 分隔
+      var events = buffer.split('\n\n');
+      buffer = events.pop();  // 保留不完整的事件
+      for (var i = 0; i < events.length; i++) {
+        var ev = events[i].trim();
+        if (!ev.startsWith('data:')) continue;
+        var payloadStr = ev.slice(5).trim();
+        if (!payloadStr) continue;
+        try {
+          var data = JSON.parse(payloadStr);
+          if (data.token) {
+            fullText += data.token;
+            maybeRender();
+          } else if (data.error) {
+            msgDiv.textContent = '⚠️ ' + data.error;
+            return;
+          } else if (data.done) {
+            sawDone = true;
+          }
+        } catch (e) {
+          // ignore malformed JSON chunk
+        }
+      }
+    }
+
+    // 最终渲染（确保最后一个 token 显示）
+    if (fullText) {
+      msgDiv.innerHTML = _renderMarkdown(fullText);
+      chatHistory.push({role: 'assistant', text: fullText});
+      _saveChatHistory();
+    } else if (!sawDone) {
+      msgDiv.textContent = '⚠️ 流中断，无内容';
+    }
+  } catch (e) {
+    msgDiv.textContent = '⚠️ 网络错误: ' + (e.message || e);
+  }
+}
+
 async function sendChat() {
   var input = document.getElementById('chatInput');
   var btn = document.getElementById('chatSendBtn');
@@ -1124,11 +1219,14 @@ async function sendChat() {
 
   input.value = '';
   _appendChatMsg(q, true);
+  // v4.x B5: user 也存 history（之前流式结束后才 push，现在即时）
+  chatHistory.push({role: 'user', text: q});
+  _saveChatHistory();
   btn.disabled = true;
-  btn.textContent = '...';
+  btn.textContent = '…';
 
   try {
-    await _sendChatRequest(q, 20, /*isRetry*/ false);  // 20 次 × 1.5s = 30s 上限
+    await _sendChatStream(q);
   } finally {
     btn.disabled = false;
     btn.textContent = '发送';

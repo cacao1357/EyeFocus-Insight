@@ -343,6 +343,120 @@ class TestSanitizeErr:
         assert self._san(msg) == "认证失败（无效 API Key）"
 
 
+# ── chat_stream：流式 OpenAI 兼容协议（第二波 SSE） ──────────────────────
+
+class TestChatStream:
+    """v4.x 第二波：OpenAICompatibleClient.chat_stream() 解析 SSE"""
+
+    @staticmethod
+    def _mock_stream(lines):
+        """构造可迭代的 mock urlopen 响应"""
+        resp = mock.MagicMock()
+        resp.__iter__ = mock.MagicMock(return_value=iter(lines))
+        resp.close = mock.MagicMock()
+        return mock.patch("urllib.request.urlopen", return_value=resp)
+
+    def _run_stream(self, lines):
+        """运行 chat_stream 并返回 tokens 列表"""
+        c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "qwen")
+        with self._mock_stream(lines):
+            return list(c.chat_stream([{"role": "user", "content": "hi"}], timeout=10))
+
+    def test_yields_tokens_from_sse_chunks(self):
+        sse = [
+            b'data: {"id":"1","choices":[{"delta":{"content":"Hello"}}]}\n',
+            b'\n',
+            b'data: {"id":"2","choices":[{"delta":{"content":" "}}]}\n',
+            b'\n',
+            b'data: {"id":"3","choices":[{"delta":{"content":"world"}}]}\n',
+            b'\n',
+            b'data: [DONE]\n',
+            b'\n',
+        ]
+        assert self._run_stream(sse) == ["Hello", " ", "world"]
+
+    def test_stops_at_done_marker(self):
+        sse = [
+            b'data: {"choices":[{"delta":{"content":"a"}}]}\n',
+            b'\n',
+            b'data: [DONE]\n',
+            b'\n',
+            # DONE 之后的行不应被处理
+            b'data: {"choices":[{"delta":{"content":"ignored"}}]}\n',
+            b'\n',
+        ]
+        tokens = self._run_stream(sse)
+        assert tokens == ["a"]
+
+    def test_skips_chunks_without_content(self):
+        """choices[].delta 为空 → 跳过（DONE 仍终止）"""
+        sse = [
+            b'data: {"choices":[{"delta":{}}]}\n',
+            b'\n',
+            b'data: {"choices":[{"delta":{"content":"only"}}]}\n',
+            b'\n',
+            b'data: [DONE]\n',
+        ]
+        assert self._run_stream(sse) == ["only"]
+
+    def test_skips_malformed_json_lines(self):
+        sse = [
+            b'data: not valid json\n',
+            b'\n',
+            b'data: {"choices":[{"delta":{"content":"works"}}]}\n',
+            b'\n',
+            b'data: [DONE]\n',
+        ]
+        assert self._run_stream(sse) == ["works"]
+
+    def test_skips_non_data_lines(self):
+        """不以 data: 开头的行（如注释 :）跳过"""
+        sse = [
+            b': keepalive comment\n',
+            b'\n',
+            b'data: {"choices":[{"delta":{"content":"ok"}}]}\n',
+            b'\n',
+            b'data: [DONE]\n',
+        ]
+        assert self._run_stream(sse) == ["ok"]
+
+    def test_raises_runtime_error_on_http_error(self):
+        """HTTPError → RuntimeError 带 status + body"""
+        err = _make_http_error(500, b'{"error":"server overloaded"}')
+        with mock.patch("urllib.request.urlopen", side_effect=err):
+            c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "qwen")
+            with pytest.raises(RuntimeError) as exc_info:
+                list(c.chat_stream([{"role": "user", "content": "hi"}]))
+        msg = str(exc_info.value)
+        assert "HTTP 500" in msg
+        assert "server overloaded" in msg
+
+    def test_request_uses_stream_true(self):
+        """请求 payload 应包含 stream:true 字段"""
+        captured = {}
+        original_stream_lines = [
+            b'data: {"choices":[{"delta":{"content":"x"}}]}\n',
+            b'\n',
+            b'data: [DONE]\n',
+        ]
+        def fake_urlopen(req, timeout=10):
+            # 捕获请求体
+            captured["body"] = req.data
+            captured["headers"] = dict(req.headers)
+            resp = mock.MagicMock()
+            resp.__iter__ = mock.MagicMock(return_value=iter(original_stream_lines))
+            resp.close = mock.MagicMock()
+            return resp
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            c = OpenAICompatibleClient("sk-test", "http://127.0.0.1:1234", "qwen")
+            list(c.chat_stream([{"role": "user", "content": "hi"}]))
+        import json
+        payload = json.loads(captured["body"].decode())
+        assert payload["stream"] is True, f"应 stream:true, payload={payload}"
+        assert payload["model"] == "qwen"
+        assert captured["headers"]["Authorization"] == "Bearer sk-test"
+
+
 # ── /v1 端点路径提示：LM Studio / Ollama 缺 /v1 前缀的友好错误 ────────────
     """_endpoint_hint + _post_chat 在 endpoint 错误时追加 /v1 提示"""
 

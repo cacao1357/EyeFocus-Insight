@@ -340,6 +340,7 @@ class WebDashboard:
         self._app.router.add_get("/api/control", self._handle_api_control)  # v4.26
         self._app.router.add_get("/api/settings", self._handle_api_settings)  # v4.29
         self._app.router.add_post("/api/chat", self._handle_api_chat)  # v4.26
+        self._app.router.add_post("/api/chat/stream", self._handle_api_chat_stream)  # v4.x: SSE 流式
         self._app.router.add_get("/api/llm_status", self._handle_api_llm_status)  # v4.27
         self._app.router.add_static(
             "/static",
@@ -731,6 +732,141 @@ class WebDashboard:
             logger.warning("AI 对话失败: %s", e)
             fallback = self._template_chat_answer(question, llm_data)
             return aiohttp.web.json_response({"answer": fallback, "backend": "template"})
+
+    async def _handle_api_chat_stream(self, request):
+        """SSE 流式 AI 对话（v4.x：第二波 — token 级打字机）
+
+        POST /api/chat/stream
+        请求：与 /api/chat 相同 {session_id, question, history?}
+        响应：text/event-stream，事件：
+          data: {"token": "..."}\\n\\n     每个 token
+          data: {"done": true}\\n\\n        流结束
+          data: {"error": "..."}\\n\\n      出错
+        """
+        import json as _json
+        try:
+            body = await request.json()
+        except Exception:
+            return aiohttp.web.json_response({"error": "无效的 JSON"}, status=400)
+
+        sid = body.get("session_id", "")
+        question = body.get("question", "").strip()
+        history = body.get("history", [])
+        if not sid or not question:
+            return aiohttp.web.json_response({"error": "缺少参数"}, status=400)
+
+        from reporter.report_html import create_html_generator
+        if not self._db:
+            return aiohttp.web.json_response({"error": "数据库未就绪"}, status=503)
+
+        generator = create_html_generator(self._db)
+        html = generator.generate_report(sid)
+        ai_data = getattr(generator, "_data", None)
+        if not ai_data:
+            return aiohttp.web.json_response({"error": "会话数据不足"}, status=400)
+
+        # 构造 LLM 上下文数据
+        if self._llm_backend == "openai":
+            llm_data = generator._compute_deep_llm_data(ai_data)
+        else:
+            llm_data = generator._compute_llm_data(ai_data)
+
+        if not self._llm_ready.is_set():
+            return aiohttp.web.json_response({
+                "status": "loading",
+                "message": "模型加载中，请稍候…",
+            })
+
+        backend = self._llm_backend
+        if not self._ensure_llm_client():
+            # 模板模式 — 一次性给完
+            answer = self._template_chat_answer(question, llm_data)
+            resp = aiohttp.web.StreamResponse(
+                headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}
+            )
+            await resp.prepare(request)
+            await resp.write(f"data: {_json.dumps({'token': answer}, ensure_ascii=False)}\n\n".encode())
+            await resp.write(b"data: {\"done\": true}\n\n")
+            return resp
+
+        # ── 构造 messages ──
+        s, m, e = llm_data['seg_start'], llm_data['seg_mid'], llm_data['seg_end']
+        trend_desc = "上升" if e > s else ("下降" if s > e else "平稳")
+        context = (
+            f"## 会话数据\n"
+            f"- 日期：{llm_data.get('session_date', '')}\n"
+            f"- 时长: {llm_data['duration']} 分钟\n"
+            f"- 平均专注度: {llm_data['avg_focus']}/100 分\n"
+            f"- 历史平均: {llm_data['hist_avg_focus']}/100 分\n"
+            f"- 趋势: 前段 {s} → 中段 {m} → 后段 {e} 分 ({trend_desc})\n"
+            f"- 疲劳: 高 {llm_data['fatigue_high_pct']}% / 中 {llm_data['fatigue_mid_pct']}% / 低 {llm_data['fatigue_low_pct']}%\n"
+            f"- 分心: {llm_data['distractions']} 次\n"
+        )
+        # 深度数据附加（与 /api/chat 同样的拼接逻辑）
+        deep_sections = ""
+        for label, key in [("前段/中段/后段模式", "focus_cliffs"),
+                           ("疲劳演化", "fatigue_evolution"),
+                           ("分心模式", "dist_pattern"),
+                           ("历史会话对比", "past_sessions_summary")]:
+            val = llm_data.get(key)
+            if val and "无" not in str(val)[:5]:
+                deep_sections += f"\n{label}\n{val}\n"
+        if deep_sections:
+            context += "\n" + deep_sections.strip()
+
+        system_prompt = (
+            "你是一名专注力数据分析师。根据提供的会话数据回答用户问题。\n\n"
+            "回答要求：\n"
+            "1. 始终基于数据说话，引用具体数字\n"
+            "2. 分析原因而非只描述现象\n"
+            "3. 给出可执行的建议\n"
+            "4. 用中文，口语化，像朋友聊天\n"
+            "5. 不知道就说不知道，不要编造"
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"这是本次会话的数据：\n{context}\n\n请基于以上数据回答用户的问题。"},
+        ]
+        for h in history[-4:]:
+            role = h.get("role", "user")
+            if role not in ("user", "assistant"):
+                role = "user"
+            messages.append({"role": role, "content": h.get("text", "")[:2000]})
+        messages.append({"role": "user", "content": question})
+
+        # ── SSE 响应 ──
+        resp = aiohttp.web.StreamResponse(
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",  # 禁 nginx buffering
+            }
+        )
+        await resp.prepare(request)
+
+        def _event(payload: dict) -> bytes:
+            return f"data: {_json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
+
+        try:
+            if backend == "openai" and hasattr(self._llm_client, "chat_stream"):
+                # 流式 OpenAI 兼容
+                for token in self._llm_client.chat_stream(messages, max_tokens=500, timeout=60):
+                    await resp.write(_event({"token": token}))
+                await resp.write(_event({"done": True}))
+            else:
+                # Ollama / local — 用一次性响应包装成单 token 事件
+                answer = self._llm_chat(self._llm_client, messages, backend)
+                await resp.write(_event({"token": answer}))
+                await resp.write(_event({"done": True}))
+        except Exception as e:
+            err = self._sanitize_err(str(e))
+            logger.warning("AI 流式对话失败: %s", err)
+            try:
+                await resp.write(_event({"error": err}))
+            except Exception:
+                pass
+
+        return resp
 
     def _llm_chat(self, client, messages: list, backend: str) -> str:
         """调用 LLM 聊天（在线程池中运行，加锁保护 llama-cpp 并发安全）"""
